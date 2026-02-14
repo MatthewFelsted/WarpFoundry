@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
 import codex_manager.gui.app as gui_app_module
 import codex_manager.preflight as preflight_module
+from codex_manager.cua.actions import CUASessionResult
 
 
 @pytest.fixture()
@@ -668,3 +671,92 @@ def test_docs_api_reports_missing_docs_directory(client, monkeypatch):
     assert resp.status_code == 404
     assert data
     assert "Local docs directory not found" in data["error"]
+
+
+def test_cua_status_reports_running_while_session_is_active(client, monkeypatch):
+    start_gate = threading.Event()
+    finish_gate = threading.Event()
+
+    def _fake_run(config):
+        start_gate.set()
+        finish_gate.wait(timeout=5)
+        return CUASessionResult(
+            task=config.task,
+            provider=config.provider.value,
+            success=True,
+            total_steps=2,
+            duration_seconds=0.1,
+            finished_at="done",
+        )
+
+    monkeypatch.setattr("codex_manager.cua.session.run_cua_session_sync", _fake_run)
+    monkeypatch.setattr(gui_app_module, "_cua_result", None)
+    monkeypatch.setattr(gui_app_module, "_cua_thread", None)
+
+    try:
+        start_resp = client.post("/api/cua/start", json={"provider": "openai", "task": "check"})
+        start_data = start_resp.get_json()
+        assert start_resp.status_code == 200
+        assert start_data
+        assert start_gate.wait(timeout=2)
+
+        status_resp = client.get("/api/cua/status")
+        status_data = status_resp.get_json()
+        assert status_resp.status_code == 200
+        assert status_data
+        assert status_data["running"] is True
+        assert status_data["result"]["provider"] == "openai"
+        assert status_data["result"]["finished_at"] == ""
+
+        finish_gate.set()
+        for _ in range(30):
+            status_data = client.get("/api/cua/status").get_json()
+            if status_data and not status_data["running"]:
+                break
+            time.sleep(0.05)
+
+        assert status_data
+        assert status_data["running"] is False
+        assert status_data["result"]["success"] is True
+    finally:
+        finish_gate.set()
+        thread = getattr(gui_app_module, "_cua_thread", None)
+        if thread is not None:
+            thread.join(timeout=2)
+
+
+def test_cua_start_rejects_overlapping_sessions(client, monkeypatch):
+    start_gate = threading.Event()
+    finish_gate = threading.Event()
+
+    def _fake_run(config):
+        start_gate.set()
+        finish_gate.wait(timeout=5)
+        return CUASessionResult(
+            task=config.task,
+            provider=config.provider.value,
+            success=True,
+            total_steps=1,
+            duration_seconds=0.1,
+            finished_at="done",
+        )
+
+    monkeypatch.setattr("codex_manager.cua.session.run_cua_session_sync", _fake_run)
+    monkeypatch.setattr(gui_app_module, "_cua_result", None)
+    monkeypatch.setattr(gui_app_module, "_cua_thread", None)
+
+    try:
+        first = client.post("/api/cua/start", json={"provider": "openai", "task": "one"})
+        assert first.status_code == 200
+        assert start_gate.wait(timeout=2)
+
+        second = client.post("/api/cua/start", json={"provider": "anthropic", "task": "two"})
+        second_data = second.get_json()
+        assert second.status_code == 409
+        assert second_data
+        assert "already running" in second_data["error"]
+    finally:
+        finish_gate.set()
+        thread = getattr(gui_app_module, "_cua_thread", None)
+        if thread is not None:
+            thread.join(timeout=2)

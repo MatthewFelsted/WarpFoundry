@@ -9,7 +9,9 @@ import queue
 import re
 import string
 import subprocess
+import threading
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 from threading import Timer
 
@@ -1151,20 +1153,24 @@ def api_pipeline_log(filename: str):
 # CUA (Computer-Using Agent) API
 # ══════════════════════════════════════════════════════════════════════
 
-_cua_result = None  # latest CUA session result
+_cua_result = None  # latest CUA session result (including in-flight placeholder)
+_cua_thread: threading.Thread | None = None
+_cua_lock = threading.Lock()
 
 
 @app.route("/api/cua/start", methods=["POST"])
 def api_cua_start():
     """Start a standalone CUA visual testing session."""
-    global _cua_result
+    global _cua_result, _cua_thread
     data = request.get_json(silent=True) or {}
 
     try:
-        from codex_manager.cua.actions import CUAProvider, CUASessionConfig
+        from codex_manager.cua.actions import CUAProvider, CUASessionConfig, CUASessionResult
         from codex_manager.cua.session import run_cua_session_sync
 
         provider_str = data.get("provider", "openai").lower()
+        if provider_str not in {"openai", "anthropic"}:
+            return jsonify({"error": f"Unsupported CUA provider: {provider_str}"}), 400
         provider = CUAProvider.OPENAI if provider_str == "openai" else CUAProvider.ANTHROPIC
 
         cua_config = CUASessionConfig(
@@ -1179,14 +1185,38 @@ def api_cua_start():
             save_screenshots=True,
         )
 
-        import threading
+        with _cua_lock:
+            if _cua_thread is not None and _cua_thread.is_alive():
+                return jsonify({"error": "A CUA session is already running"}), 409
+
+            # Placeholder state so /api/cua/status reports running immediately.
+            _cua_result = CUASessionResult(
+                task=cua_config.task,
+                provider=provider.value,
+                started_at=datetime.now().isoformat(),
+            )
 
         def _run() -> None:
             global _cua_result
-            _cua_result = run_cua_session_sync(cua_config)
+            try:
+                session_result = run_cua_session_sync(cua_config)
+            except Exception as exc:
+                logger.exception("CUA session thread failed")
+                session_result = CUASessionResult(
+                    task=cua_config.task,
+                    provider=provider.value,
+                    success=False,
+                    error=str(exc),
+                    started_at=datetime.now().isoformat(),
+                    finished_at=datetime.now().isoformat(),
+                )
+            with _cua_lock:
+                _cua_result = session_result
 
         t = threading.Thread(target=_run, daemon=True)
-        t.start()
+        with _cua_lock:
+            _cua_thread = t
+            t.start()
 
         return jsonify({"status": "started", "provider": provider.value})
 
@@ -1204,13 +1234,16 @@ def api_cua_start():
 @app.route("/api/cua/status")
 def api_cua_status():
     """Return the latest CUA session result."""
-    global _cua_result
-    if _cua_result is None:
-        return jsonify({"running": False, "result": None})
+    global _cua_result, _cua_thread
+    with _cua_lock:
+        current_result = _cua_result
+        running = _cua_thread is not None and _cua_thread.is_alive()
+    if current_result is None:
+        return jsonify({"running": running, "result": None})
 
     from dataclasses import asdict
 
-    result_dict = asdict(_cua_result)
+    result_dict = asdict(current_result)
     # Don't send full screenshot data over API
     for step in result_dict.get("steps", []):
         step.pop("screenshot_b64", None)
@@ -1219,7 +1252,7 @@ def api_cua_status():
 
     return jsonify(
         {
-            "running": not _cua_result.finished_at,
+            "running": running,
             "result": result_dict,
         }
     )
