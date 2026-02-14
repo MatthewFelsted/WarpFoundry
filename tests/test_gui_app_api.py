@@ -465,6 +465,42 @@ def test_pipeline_logs_rejects_invalid_filename_when_executor_missing(client, mo
     assert "Invalid log file" in data["error"]
 
 
+def test_recipes_api_lists_default_and_known_recipes(client):
+    resp = client.get("/api/recipes")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["default_recipe_id"] == "autopilot_default"
+    recipes = {entry["id"]: entry for entry in data["recipes"]}
+    assert "autopilot_default" in recipes
+    assert recipes["autopilot_default"]["step_count"] == 7
+    assert "New Features" in recipes["autopilot_default"]["sequence"]
+
+
+def test_recipes_api_detail_exposes_new_features_prompt(client):
+    resp = client.get("/api/recipes/autopilot_default")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["id"] == "autopilot_default"
+    steps = data["steps"]
+    assert isinstance(steps, list)
+    new_features = next((step for step in steps if step.get("name") == "02 New Features"), None)
+    assert new_features is not None
+    assert "Identify the highest-impact features" in new_features["custom_prompt"]
+
+
+def test_recipes_api_detail_rejects_unknown_id(client):
+    resp = client.get("/api/recipes/not-real")
+    data = resp.get_json()
+
+    assert resp.status_code == 404
+    assert data
+    assert data["error"] == "not found"
+
+
 def test_chain_status_includes_actionable_stop_guidance(client, monkeypatch):
     class _Exec:
         @staticmethod

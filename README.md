@@ -71,7 +71,7 @@ When a run stops, the Execution panel now shows a `Why it stopped` card with act
 - Strategic loop: `python -m codex_manager strategic --repo <path>`
 - Setup diagnostics: `python -m codex_manager doctor --repo <path>`
 - Visual test: `python -m codex_manager visual-test --url <url>`
-- Prompt tools: `python -m codex_manager list-prompts`, `python -m codex_manager optimize-prompts`
+- Prompt tools: `python -m codex_manager list-prompts`, `python -m codex_manager optimize-prompts`, `python -m codex_manager list-recipes`
 
 ## Strategic Product Maximization Mode
 

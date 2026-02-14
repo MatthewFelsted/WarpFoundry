@@ -25,6 +25,12 @@ from codex_manager.gui.models import (
     PipelineGUIConfig,
 )
 from codex_manager.gui.presets import get_preset, list_presets
+from codex_manager.gui.recipes import (
+    DEFAULT_RECIPE_ID,
+    get_recipe,
+    list_recipe_summaries,
+    recipe_steps_map,
+)
 from codex_manager.gui.stop_guidance import get_stop_guidance
 from codex_manager.preflight import (
     binary_exists as shared_binary_exists,
@@ -76,6 +82,14 @@ _PIPELINE_LOG_FILES = frozenset(
         "HISTORY.md",
     }
 )
+
+
+def _recipe_template_payload() -> dict[str, object]:
+    """Return recipe data that the GUI template consumes directly."""
+    return {
+        "default_recipe_id": DEFAULT_RECIPE_ID,
+        "recipes": recipe_steps_map(),
+    }
 
 
 def _step_output_filename(name: str, job_type: str) -> str:
@@ -431,7 +445,7 @@ def _attach_stop_guidance(
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", recipes_payload=_recipe_template_payload())
 
 
 # ── Presets ───────────────────────────────────────────────────────────
@@ -483,6 +497,26 @@ def api_preset_detail(key: str):
     if not preset:
         return jsonify({"error": "not found"}), 404
     return jsonify(preset)
+
+
+@app.route("/api/recipes")
+def api_recipes():
+    """List recipe summaries and default recipe id."""
+    return jsonify(
+        {
+            "default_recipe_id": DEFAULT_RECIPE_ID,
+            "recipes": list_recipe_summaries(),
+        }
+    )
+
+
+@app.route("/api/recipes/<recipe_id>")
+def api_recipe_detail(recipe_id: str):
+    """Return one recipe with full step definitions."""
+    recipe = get_recipe(recipe_id)
+    if recipe is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(recipe)
 
 
 # ── Chain control ─────────────────────────────────────────────────────

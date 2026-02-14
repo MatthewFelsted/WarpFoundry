@@ -267,6 +267,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="List all prompts in the catalog.",
     )
 
+    # List-recipes sub-command
+    recipes_p = sub.add_parser(
+        "list-recipes",
+        help="List built-in GUI recipes and optional step prompts.",
+    )
+    recipes_p.add_argument(
+        "--recipe",
+        type=str,
+        default="",
+        help="Optional recipe id for full step-by-step details.",
+    )
+
     # Doctor sub-command
     doctor_p = sub.add_parser(
         "doctor",
@@ -390,6 +402,9 @@ def main(argv: list[str] | None = None) -> int:
     # -- List prompts ---------------------------------------------------------
     if args.command == "list-prompts":
         return _list_prompts()
+    # -- List recipes ---------------------------------------------------------
+    if args.command == "list-recipes":
+        return _list_recipes(args)
 
     if args.command == "doctor":
         return _run_doctor(args)
@@ -809,6 +824,72 @@ def _visual_test(args: argparse.Namespace) -> int:
             print(f"    ... and {len(result.screenshots_saved) - 10} more")
     print()
     return 0 if result.success else 1
+
+
+# -- List prompts command -----------------------------------------------------
+
+
+def _list_recipes(args: argparse.Namespace) -> int:
+    """List built-in GUI recipes and optional detailed steps."""
+    from codex_manager.gui.recipes import DEFAULT_RECIPE_ID, get_recipe, list_recipe_summaries
+
+    requested = (getattr(args, "recipe", "") or "").strip()
+    summaries = list_recipe_summaries()
+    summary_map = {entry["id"]: entry for entry in summaries}
+
+    if requested:
+        recipe = get_recipe(requested)
+        if recipe is None:
+            available = ", ".join(sorted(summary_map))
+            print(f"\nError: unknown recipe id '{requested}'.", file=sys.stderr)
+            print(f"Available recipe ids: {available}", file=sys.stderr)
+            return 1
+
+        print(f"\n  Recipe: {recipe['name']} ({recipe['id']})")
+        description = str(recipe.get("description", "")).strip()
+        if description:
+            print(f"  Description: {description}")
+        sequence = str(recipe.get("sequence", "")).strip()
+        if sequence:
+            print(f"  Sequence: {sequence}")
+
+        steps = recipe.get("steps", [])
+        if isinstance(steps, list):
+            print(f"  Steps: {len(steps)}")
+            for idx, step in enumerate(steps, start=1):
+                step_name = str(step.get("name") or step.get("job_type") or f"step-{idx}")
+                job_type = str(step.get("job_type", "custom"))
+                try:
+                    loop_count = int(step.get("loop_count", 1) or 1)
+                except (TypeError, ValueError):
+                    loop_count = 1
+                prompt_mode = str(step.get("prompt_mode", "preset"))
+
+                print(
+                    f"\n  {idx}. {step_name}"
+                    f"\n     job_type={job_type}, loop_count={loop_count}, prompt_mode={prompt_mode}"
+                )
+
+                custom_prompt = str(step.get("custom_prompt", "") or "").strip()
+                if custom_prompt:
+                    print(f"     custom_prompt: {custom_prompt}")
+        print()
+        return 0
+
+    print(f"\n  Built-in Recipes - {len(summaries)}")
+    print("  " + "=" * 58)
+    for entry in summaries:
+        marker = " (default)" if entry["id"] == DEFAULT_RECIPE_ID else ""
+        print(f"\n  [{entry['id']}] {entry['name']}{marker}")
+        print(f"    {entry['description']}")
+        print(f"    Steps: {entry['step_count']}")
+        sequence = str(entry.get("sequence", "")).strip()
+        if sequence:
+            print(f"    Sequence: {sequence}")
+
+    print("\n  Detail: python -m codex_manager list-recipes --recipe <id>")
+    print()
+    return 0
 
 
 # -- List prompts command -----------------------------------------------------

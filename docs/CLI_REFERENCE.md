@@ -117,6 +117,14 @@ python -m codex_manager list-prompts
 
 No extra options.
 
+## Subcommand: `list-recipes`
+
+```bash
+python -m codex_manager list-recipes [--recipe <id>]
+```
+
+Use this to inspect built-in Autopilot recipes and show full step prompts.
+
 ## Subcommand: `doctor`
 
 ```bash
@@ -141,5 +149,6 @@ python -m codex_manager strategic --repo /repo --mode dry-run --rounds 6
 python -m codex_manager doctor --repo /repo --agents codex,claude_code
 python -m codex_manager pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
 python -m codex_manager optimize-prompts --dry-run
+python -m codex_manager list-recipes --recipe autopilot_default
 python -m codex_manager visual-test --url http://localhost:5088 --provider anthropic
 ```

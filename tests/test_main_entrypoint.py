@@ -47,6 +47,10 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
         calls["listed"] = True
         return 13
 
+    def fake_list_recipes(args):
+        calls["recipe_query"] = args.recipe
+        return 16
+
     def fake_doctor(args):
         calls["doctor_repo"] = args.repo
         return 15
@@ -56,6 +60,7 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(main_module, "_optimize_prompts", fake_optimize)
     monkeypatch.setattr(main_module, "_visual_test", fake_visual)
     monkeypatch.setattr(main_module, "_list_prompts", fake_list)
+    monkeypatch.setattr(main_module, "_list_recipes", fake_list_recipes)
     monkeypatch.setattr(main_module, "_run_doctor", fake_doctor)
 
     repo = tmp_path / "repo"
@@ -65,6 +70,7 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
     assert main_module.main(["optimize-prompts", "--model", "gpt-x"]) == 11
     assert main_module.main(["visual-test", "--provider", "anthropic"]) == 12
     assert main_module.main(["list-prompts"]) == 13
+    assert main_module.main(["list-recipes"]) == 16
     assert main_module.main(["doctor", "--repo", str(repo)]) == 15
 
     assert calls["pipeline_repo"] == str(repo)
@@ -72,6 +78,7 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
     assert calls["opt_model"] == "gpt-x"
     assert calls["visual_provider"] == "anthropic"
     assert calls["listed"] is True
+    assert calls["recipe_query"] == ""
     assert calls["doctor_repo"] == str(repo)
 
 
@@ -526,6 +533,77 @@ def test_list_prompts_uses_catalog(monkeypatch, capsys) -> None:
     assert rc == 0
     assert "Prompt Catalog" in captured.out
     assert "[pipeline.ideation]" in captured.out
+
+
+def test_list_recipes_prints_summary(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "codex_manager.gui.recipes.list_recipe_summaries",
+        lambda: [
+            {
+                "id": "autopilot_default",
+                "name": "Autopilot Default",
+                "description": "Sweep",
+                "sequence": "A -> B",
+                "step_count": 2,
+            }
+        ],
+    )
+    rc = main_module._list_recipes(argparse.Namespace(recipe=""))
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Built-in Recipes" in captured.out
+    assert "[autopilot_default]" in captured.out
+
+
+def test_list_recipes_prints_detail_for_specific_recipe(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "codex_manager.gui.recipes.list_recipe_summaries",
+        lambda: [
+            {
+                "id": "autopilot_default",
+                "name": "Autopilot Default",
+                "description": "Sweep",
+                "sequence": "A -> B",
+                "step_count": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "codex_manager.gui.recipes.get_recipe",
+        lambda _id: {
+            "id": "autopilot_default",
+            "name": "Autopilot Default",
+            "description": "Sweep",
+            "sequence": "A -> B",
+            "steps": [
+                {
+                    "name": "02 New Features",
+                    "job_type": "implementation",
+                    "loop_count": 1,
+                    "prompt_mode": "custom",
+                    "custom_prompt": "Identify top features",
+                }
+            ],
+        },
+    )
+    rc = main_module._list_recipes(argparse.Namespace(recipe="autopilot_default"))
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "Recipe: Autopilot Default" in captured.out
+    assert "02 New Features" in captured.out
+    assert "Identify top features" in captured.out
+
+
+def test_list_recipes_returns_error_for_unknown_recipe(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "codex_manager.gui.recipes.list_recipe_summaries",
+        lambda: [{"id": "autopilot_default", "name": "Autopilot Default"}],
+    )
+    monkeypatch.setattr("codex_manager.gui.recipes.get_recipe", lambda _id: None)
+    rc = main_module._list_recipes(argparse.Namespace(recipe="missing"))
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "unknown recipe id" in captured.err
 
 
 def test_run_goal_loop_preflight_failure_stops_before_runner(
