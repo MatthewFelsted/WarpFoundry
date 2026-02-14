@@ -9,6 +9,7 @@ import queue
 import re
 import string
 import subprocess
+import sys
 import threading
 import webbrowser
 from contextlib import suppress
@@ -82,6 +83,16 @@ _PIPELINE_LOG_FILES = frozenset(
         "HISTORY.md",
     }
 )
+_RUNNABLE_DIAGNOSTIC_ACTION_KEYS = frozenset(
+    {
+        "init_git_repo",
+        "install_codex_cli",
+        "install_claude_cli",
+        "rerun_doctor",
+    }
+)
+_DIAGNOSTIC_ACTION_TIMEOUT_SECONDS = 20
+_DIAGNOSTIC_ACTION_OUTPUT_MAX_CHARS = 4000
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -273,7 +284,99 @@ def _build_diagnostics_report(
         codex_binary=codex_binary,
         claude_binary=claude_binary,
     )
-    return report.to_dict()
+    payload = report.to_dict()
+    for action in payload.get("next_actions", []):
+        if not isinstance(action, dict):
+            continue
+        key = str(action.get("key") or "").strip()
+        action["can_run"] = bool(key and key in _RUNNABLE_DIAGNOSTIC_ACTION_KEYS)
+    return payload
+
+
+def _extract_diagnostics_request(data: dict[str, object]) -> tuple[str, str, str, list[str]]:
+    """Parse common diagnostics request payload fields."""
+    repo_path = str(data.get("repo_path") or data.get("path") or "").strip()
+    codex_binary = str(data.get("codex_binary") or "codex").strip() or "codex"
+    claude_binary = str(data.get("claude_binary") or "claude").strip() or "claude"
+    requested_agents = _normalize_requested_agents(data.get("agents"))
+    return repo_path, codex_binary, claude_binary, requested_agents
+
+
+def _diagnostics_action_args(action_key: str, report) -> list[str] | None:
+    """Build subprocess argv for a runnable diagnostics action key."""
+    repo = (str(report.resolved_repo_path or "") or str(report.repo_path or "")).strip()
+    codex_binary = str(getattr(report, "codex_binary", "codex") or "codex").strip() or "codex"
+    claude_binary = (
+        str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
+    )
+
+    if action_key == "init_git_repo":
+        if not repo:
+            return None
+        return ["git", "-C", repo, "init"]
+    if action_key == "install_codex_cli":
+        return [codex_binary, "--version"]
+    if action_key == "install_claude_cli":
+        return [claude_binary, "--version"]
+    if action_key == "rerun_doctor":
+        args = [sys.executable, "-m", "codex_manager", "doctor"]
+        if repo:
+            args.extend(["--repo", repo])
+        requested_agents = list(getattr(report, "requested_agents", []) or [])
+        if requested_agents:
+            args.extend(["--agents", ",".join(requested_agents)])
+        args.extend(["--codex-bin", codex_binary, "--claude-bin", claude_binary])
+        return args
+    return None
+
+
+def _truncate_command_output(value: str | bytes | None) -> str:
+    """Trim and cap command output for safe API responses."""
+    if value is None:
+        return ""
+    text = value.decode(errors="replace") if isinstance(value, bytes) else str(value)
+    text = text.strip()
+    if len(text) <= _DIAGNOSTIC_ACTION_OUTPUT_MAX_CHARS:
+        return text
+    keep = max(0, _DIAGNOSTIC_ACTION_OUTPUT_MAX_CHARS - len("\n...[truncated]"))
+    return text[:keep] + "\n...[truncated]"
+
+
+def _run_diagnostics_action(args: list[str], *, cwd: str) -> dict[str, object]:
+    """Run one diagnostics command and return a structured result payload."""
+    run_cwd = cwd if cwd and Path(cwd).is_dir() else None
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=run_cwd,
+            capture_output=True,
+            text=True,
+            timeout=_DIAGNOSTIC_ACTION_TIMEOUT_SECONDS,
+            check=False,
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "exit_code": proc.returncode,
+            "timed_out": False,
+            "stdout": _truncate_command_output(proc.stdout),
+            "stderr": _truncate_command_output(proc.stderr),
+        }
+    except FileNotFoundError as exc:
+        return {
+            "ok": False,
+            "exit_code": 127,
+            "timed_out": False,
+            "stdout": "",
+            "stderr": _truncate_command_output(str(exc)),
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "exit_code": 124,
+            "timed_out": True,
+            "stdout": _truncate_command_output(exc.stdout),
+            "stderr": _truncate_command_output(exc.stderr),
+        }
 
 
 def _chain_preflight_issues(config: ChainConfig) -> list[str]:
@@ -713,10 +816,7 @@ def api_validate_repo():
 def api_diagnostics():
     """Return structured repository/auth diagnostics for the GUI."""
     data = request.get_json(silent=True) or {}
-    repo_path = str(data.get("repo_path") or data.get("path") or "").strip()
-    codex_binary = str(data.get("codex_binary") or "codex").strip() or "codex"
-    claude_binary = str(data.get("claude_binary") or "claude").strip() or "claude"
-    requested_agents = _normalize_requested_agents(data.get("agents"))
+    repo_path, codex_binary, claude_binary, requested_agents = _extract_diagnostics_request(data)
 
     report = _build_diagnostics_report(
         repo_path=repo_path,
@@ -725,6 +825,71 @@ def api_diagnostics():
         requested_agents=requested_agents,
     )
     return jsonify(report)
+
+
+@app.route("/api/diagnostics/actions/run", methods=["POST"])
+def api_diagnostics_run_action():
+    """Run a supported diagnostics action command by key."""
+    data = request.get_json(silent=True) or {}
+    action_key = str(data.get("action_key") or "").strip()
+    if not action_key:
+        return jsonify({"error": "Missing diagnostics action key."}), 400
+
+    repo_path, codex_binary, claude_binary, requested_agents = _extract_diagnostics_request(data)
+    report = build_preflight_report(
+        repo_path=repo_path,
+        agents=requested_agents,
+        codex_binary=codex_binary,
+        claude_binary=claude_binary,
+    )
+
+    action = next((item for item in report.next_actions if item.key == action_key), None)
+    if action is None:
+        return (
+            jsonify(
+                {
+                    "error": "Diagnostics action unavailable for the current setup state.",
+                    "action_key": action_key,
+                }
+            ),
+            404,
+        )
+
+    if action_key not in _RUNNABLE_DIAGNOSTIC_ACTION_KEYS:
+        return (
+            jsonify(
+                {
+                    "error": "This diagnostics action cannot be auto-run. Copy the command instead.",
+                    "action_key": action_key,
+                    "command": action.command,
+                }
+            ),
+            400,
+        )
+
+    args = _diagnostics_action_args(action_key, report)
+    if not args:
+        return (
+            jsonify(
+                {
+                    "error": "Could not build command for this diagnostics action.",
+                    "action_key": action_key,
+                    "command": action.command,
+                }
+            ),
+            400,
+        )
+
+    repo = str(report.resolved_repo_path or report.repo_path or "").strip()
+    result = _run_diagnostics_action(args, cwd=repo)
+    return jsonify(
+        {
+            "action_key": action.key,
+            "title": action.title,
+            "command": subprocess.list2cmdline(args),
+            **result,
+        }
+    )
 
 
 # ── Directory browser ────────────────────────────────────────────

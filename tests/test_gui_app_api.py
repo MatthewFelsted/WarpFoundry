@@ -712,7 +712,12 @@ def test_diagnostics_reports_actionable_failures(client, monkeypatch):
     assert any(a.get("key") == "install_codex_cli" for a in actions)
     assert any(a.get("key") == "codex_login" for a in actions)
     assert any(a.get("key") == "rerun_doctor" for a in actions)
+    install_codex = next(a for a in actions if a.get("key") == "install_codex_cli")
+    assert install_codex.get("can_run") is True
+    codex_login = next(a for a in actions if a.get("key") == "codex_login")
+    assert codex_login.get("can_run") is False
     rerun = next(a for a in actions if a.get("key") == "rerun_doctor")
+    assert rerun.get("can_run") is True
     assert '--codex-bin "codex-missing"' in rerun.get("command", "")
     assert '--claude-bin "claude-missing"' in rerun.get("command", "")
 
@@ -748,6 +753,95 @@ def test_diagnostics_reports_ready_state(client, monkeypatch, tmp_path: Path):
     assert _check_by_key(data, "claude_code", "auth")["status"] == "pass"
     actions = data.get("next_actions", [])
     assert any(a.get("key") == "first_dry_run" for a in actions)
+
+
+def test_diagnostics_run_action_executes_runnable_command(client, monkeypatch):
+    monkeypatch.setattr(preflight_module, "binary_exists", lambda _binary: False)
+    monkeypatch.setattr(preflight_module, "has_codex_auth", lambda: True)
+    monkeypatch.setattr(preflight_module, "has_claude_auth", lambda: True)
+
+    observed = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = "codex 1.2.3\n"
+        stderr = ""
+
+    def _fake_run(args, **kwargs):
+        observed["args"] = args
+        observed["cwd"] = kwargs.get("cwd")
+        return _Completed()
+
+    monkeypatch.setattr(gui_app_module.subprocess, "run", _fake_run)
+
+    resp = client.post(
+        "/api/diagnostics/actions/run",
+        json={
+            "repo_path": "",
+            "codex_binary": "codex-missing",
+            "claude_binary": "claude",
+            "agents": ["codex"],
+            "action_key": "install_codex_cli",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is True
+    assert data["exit_code"] == 0
+    assert observed["args"] == ["codex-missing", "--version"]
+    assert observed["cwd"] is None
+    assert data["command"] == gui_app_module.subprocess.list2cmdline(observed["args"])
+
+
+def test_diagnostics_run_action_rejects_non_runnable_action(client, monkeypatch):
+    monkeypatch.setattr(preflight_module, "binary_exists", lambda _binary: True)
+    monkeypatch.setattr(preflight_module, "has_codex_auth", lambda: False)
+    monkeypatch.setattr(preflight_module, "has_claude_auth", lambda: True)
+
+    resp = client.post(
+        "/api/diagnostics/actions/run",
+        json={
+            "repo_path": "",
+            "codex_binary": "codex",
+            "claude_binary": "claude",
+            "agents": ["codex"],
+            "action_key": "codex_login",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "cannot be auto-run" in data["error"]
+
+
+def test_diagnostics_run_action_rejects_missing_or_unavailable_action(client, monkeypatch):
+    monkeypatch.setattr(preflight_module, "binary_exists", lambda _binary: True)
+    monkeypatch.setattr(preflight_module, "has_codex_auth", lambda: True)
+    monkeypatch.setattr(preflight_module, "has_claude_auth", lambda: True)
+
+    missing_resp = client.post("/api/diagnostics/actions/run", json={})
+    missing_data = missing_resp.get_json()
+    assert missing_resp.status_code == 400
+    assert missing_data
+    assert "Missing diagnostics action key" in missing_data["error"]
+
+    unavailable_resp = client.post(
+        "/api/diagnostics/actions/run",
+        json={
+            "repo_path": "",
+            "codex_binary": "codex",
+            "claude_binary": "claude",
+            "agents": ["codex"],
+            "action_key": "install_codex_cli",
+        },
+    )
+    unavailable_data = unavailable_resp.get_json()
+    assert unavailable_resp.status_code == 404
+    assert unavailable_data
+    assert "unavailable" in unavailable_data["error"]
 
 
 def test_diagnostics_warns_on_unknown_agents(client):

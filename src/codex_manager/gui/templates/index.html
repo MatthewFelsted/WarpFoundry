@@ -194,6 +194,11 @@ summary:focus-visible{
   margin-top:4px;font-size:11px;color:var(--accent2);font-family:var(--mono);line-height:1.35;
   overflow-wrap:anywhere;word-break:break-word
 }
+.diag-action-controls{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.diag-action-controls .btn{padding:4px 8px;font-size:11px}
+.diag-action-run-state{margin-top:4px;font-size:11px;color:var(--text2);line-height:1.35}
+.diag-action-run-state.ok{color:var(--success)}
+.diag-action-run-state.fail{color:var(--danger)}
 
 /* â”€â”€ Step List â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .step-list{display:flex;flex-direction:column;gap:4px;min-height:40px}
@@ -2593,6 +2598,7 @@ function togglePipeLocalOnly() {
 /* â”€â”€ Repo Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 let diagRefreshTimer = { chain: null, pipeline: null };
 let diagRequestSeq = { chain: 0, pipeline: 0 };
+let diagActionRunState = { chain: {}, pipeline: {} };
 const DIAG_CATEGORY_LABEL = {
   repository: 'Repository',
   codex: 'Codex',
@@ -2697,6 +2703,15 @@ function renderDiagnostics(target, payload) {
         const title = action.title || 'Action';
         const detail = action.detail || '';
         const command = action.command || '';
+        const key = action.key || '';
+        const canRun = !!action.can_run;
+        const runState = (diagActionRunState[target] || {})[key] || null;
+        const runClass = runState
+          ? (runState.ok ? 'ok' : 'fail')
+          : '';
+        const runText = runState
+          ? ('Last run: ' + (runState.ok ? 'ok' : 'failed') + ' (exit ' + String(runState.exit_code) + ')')
+          : '';
         return '<div class="diag-action ' + cls + '">'
           + '<div class="diag-action-head">'
           +   '<span class="diag-action-rank">' + String(idx + 1) + '.</span>'
@@ -2704,11 +2719,89 @@ function renderDiagnostics(target, payload) {
           + '</div>'
           + (detail ? ('<div class="diag-action-detail">' + escHtml(detail) + '</div>') : '')
           + (command ? ('<div class="diag-action-command">Command: ' + escHtml(command) + '</div>') : '')
+          + (command
+            ? ('<div class="diag-action-controls">'
+              + '<button class="btn" type="button" data-command="' + escAttr(command) + '" onclick="copyDiagnosticsCommand(this)">Copy</button>'
+              + (canRun
+                ? ('<button class="btn btn-primary" type="button" data-target="' + escAttr(target) + '" data-action-key="' + escAttr(key) + '" onclick="runDiagnosticsAction(this)">Run</button>')
+                : '')
+              + '</div>')
+            : '')
+          + (runText ? ('<div class="diag-action-run-state ' + runClass + '">' + escHtml(runText) + '</div>') : '')
           + '</div>';
       }).join('');
   }
 
   scheduleDiagnosticsRefresh(target);
+}
+
+async function copyDiagnosticsCommand(btn) {
+  const command = (btn && btn.dataset && btn.dataset.command) ? btn.dataset.command : '';
+  if (!command) {
+    toast('No command is available for this action.', 'error');
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = command;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    }
+    toast('Copied diagnostics command.', 'success');
+  } catch (e) {
+    toast('Could not copy command to clipboard.', 'error');
+  }
+}
+
+async function runDiagnosticsAction(btn) {
+  const target = (btn && btn.dataset && btn.dataset.target) ? btn.dataset.target : 'chain';
+  const actionKey = (btn && btn.dataset && btn.dataset.actionKey) ? btn.dataset.actionKey : '';
+  if (!actionKey) {
+    toast('Missing diagnostics action key.', 'error');
+    return;
+  }
+  const original = btn.textContent || 'Run';
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  try {
+    const payload = _diagnosticPayload(target);
+    payload.action_key = actionKey;
+    const result = await postJson('/api/diagnostics/actions/run', payload);
+    if (result && result.error) {
+      throw new Error(result.error);
+    }
+    if (!diagActionRunState[target]) {
+      diagActionRunState[target] = {};
+    }
+    diagActionRunState[target][actionKey] = {
+      ok: !!(result && result.ok),
+      exit_code: Number(result && result.exit_code ? result.exit_code : 0),
+    };
+    if (result && result.ok) {
+      toast('Diagnostics action completed.', 'success');
+    } else {
+      const err = (result && result.stderr) ? result.stderr.split('\n')[0] : '';
+      toast(
+        'Diagnostics action failed (exit ' + String((result && result.exit_code) || '?') + ')'
+          + (err ? ': ' + err : '.'),
+        'error'
+      );
+    }
+    await refreshDiagnostics(target, { silent: true });
+  } catch (e) {
+    toast((e && e.message) || 'Failed to run diagnostics action.', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 function scheduleDiagnosticsRefresh(target) {
@@ -3742,6 +3835,10 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function escAttr(s) {
+  return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function renderStopGuidance(elementId, guidance, running) {
