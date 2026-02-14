@@ -91,6 +91,7 @@ def execute_streaming_json_command(
     timeout_seconds: int,
     parse_stdout_line: Callable[[str], CodexEvent | None],
     process_name: str,
+    stdin_text: str | None = None,
     max_events: int | None = None,
     max_stdout_lines: int | None = None,
     max_stderr_lines: int | None = None,
@@ -109,6 +110,7 @@ def execute_streaming_json_command(
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE if stdin_text is not None else None,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -162,6 +164,27 @@ def execute_streaming_json_command(
             return
         if event is not None:
             _append_event(event)
+
+    def _pump_stdin(stream: Any, text: str) -> None:
+        try:
+            stream.write(text)
+            if text and not text.endswith("\n"):
+                stream.write("\n")
+            stream.flush()
+        except Exception:  # pragma: no cover - stdin write failures are non-fatal
+            logger.debug("%s stdin write failed", process_name)
+        finally:
+            with suppress(Exception):
+                stream.close()
+
+    stdin_thread: threading.Thread | None = None
+    if stdin_text is not None and proc.stdin is not None:
+        stdin_thread = threading.Thread(
+            target=_pump_stdin,
+            args=(proc.stdin, stdin_text),
+            daemon=True,
+        )
+        stdin_thread.start()
 
     stdout_thread = threading.Thread(target=_pump_stream, args=("stdout", proc.stdout), daemon=True)
     stderr_thread = threading.Thread(target=_pump_stream, args=("stderr", proc.stderr), daemon=True)
@@ -261,8 +284,13 @@ def execute_streaming_json_command(
             timed_out=timed_out,
         )
     finally:
+        if stdin_thread is not None:
+            stdin_thread.join(timeout=1.0)
         stdout_thread.join(timeout=1.0)
         stderr_thread.join(timeout=1.0)
+        if proc.stdin is not None and not proc.stdin.closed:
+            with suppress(Exception):
+                proc.stdin.close()
         if proc.stdout is not None and not proc.stdout.closed:
             proc.stdout.close()
         if proc.stderr is not None and not proc.stderr.closed:

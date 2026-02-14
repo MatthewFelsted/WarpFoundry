@@ -12,7 +12,7 @@ from codex_manager.codex_cli import (
     _extract_text,
     _extract_usage,
 )
-from codex_manager.schemas import CodexEvent, EventKind
+from codex_manager.schemas import CodexEvent, EventKind, RunResult
 
 
 class TestClassifyEvent:
@@ -200,6 +200,34 @@ class TestCodexRunnerBuildCommand:
         result = runner.run("/nonexistent/path/12345", "test")
         assert result.success is False
         assert "does not exist" in result.errors[0]
+
+    def test_run_uses_stdin_when_prompt_piping_enabled(self, monkeypatch, tmp_path: Path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(codex_binary="codex")
+
+        monkeypatch.setattr(
+            runner,
+            "_should_pipe_prompt_via_stdin",
+            lambda *_args, **_kwargs: True,
+        )
+
+        captured: dict[str, object] = {}
+
+        def _fake_execute(cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
+            captured["cmd"] = cmd
+            captured["cwd"] = cwd
+            captured["stdin_text"] = stdin_text
+            return RunResult(success=True, exit_code=0)
+
+        monkeypatch.setattr(runner, "_execute", _fake_execute)
+
+        result = runner.run(repo, "very long prompt payload", full_auto=True)
+        assert result.success is True
+        assert captured["cwd"] == repo.resolve()
+        assert isinstance(captured["cmd"], list)
+        assert captured["cmd"][-1] == "-"
+        assert captured["stdin_text"] == "very long prompt payload"
 
 
 class TestCodexRunnerAggregate:

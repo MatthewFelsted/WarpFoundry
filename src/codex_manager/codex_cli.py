@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 # Default inactivity timeout for a single Codex run (seconds).
 DEFAULT_TIMEOUT = 600  # 10 minutes
 DEFAULT_CODEX_MODEL = "gpt-5.3-codex"
+_WINDOWS_COMMAND_LINE_LIMIT = 32767
+_COMMAND_LINE_SAFETY_MARGIN = 2048
+_POSIX_PROMPT_ARG_LIMIT = 60000
 
 
 class CodexRunner(AgentRunner):
@@ -130,14 +134,30 @@ class CodexRunner(AgentRunner):
                 errors=[f"repo_path does not exist: {repo_path}"],
             )
 
+        use_stdin_prompt = self._should_pipe_prompt_via_stdin(
+            prompt,
+            repo_path=repo_path,
+            use_json=use_json,
+            full_auto=full_auto,
+            extra_args=extra_args,
+        )
+        prompt_arg = "-" if use_stdin_prompt else prompt
         cmd = self._build_command(
-            prompt, repo_path, use_json=use_json, full_auto=full_auto, extra_args=extra_args
+            prompt_arg,
+            repo_path,
+            use_json=use_json,
+            full_auto=full_auto,
+            extra_args=extra_args,
         )
         logger.info("Running: %s (cwd=%s)", " ".join(cmd), repo_path)
 
         start = time.monotonic()
         try:
-            result = self._execute(cmd, cwd=repo_path)
+            result = self._execute(
+                cmd,
+                cwd=repo_path,
+                stdin_text=prompt if use_stdin_prompt else None,
+            )
         except Exception as exc:
             return RunResult(
                 success=False,
@@ -190,7 +210,40 @@ class CodexRunner(AgentRunner):
         cmd.append(prompt)
         return cmd
 
-    def _execute(self, cmd: list[str], cwd: Path) -> RunResult:
+    def _should_pipe_prompt_via_stdin(
+        self,
+        prompt: str,
+        *,
+        repo_path: Path,
+        use_json: bool,
+        full_auto: bool,
+        extra_args: list[str] | None,
+    ) -> bool:
+        """Return True when prompt should be supplied via stdin instead of argv.
+
+        On Windows, large prompts can exceed CreateProcess command-line limits.
+        """
+        if os.name != "nt":
+            return len(prompt) >= _POSIX_PROMPT_ARG_LIMIT
+
+        if not prompt:
+            return False
+
+        base_cmd = self._build_command(
+            "",
+            repo_path,
+            use_json=use_json,
+            full_auto=full_auto,
+            extra_args=extra_args,
+        )[:-1]
+        try:
+            estimated = len(subprocess.list2cmdline(base_cmd + [prompt]))
+        except Exception:
+            estimated = sum(len(part) for part in base_cmd) + len(prompt) + len(base_cmd) + 1
+
+        return estimated >= (_WINDOWS_COMMAND_LINE_LIMIT - _COMMAND_LINE_SAFETY_MARGIN)
+
+    def _execute(self, cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
         """Spawn the subprocess and consume its JSONL stdout."""
         env = {**os.environ, **self.env_overrides}
         inactivity_timeout = self.timeout if self.timeout > 0 else None
@@ -201,6 +254,7 @@ class CodexRunner(AgentRunner):
             timeout_seconds=self.timeout,
             parse_stdout_line=self._parse_line,
             process_name="Codex",
+            stdin_text=stdin_text,
         )
         stderr_text = execution.stderr_text
 
