@@ -99,16 +99,74 @@ def test_pipeline_parser_accepts_binary_overrides() -> None:
     assert args.claude_bin == "claude-dev"
 
 
+def test_gui_parser_accepts_pipeline_resume_checkpoint() -> None:
+    parser = main_module._build_parser()
+    args = parser.parse_args(
+        [
+            "gui",
+            "--port",
+            "7001",
+            "--pipeline-resume-checkpoint",
+            "C:/tmp/pipeline_resume.json",
+        ]
+    )
+    assert args.port == 7001
+    assert args.pipeline_resume_checkpoint == "C:/tmp/pipeline_resume.json"
+
+
 def test_main_dispatches_gui(monkeypatch) -> None:
     calls: dict[str, object] = {}
 
-    def fake_gui_main(*, port: int, open_browser: bool) -> None:
+    def fake_gui_main(
+        *,
+        port: int,
+        open_browser: bool,
+        pipeline_resume_checkpoint: str = "",
+    ) -> None:
         calls["port"] = port
         calls["open_browser"] = open_browser
+        calls["pipeline_resume_checkpoint"] = pipeline_resume_checkpoint
 
     monkeypatch.setattr("codex_manager.gui.main", fake_gui_main)
     assert main_module.main(["gui", "--port", "6111", "--no-browser"]) == 0
-    assert calls == {"port": 6111, "open_browser": False}
+    assert calls == {
+        "port": 6111,
+        "open_browser": False,
+        "pipeline_resume_checkpoint": "",
+    }
+
+
+def test_main_dispatches_gui_with_pipeline_resume_checkpoint(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    def fake_gui_main(
+        *,
+        port: int,
+        open_browser: bool,
+        pipeline_resume_checkpoint: str = "",
+    ) -> None:
+        calls["port"] = port
+        calls["open_browser"] = open_browser
+        calls["pipeline_resume_checkpoint"] = pipeline_resume_checkpoint
+
+    monkeypatch.setattr("codex_manager.gui.main", fake_gui_main)
+    assert (
+        main_module.main(
+            [
+                "gui",
+                "--port",
+                "6111",
+                "--pipeline-resume-checkpoint",
+                "C:/tmp/pipeline_resume.json",
+            ]
+        )
+        == 0
+    )
+    assert calls == {
+        "port": 6111,
+        "open_browser": True,
+        "pipeline_resume_checkpoint": "C:/tmp/pipeline_resume.json",
+    }
 
 
 def test_main_loop_mode_invalid_repo_path(capsys, tmp_path: Path) -> None:

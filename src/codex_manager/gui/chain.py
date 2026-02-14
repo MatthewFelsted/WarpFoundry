@@ -1,4 +1,4 @@
-"""Task-chain executor — runs a multi-step improvement loop in a background thread."""
+﻿"""Task-chain executor â€” runs a multi-step improvement loop in a background thread."""
 
 from __future__ import annotations
 
@@ -62,6 +62,7 @@ _MUTATING_JOB_TYPES = {
     "performance",
     "security_audit",
     "strategic_product_maximization",
+    "visual_asset_generation",
 }
 
 
@@ -103,10 +104,10 @@ def _agent_log(
 class ChainExecutor:
     """Manages the lifecycle of a task-chain execution.
 
-    * ``start(config)`` — kicks off a daemon thread that iterates through
+    * ``start(config)`` â€” kicks off a daemon thread that iterates through
       the chain's steps in a loop.
-    * ``stop()`` / ``pause()`` / ``resume()`` — thread-safe controls.
-    * ``log_queue`` — a :class:`queue.Queue` of ``{time, level, message}``
+    * ``stop()`` / ``pause()`` / ``resume()`` â€” thread-safe controls.
+    * ``log_queue`` â€” a :class:`queue.Queue` of ``{time, level, message}``
       dicts consumed by the SSE endpoint.
     """
 
@@ -271,14 +272,14 @@ class ChainExecutor:
             errors_file = log_dir / "ERRORS.md"
             if not errors_file.exists():
                 errors_file.write_text(
-                    "# Codex Manager — Runtime Errors\n\n"
+                    "# Codex Manager â€” Runtime Errors\n\n"
                     "This file is auto-generated. Each entry is a runtime error or warning.\n\n",
                     encoding="utf-8",
                 )
             with open(errors_file, "a", encoding="utf-8") as f:
                 tag = "ERROR" if level == "error" else "WARN"
                 date_str = dt.datetime.now().strftime("%Y-%m-%d")
-                f.write(f"- **[{tag}]** `{date_str} {timestamp}` — {message}\n")
+                f.write(f"- **[{tag}]** `{date_str} {timestamp}` â€” {message}\n")
         except Exception:
             pass  # don't let error logging break the chain
 
@@ -335,7 +336,7 @@ class ChainExecutor:
         self.state.elapsed_seconds = time.monotonic() - start_time
         self._log(
             "info",
-            f"Chain finished — {self.state.stop_reason} "
+            f"Chain finished â€” {self.state.stop_reason} "
             f"({self.state.total_loops_completed} loops, "
             f"{self.state.total_steps_completed} steps)",
         )
@@ -809,7 +810,7 @@ class ChainExecutor:
             if binary and not shutil.which(binary):
                 self._log(
                     "error",
-                    f"Agent binary not found: '{binary}' — "
+                    f"Agent binary not found: '{binary}' â€” "
                     f"install it or update the binary path in settings. "
                     f"Steps using [{agent_key}] will fail.",
                 )
@@ -905,7 +906,7 @@ class ChainExecutor:
 
                 loop_aborted = False
 
-                # ── Parallel execution mode ───────────────────────────
+                # â”€â”€ Parallel execution mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if config.parallel_execution and len(enabled_steps) > 1:
                     loop_aborted = self._run_steps_parallel(
                         runners,
@@ -918,7 +919,7 @@ class ChainExecutor:
                         start_time,
                     )
                 else:
-                    # ── Sequential execution (default) ────────────────
+                    # â”€â”€ Sequential execution (default) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     for step_idx, step in enumerate(config.steps):
                         self._pause_event.wait()
                         if self._stop_event.is_set():
@@ -1291,7 +1292,7 @@ class ChainExecutor:
                                         )
                                 self._log(
                                     "error",
-                                    "Step failed — aborting chain (on_failure=abort)",
+                                    "Step failed â€” aborting chain (on_failure=abort)",
                                 )
                                 self.state.stop_reason = "step_failed_abort"
                                 loop_aborted = True
@@ -1343,7 +1344,7 @@ class ChainExecutor:
                         self._log("info", f"Brain assessment: {progress.reasoning[:200]}")
                     if progress.action == "stop":
                         self.state.stop_reason = "brain_converged"
-                        self._log("info", "Brain recommends stopping — goal achieved")
+                        self._log("info", "Brain recommends stopping â€” goal achieved")
                         break
 
                 # Loop-level stop conditions
@@ -1457,7 +1458,7 @@ class ChainExecutor:
         )
         # #endregion
 
-        # ── CUA visual test step ─────────────────────────────────
+        # â”€â”€ CUA visual test step â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if step.job_type == "visual_test" and not override_prompt:
             cua_result = self._execute_cua_step(config, loop_num, step_idx, step)
             self._record_history_note(
@@ -1560,7 +1561,7 @@ class ChainExecutor:
             if self._stop_event.is_set():
                 break
             self._pause_event.wait()
-            # Always pass full_auto=True — agents run non-interactively and
+            # Always pass full_auto=True â€” agents run non-interactively and
             # can't prompt for approval.  Dry-run vs apply controls whether
             # changes are committed or reverted AFTER the agent finishes.
             run_result = self._run_agent_with_keepalive(
@@ -1995,8 +1996,66 @@ class ChainExecutor:
             "---",
             "## Output Instructions",
             f"Write all of your output to the file `{out_file}`.",
-            f"If `{out_file}` already exists, APPEND your new content to the end — do not overwrite previous content.",
+            f"If `{out_file}` already exists, APPEND your new content to the end - do not overwrite previous content.",
         ]
+
+        allow_path_creation = bool(getattr(config, "allow_path_creation", True))
+        dep_policy = str(
+            getattr(config, "dependency_install_policy", "project_only") or "project_only"
+        ).strip().lower()
+        if dep_policy not in {"disallow", "project_only", "allow_system"}:
+            dep_policy = "project_only"
+
+        image_enabled = bool(getattr(config, "image_generation_enabled", False))
+        image_provider = str(getattr(config, "image_provider", "openai") or "openai").strip().lower()
+        if image_provider not in {"openai", "google"}:
+            image_provider = "openai"
+        image_model = str(getattr(config, "image_model", "") or "").strip()
+        if not image_model:
+            image_model = "gpt-image-1" if image_provider == "openai" else "nano-banana"
+
+        lines.append("")
+        lines.append("---")
+        lines.append("## Capability Contract")
+        lines.append(
+            "- File and directory creation inside repository: "
+            + ("allowed." if allow_path_creation else "not allowed; edit existing paths only.")
+        )
+
+        if dep_policy == "disallow":
+            lines.append(
+                "- Dependency installation: not allowed. Do not run pip/npm/brew/apt/choco install commands."
+            )
+        elif dep_policy == "project_only":
+            lines.append(
+                "- Dependency installation: allowed only for project-scoped environments "
+                "(for example venv, uv, poetry, npm/pnpm/yarn in this repo)."
+            )
+            lines.append(
+                "- Do not install global/system-wide dependencies. Prefer pinned versions and minimal additions."
+            )
+        else:
+            lines.append(
+                "- Dependency installation: system-wide and project-scoped installs are allowed when required."
+            )
+            lines.append(
+                "- Keep changes minimal, document why the install is needed, and include rollback notes."
+            )
+
+        if image_enabled:
+            lines.append(
+                f"- Image generation: enabled using provider `{image_provider}` and model `{image_model}`."
+            )
+            if image_provider == "openai":
+                lines.append("- Requires OPENAI_API_KEY in environment.")
+            else:
+                lines.append("- Requires GOOGLE_API_KEY or GEMINI_API_KEY in environment.")
+            lines.append(
+                "- If you generate assets, save files under the repository "
+                "(for example assets/icons, docs/images)."
+            )
+        else:
+            lines.append("- Image generation: disabled for this run.")
 
         if handoff_file:
             lines.append("")
@@ -2020,7 +2079,6 @@ class ChainExecutor:
         lines.append(terminate_step_instruction("step repeat"))
 
         return prompt + "\n" + "\n".join(lines) + "\n"
-
     # ------------------------------------------------------------------
     # CUA visual test step execution
     # ------------------------------------------------------------------
@@ -2083,7 +2141,7 @@ class ChainExecutor:
             save_screenshots=True,
         )
 
-        self._log("info", f"CUA: {provider.value} → {target_url or '(no URL)'}")
+        self._log("info", f"CUA: {provider.value} â†’ {target_url or '(no URL)'}")
         self._log("info", f"CUA task: {task[:120]}...")
 
         step_ref = f"loop{loop_num}:step{step_idx}:visual_test"
@@ -2102,12 +2160,12 @@ class ChainExecutor:
                 self._log("info", f"CUA found {len(result.observations)} observations:")
                 for obs in result.observations[:10]:
                     icon = {
-                        "critical": "🔴",
-                        "major": "🟠",
-                        "minor": "🟡",
-                        "cosmetic": "⚪",
-                        "positive": "🟢",
-                    }.get(obs.severity, "•")
+                        "critical": "ðŸ”´",
+                        "major": "ðŸŸ ",
+                        "minor": "ðŸŸ¡",
+                        "cosmetic": "âšª",
+                        "positive": "ðŸŸ¢",
+                    }.get(obs.severity, "â€¢")
                     self._log("info", f"  {icon} [{obs.severity}] {obs.element}: {obs.actual[:80]}")
 
             if result.summary:
@@ -2203,7 +2261,7 @@ class ChainExecutor:
         self.state.current_step_name = f"Parallel batch ({len(enabled_steps)} steps)"
         self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
 
-        # Map step id → original index in config.steps
+        # Map step id â†’ original index in config.steps
         step_index_map = {s.id: i for i, s in enumerate(config.steps)}
 
         futures_map: dict[object, tuple[int, TaskStep]] = {}
@@ -2214,7 +2272,7 @@ class ChainExecutor:
                 runner = runners.get(agent_key, runners["codex"])
                 self._log(
                     "info",
-                    f"  Dispatching: {step.name or step.job_type} → {runner.name}",
+                    f"  Dispatching: {step.name or step.job_type} â†’ {runner.name}",
                 )
                 fut = pool.submit(
                     self._execute_step,
@@ -2250,7 +2308,7 @@ class ChainExecutor:
 
                 self._log(
                     "info" if result.success else "warn",
-                    f"  Completed: {result.step_name} [{result.agent_used}] — "
+                    f"  Completed: {result.step_name} [{result.agent_used}] â€” "
                     f"{'OK' if result.success else 'FAIL'}",
                 )
                 self.state.results.append(result)
@@ -2378,7 +2436,7 @@ class ChainExecutor:
             self.state.stop_reason = "budget_exhausted"
             self._log(
                 "warn",
-                f"Token budget reached ({self.state.total_tokens:,}/{config.max_total_tokens:,}) — strict budget mode stopping run now",
+                f"Token budget reached ({self.state.total_tokens:,}/{config.max_total_tokens:,}) â€” strict budget mode stopping run now",
             )
         return True
 
@@ -2407,12 +2465,12 @@ class ChainExecutor:
                 )
                 return "no_progress_detected"
 
-        # ── Improvement-threshold check (powers the "unlimited" mode) ──
+        # â”€â”€ Improvement-threshold check (powers the "unlimited" mode) â”€â”€
         # Compare the latest full loop to the previous one.  "Improvement"
         # is measured as a composite of:
-        #   • files changed  (are we still touching things?)
-        #   • net lines changed  (is the delta shrinking?)
-        #   • success rate  (are steps still succeeding?)
+        #   â€¢ files changed  (are we still touching things?)
+        #   â€¢ net lines changed  (is the delta shrinking?)
+        #   â€¢ success rate  (are steps still succeeding?)
         # When the % improvement drops below the configured threshold the
         # chain is considered converged.
         n_enabled = max(1, sum(1 for s in config.steps if s.enabled))
@@ -2430,7 +2488,7 @@ class ChainExecutor:
                 self._log(
                     "info",
                     f"Improvement dropped to {imp_pct:.2f}% "
-                    f"(threshold {threshold}%) — diminishing returns",
+                    f"(threshold {threshold}%) â€” diminishing returns",
                 )
                 return "diminishing_returns"
 
@@ -2496,3 +2554,4 @@ class ChainExecutor:
         # Normalise: 100 means "same as before", below 100 = declining
         # We report how much of the previous loop's impact was retained
         return min(score, 200.0)  # cap at 200% (big jump)
+

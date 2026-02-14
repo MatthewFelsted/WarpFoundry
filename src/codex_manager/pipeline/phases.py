@@ -18,7 +18,15 @@ CodexSandboxMode = Literal["read-only", "workspace-write", "danger-full-access"]
 CodexApprovalPolicy = Literal["untrusted", "on-failure", "on-request", "never"]
 CodexReasoningEffort = Literal["inherit", "low", "medium", "high", "xhigh"]
 CommitFrequency = Literal["per_phase", "per_cycle", "manual"]
+DependencyInstallPolicy = Literal["disallow", "project_only", "allow_system"]
+ImageProvider = Literal["openai", "google"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
+
+
+def _default_image_model(provider: ImageProvider) -> str:
+    if provider == "google":
+        return "nano-banana"
+    return "gpt-image-1"
 
 
 class PipelinePhase(str, Enum):
@@ -30,6 +38,7 @@ class PipelinePhase(str, Enum):
     TESTING = "testing"
     DEBUGGING = "debugging"
     COMMIT = "commit"
+    APPLY_UPGRADES_AND_RESTART = "apply_upgrades_and_restart"
     PROGRESS_REVIEW = "progress_review"
 
     # Visual testing phase (CUA — computer-using agent)
@@ -50,6 +59,7 @@ PHASE_LOG_FILES: dict[PipelinePhase, str] = {
     PipelinePhase.TESTING: "TESTPLAN.md",
     PipelinePhase.DEBUGGING: "ERRORS.md",
     PipelinePhase.COMMIT: "PROGRESS.md",
+    PipelinePhase.APPLY_UPGRADES_AND_RESTART: "PROGRESS.md",
     PipelinePhase.PROGRESS_REVIEW: "PROGRESS.md",
     PipelinePhase.VISUAL_TEST: "TESTPLAN.md",
     PipelinePhase.THEORIZE: "EXPERIMENTS.md",
@@ -66,6 +76,7 @@ DEFAULT_ITERATIONS: dict[PipelinePhase, int] = {
     PipelinePhase.TESTING: 2,  # Design + run tests twice
     PipelinePhase.DEBUGGING: 3,  # Debug up to 3 rounds
     PipelinePhase.COMMIT: 1,  # One commit pass
+    PipelinePhase.APPLY_UPGRADES_AND_RESTART: 1,  # One checkpoint/restart pass
     PipelinePhase.PROGRESS_REVIEW: 1,  # Review once
     PipelinePhase.VISUAL_TEST: 1,  # Visual test once per cycle
     PipelinePhase.THEORIZE: 2,  # Generate hypotheses twice
@@ -96,6 +107,11 @@ SCIENCE_PHASES: list[PipelinePhase] = [
     PipelinePhase.EXPERIMENT,
     PipelinePhase.SKEPTIC,
     PipelinePhase.ANALYZE,
+]
+
+# Self-improvement restart checkpoint phase (optional)
+SELF_IMPROVEMENT_PHASES: list[PipelinePhase] = [
+    PipelinePhase.APPLY_UPGRADES_AND_RESTART,
 ]
 
 
@@ -143,6 +159,13 @@ class PipelineConfig(BaseModel):
     codex_reasoning_effort: CodexReasoningEffort = "xhigh"
     codex_bypass_approvals_and_sandbox: bool = False
     codex_danger_confirmation: str = ""
+    allow_path_creation: bool = True
+    dependency_install_policy: DependencyInstallPolicy = "project_only"
+    image_generation_enabled: bool = False
+    image_provider: ImageProvider = "openai"
+    image_model: str = "gpt-image-1"
+    self_improvement_enabled: bool = False
+    self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_phase: int = 0
     test_cmd: str = "python -m pytest -q"
@@ -190,6 +213,8 @@ class PipelineConfig(BaseModel):
                 "codex_danger_confirmation must be exactly "
                 f"'{DANGER_CONFIRMATION_PHRASE}' when bypass is enabled"
             )
+        if not self.image_model.strip():
+            self.image_model = _default_image_model(self.image_provider)
         return self
 
     def get_phase_order(self) -> list[PhaseConfig]:
@@ -203,6 +228,8 @@ class PipelineConfig(BaseModel):
             order.extend(CUA_PHASES)
         if self.science_enabled:
             order.extend(SCIENCE_PHASES)
+        if self.self_improvement_enabled:
+            order.extend(SELF_IMPROVEMENT_PHASES)
 
         # When per-phase overrides are not provided, inherit the global agent.
         return [PhaseConfig.defaults_for(p, agent=self.agent) for p in order]
@@ -267,6 +294,10 @@ class PipelineState(BaseModel):
     last_log_epoch_ms: int = 0
     last_log_level: str = ""
     last_log_message: str = ""
+    restart_required: bool = False
+    restart_checkpoint_path: str = ""
+    resume_cycle: int = 0
+    resume_phase_index: int = 0
 
     def to_summary(self, *, since_results: int | None = None) -> dict[str, Any]:
         """Return a summary dict for API responses.
@@ -294,6 +325,10 @@ class PipelineState(BaseModel):
             "last_log_epoch_ms": self.last_log_epoch_ms,
             "last_log_level": self.last_log_level,
             "last_log_message": self.last_log_message,
+            "restart_required": self.restart_required,
+            "restart_checkpoint_path": self.restart_checkpoint_path,
+            "resume_cycle": self.resume_cycle,
+            "resume_phase_index": self.resume_phase_index,
         }
         if since_results is None:
             payload["results"] = [r.model_dump() for r in self.results]

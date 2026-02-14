@@ -247,3 +247,16 @@ def test_builtin_catalog_includes_strategic_product_maximization(
     assert detail is not None
     assert detail["name"] == "Strategic Product Maximization"
     assert "STRATEGIC PRODUCT MAXIMIZATION MODE" in detail["prompt"]
+
+
+def test_builtin_catalog_includes_visual_asset_generation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Isolate from user-local prompt overrides for deterministic assertions.
+    monkeypatch.setattr(catalog_module, "_USER_OVERRIDE", tmp_path / "missing.yaml")
+    catalog = PromptCatalog()
+
+    detail = catalog.preset_detail("visual_asset_generation")
+    assert detail is not None
+    assert detail["name"] == "Visual Asset Generation"
+    assert "visual assets" in detail["prompt"].lower()

@@ -254,6 +254,209 @@ def test_pipeline_start_requires_danger_confirmation_when_bypass_enabled(client,
     assert "codex_danger_confirmation" in data["error"]
 
 
+def test_pipeline_phases_api_marks_self_improvement_phase(client):
+    resp = client.get("/api/pipeline/phases")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert isinstance(data, list)
+    restart_phase = next((item for item in data if item.get("key") == "apply_upgrades_and_restart"), None)
+    assert restart_phase is not None
+    assert restart_phase["is_self_improvement"] is True
+
+
+def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
+    class _ChainExec:
+        is_running = True
+
+    class _PipeExec:
+        is_running = False
+
+    monkeypatch.setattr(gui_app_module, "executor", _ChainExec())
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _PipeExec())
+
+    resp = client.get("/api/health")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is True
+    assert isinstance(data["time_epoch_ms"], int)
+    assert data["chain_running"] is True
+    assert data["pipeline_running"] is False
+
+
+def test_chain_start_preflight_requires_image_provider_auth(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    resp = client.post(
+        "/api/chain/start",
+        json=_chain_payload(
+            repo,
+            image_generation_enabled=True,
+            image_provider="openai",
+            image_model="gpt-image-1",
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any("OPENAI_API_KEY" in issue for issue in data.get("issues", []))
+
+
+def test_pipeline_start_preflight_requires_image_provider_auth(
+    client, monkeypatch, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            repo,
+            image_generation_enabled=True,
+            image_provider="google",
+            image_model="nano-banana",
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any(
+        ("GOOGLE_API_KEY" in issue or "GEMINI_API_KEY" in issue)
+        for issue in data.get("issues", [])
+    )
+
+
+def test_pipeline_start_rejects_auto_restart_without_self_improvement(
+    client, monkeypatch, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            repo,
+            self_improvement_enabled=False,
+            self_improvement_auto_restart=True,
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any("self_improvement_auto_restart" in issue for issue in data.get("issues", []))
+
+
+def test_pipeline_start_maps_capability_and_self_improvement_fields(
+    client, monkeypatch, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    captured: dict[str, object] = {}
+
+    class _StubOrchestrator:
+        def __init__(self, repo_path, config):
+            captured["repo_path"] = str(repo_path)
+            captured["config"] = config
+            self.is_running = False
+
+        def start(self):
+            captured["started"] = True
+
+    monkeypatch.setattr(
+        "codex_manager.pipeline.orchestrator.PipelineOrchestrator",
+        _StubOrchestrator,
+    )
+
+    payload = _pipeline_payload(
+        repo,
+        allow_path_creation=False,
+        dependency_install_policy="allow_system",
+        image_generation_enabled=True,
+        image_provider="openai",
+        image_model="gpt-image-1",
+        self_improvement_enabled=True,
+        self_improvement_auto_restart=True,
+    )
+    resp = client.post("/api/pipeline/start", json=payload)
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data == {"status": "started"}
+    assert captured.get("started") is True
+    assert captured.get("repo_path") == str(repo)
+
+    config = captured["config"]
+    assert config.allow_path_creation is False
+    assert config.dependency_install_policy == "allow_system"
+    assert config.image_generation_enabled is True
+    assert config.image_provider == "openai"
+    assert config.image_model == "gpt-image-1"
+    assert config.self_improvement_enabled is True
+    assert config.self_improvement_auto_restart is True
+
+
+def test_system_restart_rejects_missing_checkpoint(client):
+    resp = client.post(
+        "/api/system/restart",
+        json={"pipeline_resume_checkpoint": "C:/missing/pipeline_resume.json"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Checkpoint not found" in data["error"]
+
+
+def test_system_restart_spawns_replacement_server_with_checkpoint(
+    client, monkeypatch, tmp_path: Path
+):
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_SERVER_PORT", 6111)
+
+    observed: dict[str, object] = {}
+
+    def _fake_launch(command):
+        observed["command"] = command
+
+    def _fake_terminate(delay_seconds: float = 0.75):
+        observed["terminated"] = delay_seconds
+
+    monkeypatch.setattr(gui_app_module, "_launch_replacement_server", _fake_launch)
+    monkeypatch.setattr(gui_app_module, "_terminate_current_process", _fake_terminate)
+
+    resp = client.post(
+        "/api/system/restart",
+        json={"pipeline_resume_checkpoint": str(checkpoint)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "restarting"
+    assert data["port"] == 6111
+    assert data["pipeline_resume_checkpoint"] == str(checkpoint.resolve())
+
+    command = observed["command"]
+    assert command[:5] == [gui_app_module.sys.executable, "-m", "codex_manager", "gui", "--port"]
+    assert "--pipeline-resume-checkpoint" in command
+    idx = command.index("--pipeline-resume-checkpoint")
+    assert command[idx + 1] == str(checkpoint.resolve())
+    assert "terminated" in observed
+
+
 def test_chain_outputs_list_and_read_file(client, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     out_dir = repo / ".codex_manager" / "outputs"

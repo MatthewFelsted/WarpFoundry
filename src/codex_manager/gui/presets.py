@@ -135,6 +135,24 @@ _FALLBACK_PRESETS: dict[str, dict] = {
         ),
         "on_failure": "skip",
     },
+    "visual_asset_generation": {
+        "name": "Visual Asset Generation",
+        "icon": "\U0001f3a8",
+        "description": "Generate icons, graphics, and documentation images",
+        "prompt": (
+            "Create or refresh visual assets that improve this project. Generate icons, "
+            "illustrations, diagrams, or screenshots for the GUI and documentation as needed. "
+            "Save assets under repository paths (for example assets/icons or docs/images), "
+            "use clear filenames, and update docs/UI references that should point to the new files."
+        ),
+        "ai_prompt": (
+            "You are a product designer and frontend engineer. Audit this repository for missing "
+            "or low-quality visual assets, then produce the highest-impact set of graphics/icons/images "
+            "using the configured image model integration. Keep style consistent with the product and "
+            "wire the assets into docs or UI where they add clear user value."
+        ),
+        "on_failure": "skip",
+    },
     "performance": {
         "name": "Performance",
         "icon": "\u26a1",

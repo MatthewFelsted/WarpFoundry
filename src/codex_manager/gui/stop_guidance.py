@@ -179,6 +179,18 @@ _PIPELINE_TEMPLATES: dict[str, GuidanceTemplate] = {
             "Review pipeline logs and results to choose the next focus area.",
         ),
     ),
+    "self_restart_requested": GuidanceTemplate(
+        label="Self-restart requested",
+        severity="warn",
+        summary=(
+            "The self-improvement checkpoint phase requested a server restart "
+            "so new code changes can be loaded before continuing."
+        ),
+        next_steps=(
+            "Use the restart action in the GUI, or restart the server manually.",
+            "Reopen the GUI and resume from the reported checkpoint path.",
+        ),
+    ),
 }
 
 

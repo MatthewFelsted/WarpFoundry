@@ -7,7 +7,7 @@
 #
 # Structure:
 #   pipeline.*   — prompts for the autonomous improvement pipeline
-#   presets.*    — prompts for the 8 GUI job-type presets
+#   presets.*    — prompts for the 9 GUI job-type presets
 #   brain.*      — system prompts for the AI thinking layer
 #   scientist.*  — prompts for the hypothesis/experiment engine
 
@@ -237,6 +237,26 @@ pipeline:
       5. Stage and commit the changes
       6. Update PROGRESS.md with the commit summary
 
+  apply_upgrades_and_restart:
+    name: "Apply Upgrades and Restart"
+    description: "Create a resume checkpoint so the server can restart and continue"
+    prompt: |
+      This is the self-improvement checkpoint phase.
+
+      Goals:
+      1. Confirm recent pipeline changes are persisted to the repository.
+      2. Prepare for a controlled server restart so updated code is loaded.
+      3. Record resume context (next cycle/phase) in PROGRESS.md.
+
+      Constraints:
+      - Do not start infinite loops or background daemons from this phase.
+      - Keep output concise and restart-focused.
+      - Prefer idempotent actions so reruns are safe.
+
+      Expected outcome:
+      - A clear checkpoint handoff note that allows the orchestrator/server
+        to restart and resume automatically from the next phase.
+
   progress_review:
     name: "Progress Review"
     description: "Assess overall progress and update tracking documents"
@@ -421,6 +441,30 @@ presets:
       You are a technical writer reviewing this codebase. Find the most poorly
       documented areas and improve them. Focus on public APIs, complex
       algorithms, and configuration. Make the code self-documenting.
+    on_failure: "skip"
+
+  visual_asset_generation:
+    name: "Visual Asset Generation"
+    icon: "\U0001f3a8"
+    description: "Generate icons, graphics, and documentation images"
+    prompt: |
+      Create or refresh visual assets that improve this repository's user
+      experience and documentation quality.
+
+      Focus on:
+      - GUI icons and lightweight illustrations
+      - Documentation diagrams and screenshots
+      - Consistent naming and folder structure (for example assets/icons, docs/images)
+
+      After generating assets:
+      - Save files in-repo with clear, stable names
+      - Update references in docs/UI to use the new assets
+      - Note what was created and where it is used
+    ai_prompt: |
+      You are a product designer and frontend engineer. Audit this repository
+      for missing or low-quality visual assets, then create the highest-impact
+      set of icons/graphics/images using the configured image model integration.
+      Keep visual style consistent and wire assets into docs/UI where they add value.
     on_failure: "skip"
 
   performance:

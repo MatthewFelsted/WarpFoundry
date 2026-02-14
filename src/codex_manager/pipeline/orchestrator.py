@@ -96,6 +96,9 @@ class PipelineOrchestrator:
         config: PipelineConfig | None = None,
         catalog: PromptCatalog | None = None,
         log_callback: Callable[[str, str], None] | None = None,
+        *,
+        resume_cycle: int = 1,
+        resume_phase_index: int = 0,
     ) -> None:
         self.repo_path = Path(repo_path).resolve()
         self.config = config or PipelineConfig()
@@ -113,6 +116,8 @@ class PipelineOrchestrator:
         self._science_experiment_by_hypothesis: dict[str, str] = {}
         self._brain_logbook: BrainLogbook | None = None
         self._history_logbook: HistoryLogbook | None = None
+        self._resume_cycle = max(1, int(resume_cycle))
+        self._resume_phase_index = max(0, int(resume_phase_index))
 
     # ------------------------------------------------------------------
     # Public controls
@@ -131,6 +136,8 @@ class PipelineOrchestrator:
         self.state = PipelineState(
             running=True,
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            resume_cycle=self._resume_cycle,
+            resume_phase_index=self._resume_phase_index,
         )
         self._stop_event.clear()
         self._pause_event.set()
@@ -152,6 +159,8 @@ class PipelineOrchestrator:
         self.state = PipelineState(
             running=True,
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+            resume_cycle=self._resume_cycle,
+            resume_phase_index=self._resume_phase_index,
         )
         self._stop_event.clear()
         self._pause_event.set()
@@ -288,6 +297,10 @@ class PipelineOrchestrator:
             "total_phases_completed": self.state.total_phases_completed,
             "total_tokens": self.state.total_tokens,
             "elapsed_seconds": round(self.state.elapsed_seconds, 1),
+            "restart_required": bool(self.state.restart_required),
+            "restart_checkpoint_path": self.state.restart_checkpoint_path,
+            "resume_cycle": self.state.resume_cycle,
+            "resume_phase_index": self.state.resume_phase_index,
         }
         if extra_history_context:
             history_context.update(extra_history_context)
@@ -937,6 +950,38 @@ class PipelineOrchestrator:
             normalized.add("codex" if agent in {"", "auto"} else agent)
         return normalized
 
+    @staticmethod
+    def _image_provider_auth_issue(provider: str) -> str | None:
+        provider_key = (provider or "openai").strip().lower()
+        if provider_key == "google":
+            if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+                return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+            return None
+        if not os.getenv("OPENAI_API_KEY"):
+            return "Image generation (openai provider) requires OPENAI_API_KEY."
+        return None
+
+    def _write_restart_checkpoint(
+        self,
+        *,
+        config: PipelineConfig,
+        next_cycle: int,
+        next_phase_index: int,
+    ) -> Path:
+        checkpoint_dir = self.repo_path / ".codex_manager" / "state"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = checkpoint_dir / "pipeline_resume.json"
+        payload = {
+            "version": 1,
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "repo_path": str(self.repo_path),
+            "config": config.model_dump(),
+            "resume_cycle": max(1, int(next_cycle)),
+            "resume_phase_index": max(0, int(next_phase_index)),
+        }
+        checkpoint_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return checkpoint_path
+
     def _preflight_issues(self, config: PipelineConfig, repo: Path) -> list[str]:
         issues: list[str] = []
         phase_order = config.get_phase_order()
@@ -946,6 +991,16 @@ class PipelineOrchestrator:
         write_error = self._repo_write_error(repo)
         if write_error:
             issues.append(write_error)
+
+        if config.image_generation_enabled:
+            image_issue = self._image_provider_auth_issue(config.image_provider)
+            if image_issue:
+                issues.append(image_issue)
+
+        if config.self_improvement_auto_restart and not config.self_improvement_enabled:
+            issues.append(
+                "self_improvement_auto_restart requires self_improvement_enabled to be true."
+            )
 
         for agent in sorted(self._collect_required_agents(config)):
             if agent == "codex":
@@ -1027,6 +1082,10 @@ class PipelineOrchestrator:
                 "phase_order": [p.phase.value for p in config.get_phase_order()],
                 "science_enabled": bool(config.science_enabled),
                 "brain_enabled": bool(config.brain_enabled),
+                "resume_cycle": self._resume_cycle,
+                "resume_phase_index": self._resume_phase_index,
+                "self_improvement_enabled": bool(config.self_improvement_enabled),
+                "self_improvement_auto_restart": bool(config.self_improvement_auto_restart),
             },
         )
 
@@ -1160,9 +1219,18 @@ class PipelineOrchestrator:
         # Unlimited mode uses a very high ceiling; the improvement-threshold
         # check (inside _check_stop_conditions) is what actually ends the run.
         effective_max = 999_999 if config.unlimited else config.max_cycles
+        start_cycle = max(1, int(self._resume_cycle))
+        start_phase_index = max(0, int(self._resume_phase_index))
+        if start_cycle > 1 or start_phase_index > 0:
+            self._log(
+                "info",
+                "Resuming pipeline from checkpoint: "
+                f"cycle={start_cycle}, phase_index={start_phase_index}",
+            )
+            self.state.total_cycles_completed = max(0, start_cycle - 1)
 
         try:
-            for cycle_num in range(1, effective_max + 1):
+            for cycle_num in range(start_cycle, effective_max + 1):
                 if self._stop_event.is_set():
                     self.state.stop_reason = "user_stopped"
                     break
@@ -1186,7 +1254,16 @@ class PipelineOrchestrator:
                 cycle_science_commit_ok = True
                 cycle_science_commit_reason = ""
 
-                for phase_cfg in phase_order:
+                cycle_phase_start_index = start_phase_index if cycle_num == start_cycle else 0
+                if cycle_phase_start_index > 0:
+                    self._log(
+                        "info",
+                        f"Skipping to phase index {cycle_phase_start_index} for resumed cycle {cycle_num}.",
+                    )
+
+                for phase_idx, phase_cfg in enumerate(phase_order):
+                    if phase_idx < cycle_phase_start_index:
+                        continue
                     self._pause_event.wait()
                     if self._stop_event.is_set():
                         self.state.stop_reason = "user_stopped"
@@ -1195,6 +1272,117 @@ class PipelineOrchestrator:
 
                     phase = phase_cfg.phase
                     self.state.current_phase = phase.value
+
+                    if phase == PipelinePhase.APPLY_UPGRADES_AND_RESTART:
+                        self.state.current_iteration = 1
+                        self.state.current_phase_started_at_epoch_ms = int(time.time() * 1000)
+
+                        next_cycle = cycle_num
+                        next_phase_index = phase_idx + 1
+                        if next_phase_index >= len(phase_order):
+                            next_cycle = cycle_num + 1
+                            next_phase_index = 0
+
+                        has_remaining_work = bool(config.unlimited) or next_cycle <= config.max_cycles
+
+                        summary = (
+                            "Self-improvement checkpoint evaluated. "
+                            f"next_cycle={next_cycle}, next_phase_index={next_phase_index}."
+                        )
+                        self._log("info", summary)
+                        restart_result = PhaseResult(
+                            cycle=cycle_num,
+                            phase=phase.value,
+                            iteration=1,
+                            agent_success=True,
+                            validation_success=True,
+                            tests_passed=True,
+                            success=True,
+                            test_outcome="skipped",
+                            test_summary=summary,
+                            test_exit_code=0,
+                            files_changed=0,
+                            net_lines_changed=0,
+                            changed_files=[],
+                            prompt_used="Self-improvement checkpoint",
+                            agent_final_message=summary,
+                            agent_used="system",
+                        )
+                        self.state.results.append(restart_result)
+                        self.state.successes += 1
+                        self.state.total_phases_completed += 1
+                        self.state.elapsed_seconds = time.monotonic() - start_time
+
+                        self._record_history_note(
+                            "phase_result",
+                            (
+                                f"Cycle {cycle_num}, phase '{phase.value}' finished with status=ok."
+                            ),
+                            level="info",
+                            context={
+                                "cycle": cycle_num,
+                                "phase": phase.value,
+                                "iteration": 1,
+                                "mode": config.mode,
+                                "agent_success": True,
+                                "validation_success": True,
+                                "tests_passed": True,
+                                "success": True,
+                                "test_outcome": "skipped",
+                                "files_changed": 0,
+                                "net_lines_changed": 0,
+                                "changed_files": [],
+                                "duration_seconds": 0.0,
+                                "commit_sha": None,
+                                "terminate_repeats": False,
+                                "error_message": "",
+                            },
+                        )
+
+                        if has_remaining_work:
+                            checkpoint_path = self._write_restart_checkpoint(
+                                config=config,
+                                next_cycle=next_cycle,
+                                next_phase_index=next_phase_index,
+                            )
+                            self.state.restart_required = True
+                            self.state.restart_checkpoint_path = str(checkpoint_path)
+                            self.state.resume_cycle = max(1, int(next_cycle))
+                            self.state.resume_phase_index = max(0, int(next_phase_index))
+                            self.tracker.append(
+                                "PROGRESS.md",
+                                (
+                                    "\n## Self-Improvement Checkpoint\n\n"
+                                    f"- Created: {dt.datetime.now(dt.timezone.utc).isoformat()}\n"
+                                    f"- Resume cycle: {self.state.resume_cycle}\n"
+                                    f"- Resume phase index: {self.state.resume_phase_index}\n"
+                                    f"- Checkpoint: {checkpoint_path}\n"
+                                ),
+                            )
+                            self._record_history_note(
+                                "self_restart_requested",
+                                "Pipeline requested restart checkpoint for self-improvement.",
+                                level="warn",
+                                context={
+                                    "checkpoint_path": str(checkpoint_path),
+                                    "resume_cycle": self.state.resume_cycle,
+                                    "resume_phase_index": self.state.resume_phase_index,
+                                    "auto_restart": bool(config.self_improvement_auto_restart),
+                                },
+                            )
+                            self._log(
+                                "warn",
+                                "Self-improvement checkpoint created. Restart required to continue.",
+                            )
+                            self.state.stop_reason = "self_restart_requested"
+                            cycle_aborted = True
+                            break
+
+                        self._log(
+                            "info",
+                            "Self-improvement checkpoint phase skipped restart because no work remains.",
+                        )
+                        continue
 
                     # CUA visual test phase - runs separately
                     if phase == PipelinePhase.VISUAL_TEST:
@@ -1748,6 +1936,8 @@ class PipelineOrchestrator:
                     break
 
                 self.state.total_cycles_completed = cycle_num
+                self.state.resume_cycle = cycle_num + 1
+                self.state.resume_phase_index = 0
 
                 # Brain progress assessment between cycles
                 if brain.enabled and cycle_num >= 2:
@@ -1820,6 +2010,60 @@ class PipelineOrchestrator:
         parts.append("Use this repository as the single source of truth for this run.")
         parts.append("Do not search for, switch to, or request any other repository/project.")
         parts.append("Do not read or modify files outside this repository root.")
+        parts.append("")
+
+        allow_path_creation = bool(getattr(self.config, "allow_path_creation", True))
+        dep_policy = str(
+            getattr(self.config, "dependency_install_policy", "project_only") or "project_only"
+        ).strip().lower()
+        if dep_policy not in {"disallow", "project_only", "allow_system"}:
+            dep_policy = "project_only"
+        image_enabled = bool(getattr(self.config, "image_generation_enabled", False))
+        image_provider = str(getattr(self.config, "image_provider", "openai") or "openai").strip().lower()
+        if image_provider not in {"openai", "google"}:
+            image_provider = "openai"
+        image_model = str(getattr(self.config, "image_model", "") or "").strip()
+        if not image_model:
+            image_model = "gpt-image-1" if image_provider == "openai" else "nano-banana"
+
+        parts.append("--- CAPABILITY CONTRACT ---")
+        parts.append(
+            "File and directory creation inside repository: "
+            + ("allowed." if allow_path_creation else "not allowed; edit existing paths only.")
+        )
+        if dep_policy == "disallow":
+            parts.append(
+                "Dependency installation: not allowed. Do not run pip/npm/brew/apt/choco install commands."
+            )
+        elif dep_policy == "project_only":
+            parts.append(
+                "Dependency installation: allowed only for project-scoped environments "
+                "(for example venv, uv, poetry, npm/pnpm/yarn in this repo)."
+            )
+            parts.append(
+                "Do not install global/system-wide dependencies. Prefer pinned versions and minimal additions."
+            )
+        else:
+            parts.append(
+                "Dependency installation: system-wide and project-scoped installs are allowed when required."
+            )
+            parts.append(
+                "Keep changes minimal, document why installs are needed, and include rollback notes."
+            )
+
+        if image_enabled:
+            parts.append(
+                f"Image generation: enabled using provider `{image_provider}` and model `{image_model}`."
+            )
+            if image_provider == "openai":
+                parts.append("Requires OPENAI_API_KEY in environment.")
+            else:
+                parts.append("Requires GOOGLE_API_KEY or GEMINI_API_KEY in environment.")
+            parts.append(
+                "Save generated assets under repository paths such as assets/icons or docs/images."
+            )
+        else:
+            parts.append("Image generation: disabled for this run.")
         parts.append("")
 
         # Base prompt

@@ -1377,6 +1377,123 @@ def test_unlimited_cycle_logs_and_completion_messages_are_ascii_safe(monkeypatch
         msg.encode("ascii")
 
 
+def test_self_improvement_phase_requests_restart_and_writes_checkpoint(
+    monkeypatch, tmp_path: Path
+):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=2,
+        test_cmd="",
+        self_improvement_enabled=True,
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Run ideation.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.APPLY_UPGRADES_AND_RESTART,
+                iterations=1,
+                custom_prompt="Prepare restart checkpoint.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.TESTING,
+                iterations=1,
+                custom_prompt="Run tests.",
+            ),
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "self_restart_requested"
+    assert state.restart_required is True
+    assert state.resume_cycle == 1
+    assert state.resume_phase_index == 2
+    assert any(r.phase == "apply_upgrades_and_restart" for r in state.results)
+
+    checkpoint = Path(state.restart_checkpoint_path)
+    assert checkpoint.is_file()
+
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert payload["repo_path"] == str(repo.resolve())
+    assert payload["resume_cycle"] == 1
+    assert payload["resume_phase_index"] == 2
+    assert payload["config"]["self_improvement_enabled"] is True
+
+
+def test_resume_cycle_and_phase_index_starts_from_checkpoint_position(
+    monkeypatch, tmp_path: Path
+):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    class _RecordPromptRunner:
+        name = "StubCodex"
+        prompts: ClassVar[list[str]] = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+            self.__class__.prompts.append(prompt)
+            return RunResult(
+                success=True,
+                exit_code=0,
+                usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
+
+    _RecordPromptRunner.prompts.clear()
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _RecordPromptRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=2,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Run ideation.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.TESTING,
+                iterations=1,
+                custom_prompt="Run tests.",
+            ),
+        ],
+    )
+
+    state = PipelineOrchestrator(
+        repo_path=repo,
+        config=cfg,
+        resume_cycle=2,
+        resume_phase_index=1,
+    ).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    assert state.total_cycles_completed == 2
+    assert len(state.results) == 1
+    assert state.results[0].cycle == 2
+    assert state.results[0].phase == "testing"
+    assert _RecordPromptRunner.prompts
+    assert "Pipeline Cycle 2, Phase: testing" in _RecordPromptRunner.prompts[0]
+
+
 def test_orchestrator_source_has_no_known_mojibake_sequences() -> None:
     source_text = Path(orchestrator_module.__file__).read_text(encoding="utf-8")
 

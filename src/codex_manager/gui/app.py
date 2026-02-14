@@ -1,4 +1,4 @@
-"""Flask web application - serves the GUI and provides API endpoints."""
+﻿"""Flask web application - serves the GUI and provides API endpoints."""
 
 from __future__ import annotations
 
@@ -97,6 +97,8 @@ _DIAGNOSTIC_ACTION_TIMEOUT_SECONDS = 20
 _DIAGNOSTIC_ACTION_OUTPUT_MAX_CHARS = 4000
 _ATOMIC_REPLACE_MAX_RETRIES = 8
 _ATOMIC_REPLACE_RETRY_SECONDS = 0.01
+_SERVER_PORT = 5088
+_SERVER_OPEN_BROWSER = True
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -285,6 +287,20 @@ def _agent_preflight_issues(
     return issues
 
 
+def _image_provider_auth_issue(enabled: bool, provider: str) -> str | None:
+    """Return an auth/config issue for configured image generation provider."""
+    if not enabled:
+        return None
+    provider_key = (provider or "openai").strip().lower()
+    if provider_key == "google":
+        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+        return None
+    if not os.getenv("OPENAI_API_KEY"):
+        return "Image generation (openai provider) requires OPENAI_API_KEY."
+    return None
+
+
 def _normalize_requested_agents(raw_agents: object) -> list[str]:
     """Normalize requested diagnostics agents, defaulting to Codex + Claude."""
     normalized: list[str] = []
@@ -450,6 +466,14 @@ def _chain_preflight_issues(config: ChainConfig) -> list[str]:
             claude_binary=config.claude_binary,
         )
     )
+
+    image_issue = _image_provider_auth_issue(
+        bool(config.image_generation_enabled),
+        config.image_provider,
+    )
+    if image_issue:
+        issues.append(image_issue)
+
     return issues
 
 
@@ -481,6 +505,17 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
             claude_binary=config.claude_binary,
         )
     )
+
+    image_issue = _image_provider_auth_issue(
+        bool(config.image_generation_enabled),
+        config.image_provider,
+    )
+    if image_issue:
+        issues.append(image_issue)
+
+    if config.self_improvement_auto_restart and not config.self_improvement_enabled:
+        issues.append("self_improvement_auto_restart requires self_improvement_enabled.")
+
     return issues
 
 
@@ -571,15 +606,28 @@ def _attach_stop_guidance(
     return payload
 
 
-# ── Page ──────────────────────────────────────────────────────────────
+# â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/")
 def index():
     return render_template("index.html", recipes_payload=_recipe_template_payload())
 
+@app.route("/api/health")
+def api_health():
+    """Lightweight liveness endpoint for frontend reconnect handling."""
+    global _pipeline_executor
+    pipeline_running = bool(_pipeline_executor is not None and _pipeline_executor.is_running)
+    return jsonify(
+        {
+            "ok": True,
+            "time_epoch_ms": int(time.time() * 1000),
+            "chain_running": bool(executor.is_running),
+            "pipeline_running": pipeline_running,
+        }
+    )
 
-# ── Presets ───────────────────────────────────────────────────────────
+# â”€â”€ Presets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/docs")
@@ -650,7 +698,7 @@ def api_recipe_detail(recipe_id: str):
     return jsonify(recipe)
 
 
-# ── Chain control ─────────────────────────────────────────────────────
+# â”€â”€ Chain control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/chain/start", methods=["POST"])
@@ -767,7 +815,7 @@ def api_chain_output_file(filename: str):
     )
 
 
-# ── SSE live log stream ──────────────────────────────────────────────
+# â”€â”€ SSE live log stream â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/stream")
@@ -783,7 +831,7 @@ def api_stream():
     return Response(generate(), mimetype="text/event-stream")
 
 
-# ── Ollama (local models) ─────────────────────────────────────────────
+# â”€â”€ Ollama (local models) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/ollama/models")
@@ -806,7 +854,7 @@ def api_ollama_models():
     )
 
 
-# ── Repo validation ──────────────────────────────────────────────────
+# â”€â”€ Repo validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/validate-repo", methods=["POST"])
@@ -920,7 +968,7 @@ def api_diagnostics_run_action():
     )
 
 
-# ── Directory browser ────────────────────────────────────────────
+# â”€â”€ Directory browser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/browse-dirs", methods=["POST"])
@@ -974,7 +1022,7 @@ def api_browse_dirs():
     return jsonify(result)
 
 
-# ── Project creation ─────────────────────────────────────────────────
+# â”€â”€ Project creation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/project/create", methods=["POST"])
@@ -1114,7 +1162,7 @@ def api_create_project():
         return jsonify({"error": str(exc)}), 500
 
 
-# ── Config persistence ───────────────────────────────────────────────
+# â”€â”€ Config persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/api/configs")
@@ -1170,16 +1218,16 @@ def api_load_config():
     return jsonify(config)
 
 
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Pipeline API
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 def _get_pipeline():
     """Get or create the global pipeline executor."""
     global _pipeline_executor
     if _pipeline_executor is None:
-        # Placeholder — will be configured on start
+        # Placeholder â€” will be configured on start
         _pipeline_executor = None
     return _pipeline_executor
 
@@ -1193,6 +1241,7 @@ def api_pipeline_phases():
         DEFAULT_PHASE_ORDER,
         PHASE_LOG_FILES,
         SCIENCE_PHASES,
+        SELF_IMPROVEMENT_PHASES,
     )
 
     # Load prompt catalog for phase descriptions and prompt text
@@ -1204,10 +1253,11 @@ def api_pipeline_phases():
         catalog = None
 
     phases = []
-    for phase in list(DEFAULT_PHASE_ORDER) + CUA_PHASES + SCIENCE_PHASES:
+    for phase in list(DEFAULT_PHASE_ORDER) + CUA_PHASES + SCIENCE_PHASES + SELF_IMPROVEMENT_PHASES:
         key = phase.value
         is_science = phase in SCIENCE_PHASES
         is_cua = phase in CUA_PHASES
+        is_self_improvement = phase in SELF_IMPROVEMENT_PHASES
 
         # Get prompt info from catalog
         prompt_text = ""
@@ -1229,6 +1279,7 @@ def api_pipeline_phases():
                 "log_file": PHASE_LOG_FILES.get(phase, ""),
                 "is_science": is_science,
                 "is_cua": is_cua,
+                "is_self_improvement": is_self_improvement,
                 "description": description,
                 "prompt": prompt_text,
             }
@@ -1302,6 +1353,13 @@ def api_pipeline_start():
         codex_reasoning_effort=gui_config.codex_reasoning_effort,
         codex_bypass_approvals_and_sandbox=gui_config.codex_bypass_approvals_and_sandbox,
         codex_danger_confirmation=gui_config.codex_danger_confirmation,
+        allow_path_creation=gui_config.allow_path_creation,
+        dependency_install_policy=gui_config.dependency_install_policy,
+        image_generation_enabled=gui_config.image_generation_enabled,
+        image_provider=gui_config.image_provider,
+        image_model=gui_config.image_model,
+        self_improvement_enabled=gui_config.self_improvement_enabled,
+        self_improvement_auto_restart=gui_config.self_improvement_auto_restart,
         timeout_per_phase=gui_config.timeout_per_phase,
         max_total_tokens=gui_config.max_total_tokens,
         strict_token_budget=gui_config.strict_token_budget,
@@ -1449,9 +1507,9 @@ def api_pipeline_log(filename: str):
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # CUA (Computer-Using Agent) API
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 _cua_result = None  # latest CUA session result (including in-flight placeholder)
 _cua_thread: threading.Thread | None = None
@@ -1580,9 +1638,9 @@ def api_cua_providers():
     return jsonify(providers)
 
 
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Prompt Catalog API
-# ══════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 @app.route("/api/prompts")
@@ -1620,21 +1678,168 @@ def api_prompts_pipeline():
         return jsonify({"error": str(exc)}), 500
 
 
-# ── Launcher ─────────────────────────────────────────────────────────
+# â”€â”€ Launcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+
+
+def _restart_creation_flags() -> int:
+    """Return platform-specific subprocess creation flags for detached restart."""
+    if os.name != "nt":
+        return 0
+    detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+    new_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+    return int(detached | new_group)
+
+
+def _build_gui_restart_command(
+    *,
+    port: int,
+    pipeline_resume_checkpoint: str = "",
+) -> list[str]:
+    cmd = [sys.executable, "-m", "codex_manager", "gui", "--port", str(port), "--no-browser"]
+    if pipeline_resume_checkpoint:
+        cmd.extend(["--pipeline-resume-checkpoint", pipeline_resume_checkpoint])
+    return cmd
+
+
+def _launch_replacement_server(command: list[str]) -> None:
+    kwargs: dict[str, object] = {
+        "cwd": str(Path.cwd()),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = _restart_creation_flags()
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(command, **kwargs)
+
+
+def _terminate_current_process(delay_seconds: float = 0.75) -> None:
+    def _exit_now() -> None:
+        os._exit(0)
+
+    Timer(delay_seconds, _exit_now).start()
+
+
+@app.route("/api/system/restart", methods=["POST"])
+def api_system_restart():
+    """Spawn a replacement GUI server process, then terminate this one."""
+    data = request.get_json(silent=True) or {}
+    checkpoint_raw = str(
+        data.get("pipeline_resume_checkpoint") or data.get("checkpoint_path") or ""
+    ).strip()
+    checkpoint_path = ""
+    if checkpoint_raw:
+        p = Path(checkpoint_raw)
+        if not p.is_file():
+            return jsonify({"error": f"Checkpoint not found: {checkpoint_raw}"}), 400
+        checkpoint_path = str(p.resolve())
+
+    command = _build_gui_restart_command(
+        port=_SERVER_PORT,
+        pipeline_resume_checkpoint=checkpoint_path,
+    )
+    try:
+        _launch_replacement_server(command)
+    except Exception as exc:
+        return jsonify({"error": f"Could not restart server: {exc}"}), 500
+
+    _terminate_current_process()
+    return jsonify(
+        {
+            "status": "restarting",
+            "port": _SERVER_PORT,
+            "pipeline_resume_checkpoint": checkpoint_path,
+        }
+    )
 
 def _open_browser(port: int) -> None:
     webbrowser.open(f"http://127.0.0.1:{port}")
 
 
-def run_gui(port: int = 5088, open_browser_: bool = True) -> None:
+def _resume_pipeline_from_checkpoint(checkpoint_path: str) -> tuple[bool, str]:
+    """Resume a pipeline run from a restart checkpoint file."""
+    global _pipeline_executor
+
+    checkpoint_raw = str(checkpoint_path or "").strip()
+    if not checkpoint_raw:
+        return False, "No checkpoint provided."
+
+    checkpoint = Path(checkpoint_raw).expanduser()
+    if not checkpoint.is_file():
+        return False, f"Checkpoint not found: {checkpoint}"
+
+    try:
+        payload = json.loads(_read_text_utf8_resilient(checkpoint))
+    except Exception as exc:
+        return False, f"Could not parse checkpoint: {exc}"
+
+    if not isinstance(payload, dict):
+        return False, "Checkpoint payload must be an object."
+
+    repo_path = str(payload.get("repo_path") or "").strip()
+    if not repo_path:
+        return False, "Checkpoint missing repo_path."
+    if not Path(repo_path).is_dir():
+        return False, f"Checkpoint repo_path not found: {repo_path}"
+
+    config_payload = payload.get("config")
+    if not isinstance(config_payload, dict):
+        return False, "Checkpoint missing pipeline config."
+
+    resume_cycle = int(payload.get("resume_cycle") or 1)
+    resume_phase_index = int(payload.get("resume_phase_index") or 0)
+
+    try:
+        from codex_manager.pipeline.phases import PipelineConfig
+        from codex_manager.pipeline.orchestrator import PipelineOrchestrator
+
+        config = PipelineConfig(**config_payload)
+        _pipeline_executor = PipelineOrchestrator(
+            repo_path=repo_path,
+            config=config,
+            resume_cycle=resume_cycle,
+            resume_phase_index=resume_phase_index,
+        )
+        _pipeline_executor.start()
+        checkpoint.unlink(missing_ok=True)
+        return (
+            True,
+            "Resumed pipeline from checkpoint "
+            f"(cycle={resume_cycle}, phase_index={resume_phase_index}).",
+        )
+    except Exception as exc:
+        return False, f"Could not resume pipeline from checkpoint: {exc}"
+
+
+def run_gui(
+    port: int = 5088,
+    open_browser_: bool = True,
+    pipeline_resume_checkpoint: str = "",
+) -> None:
     """Start the Flask development server."""
+    global _SERVER_PORT, _SERVER_OPEN_BROWSER
+    _SERVER_PORT = int(port)
+    _SERVER_OPEN_BROWSER = bool(open_browser_)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    if pipeline_resume_checkpoint:
+        resumed, detail = _resume_pipeline_from_checkpoint(pipeline_resume_checkpoint)
+        if resumed:
+            logger.info("Startup resume: %s", detail)
+        else:
+            logger.warning("Startup resume failed: %s", detail)
+
     if open_browser_:
         Timer(1.5, _open_browser, args=[port]).start()
     print(f"\n  Codex Manager GUI \u2192 http://127.0.0.1:{port}\n")
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+
+

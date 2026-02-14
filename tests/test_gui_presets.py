@@ -51,6 +51,8 @@ def test_load_presets_falls_back_when_catalog_load_fails(monkeypatch) -> None:
     assert loaded["testing"]["name"] == "Testing"
     assert "strategic_product_maximization" in loaded
     assert loaded["strategic_product_maximization"]["name"] == "Strategic Product Maximization"
+    assert "visual_asset_generation" in loaded
+    assert loaded["visual_asset_generation"]["name"] == "Visual Asset Generation"
     assert loaded is not presets_module._FALLBACK_PRESETS
 
 

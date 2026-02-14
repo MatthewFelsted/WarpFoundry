@@ -34,6 +34,13 @@ def test_stop_guidance_includes_brain_needs_input_template() -> None:
     assert guidance["severity"] == "warn"
 
 
+def test_pipeline_stop_guidance_includes_self_restart_template() -> None:
+    guidance = get_stop_guidance("self_restart_requested", mode="pipeline")
+    assert guidance
+    assert guidance["label"] == "Self-restart requested"
+    assert guidance["severity"] == "warn"
+
+
 def test_stop_guidance_falls_back_for_unknown_codes() -> None:
     guidance = get_stop_guidance("mystery_reason", mode="chain")
     assert guidance

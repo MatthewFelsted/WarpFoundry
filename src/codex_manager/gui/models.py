@@ -11,7 +11,15 @@ CodexSandboxMode = Literal["read-only", "workspace-write", "danger-full-access"]
 CodexApprovalPolicy = Literal["untrusted", "on-failure", "on-request", "never"]
 CodexReasoningEffort = Literal["inherit", "low", "medium", "high", "xhigh"]
 CommitFrequency = Literal["per_phase", "per_cycle", "manual"]
+DependencyInstallPolicy = Literal["disallow", "project_only", "allow_system"]
+ImageProvider = Literal["openai", "google"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
+
+
+def _default_image_model(provider: ImageProvider) -> str:
+    if provider == "google":
+        return "nano-banana"
+    return "gpt-image-1"
 
 
 class TaskStep(BaseModel):
@@ -55,6 +63,11 @@ class ChainConfig(BaseModel):
     codex_reasoning_effort: CodexReasoningEffort = "xhigh"
     codex_bypass_approvals_and_sandbox: bool = False
     codex_danger_confirmation: str = ""
+    allow_path_creation: bool = True
+    dependency_install_policy: DependencyInstallPolicy = "project_only"
+    image_generation_enabled: bool = False
+    image_provider: ImageProvider = "openai"
+    image_model: str = "gpt-image-1"
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_step: int = 0
     parallel_execution: bool = False  # run independent steps concurrently
@@ -84,6 +97,8 @@ class ChainConfig(BaseModel):
                 "codex_danger_confirmation must be exactly "
                 f"'{DANGER_CONFIRMATION_PHRASE}' when bypass is enabled"
             )
+        if not self.image_model.strip():
+            self.image_model = _default_image_model(self.image_provider)
         return self
 
 
@@ -185,6 +200,13 @@ class PipelineGUIConfig(BaseModel):
     codex_reasoning_effort: CodexReasoningEffort = "xhigh"
     codex_bypass_approvals_and_sandbox: bool = False
     codex_danger_confirmation: str = ""
+    allow_path_creation: bool = True
+    dependency_install_policy: DependencyInstallPolicy = "project_only"
+    image_generation_enabled: bool = False
+    image_provider: ImageProvider = "openai"
+    image_model: str = "gpt-image-1"
+    self_improvement_enabled: bool = False
+    self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_phase: int = 0
 
@@ -213,4 +235,6 @@ class PipelineGUIConfig(BaseModel):
                 "codex_danger_confirmation must be exactly "
                 f"'{DANGER_CONFIRMATION_PHRASE}' when bypass is enabled"
             )
+        if not self.image_model.strip():
+            self.image_model = _default_image_model(self.image_provider)
         return self

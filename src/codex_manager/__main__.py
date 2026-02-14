@@ -58,6 +58,12 @@ def _build_parser() -> argparse.ArgumentParser:
     gui_p = sub.add_parser("gui", help="Launch the web GUI.")
     gui_p.add_argument("--port", type=int, default=5088, help="Port (default 5088)")
     gui_p.add_argument("--no-browser", action="store_true", help="Don't auto-open a browser tab")
+    gui_p.add_argument(
+        "--pipeline-resume-checkpoint",
+        type=str,
+        default="",
+        help="Optional pipeline checkpoint path to auto-resume after server restart.",
+    )
 
     # Pipeline sub-command
     pipe_p = sub.add_parser(
@@ -397,7 +403,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "gui":
         from codex_manager.gui import main as gui_main
 
-        gui_main(port=args.port, open_browser=not args.no_browser)
+        checkpoint = str(getattr(args, "pipeline_resume_checkpoint", "") or "").strip()
+        if checkpoint:
+            gui_main(
+                port=args.port,
+                open_browser=not args.no_browser,
+                pipeline_resume_checkpoint=checkpoint,
+            )
+        else:
+            gui_main(port=args.port, open_browser=not args.no_browser)
         return 0
     # -- Pipeline mode --------------------------------------------------------
     if args.command == "pipeline":
