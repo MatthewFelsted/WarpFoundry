@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -405,6 +406,36 @@ def test_configs_save_rejects_non_object_json(client, monkeypatch, tmp_path: Pat
     assert data
     assert "JSON object" in data["error"]
     assert not (cfg_dir / "Listy.json").exists()
+
+
+def test_write_json_file_atomic_handles_concurrent_writers(tmp_path: Path):
+    target = tmp_path / "chains" / "Concurrent.json"
+    errors: list[Exception] = []
+
+    def _writer(worker_id: int) -> None:
+        try:
+            for iteration in range(20):
+                gui_app_module._write_json_file_atomic(
+                    target,
+                    {
+                        "worker_id": worker_id,
+                        "iteration": iteration,
+                    },
+                )
+        except Exception as exc:  # pragma: no cover - defensive capture
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_writer, args=(idx,)) for idx in range(12)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert not errors
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("worker_id"), int)
+    assert isinstance(payload.get("iteration"), int)
 
 
 def test_pipeline_logs_allows_brain_log_file(client, monkeypatch):

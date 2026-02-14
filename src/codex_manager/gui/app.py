@@ -10,7 +10,9 @@ import re
 import string
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 import webbrowser
 from contextlib import suppress
 from datetime import datetime
@@ -93,6 +95,8 @@ _RUNNABLE_DIAGNOSTIC_ACTION_KEYS = frozenset(
 )
 _DIAGNOSTIC_ACTION_TIMEOUT_SECONDS = 20
 _DIAGNOSTIC_ACTION_OUTPUT_MAX_CHARS = 4000
+_ATOMIC_REPLACE_MAX_RETRIES = 8
+_ATOMIC_REPLACE_RETRY_SECONDS = 0.01
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -188,13 +192,39 @@ def _read_text_utf8_resilient(path: Path) -> str:
 def _write_json_file_atomic(path: Path, payload: object) -> None:
     """Write JSON to disk atomically to avoid partial config files."""
     serialized = json.dumps(payload, indent=2)
-    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_name)
     try:
-        tmp_path.write_text(serialized, encoding="utf-8")
-        tmp_path.replace(path)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(serialized)
+        _replace_file_with_retry(tmp_path, path)
     finally:
         with suppress(OSError):
             tmp_path.unlink(missing_ok=True)
+
+
+def _replace_file_with_retry(src: Path, dst: Path) -> None:
+    """Replace *dst* with *src*, retrying on transient Windows file-lock races."""
+    last_error: OSError | None = None
+    for attempt in range(_ATOMIC_REPLACE_MAX_RETRIES):
+        try:
+            src.replace(dst)
+            return
+        except PermissionError as exc:
+            last_error = exc
+        except OSError as exc:
+            if exc.errno != 13:
+                raise
+            last_error = exc
+        if attempt < _ATOMIC_REPLACE_MAX_RETRIES - 1:
+            time.sleep(_ATOMIC_REPLACE_RETRY_SECONDS * (attempt + 1))
+    if last_error is not None:
+        raise last_error
 
 
 def _normalize_agent(agent: str) -> str:

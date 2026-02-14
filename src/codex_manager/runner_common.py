@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,10 @@ from typing import Any
 from codex_manager.schemas import CodexEvent
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_MAX_CAPTURED_EVENTS = 20_000
+_DEFAULT_MAX_CAPTURED_STDOUT_LINES = 20_000
+_DEFAULT_MAX_CAPTURED_STDERR_LINES = 10_000
 
 
 def resolve_binary(name: str) -> str:
@@ -86,8 +91,19 @@ def execute_streaming_json_command(
     timeout_seconds: int,
     parse_stdout_line: Callable[[str], CodexEvent | None],
     process_name: str,
+    max_events: int | None = None,
+    max_stdout_lines: int | None = None,
+    max_stderr_lines: int | None = None,
 ) -> StreamExecutionResult:
     """Run a subprocess and parse stdout JSONL with inactivity timeout support."""
+    max_events = _normalize_capture_limit(max_events, _DEFAULT_MAX_CAPTURED_EVENTS)
+    max_stdout_lines = _normalize_capture_limit(
+        max_stdout_lines, _DEFAULT_MAX_CAPTURED_STDOUT_LINES
+    )
+    max_stderr_lines = _normalize_capture_limit(
+        max_stderr_lines, _DEFAULT_MAX_CAPTURED_STDERR_LINES
+    )
+
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -101,11 +117,32 @@ def execute_streaming_json_command(
     if proc.stdout is None or proc.stderr is None:
         raise RuntimeError(f"{process_name} subprocess pipes are unexpectedly unavailable")
 
-    events: list[CodexEvent] = []
-    raw_lines: list[str] = []
-    stderr_lines: list[str] = []
+    events: deque[CodexEvent] = deque(maxlen=max_events)
+    raw_lines: deque[str] = deque(maxlen=max_stdout_lines)
+    stderr_lines: deque[str] = deque(maxlen=max_stderr_lines)
+    events_dropped = 0
+    raw_lines_dropped = 0
+    stderr_lines_dropped = 0
     stream_queue: queue.Queue[tuple[str, str | object]] = queue.Queue()
     done_sentinel = object()
+
+    def _append_event(event: CodexEvent) -> None:
+        nonlocal events_dropped
+        if len(events) == events.maxlen:
+            events_dropped += 1
+        events.append(event)
+
+    def _append_stdout_line(line: str) -> None:
+        nonlocal raw_lines_dropped
+        if len(raw_lines) == raw_lines.maxlen:
+            raw_lines_dropped += 1
+        raw_lines.append(line)
+
+    def _append_stderr_line(line: str) -> None:
+        nonlocal stderr_lines_dropped
+        if len(stderr_lines) == stderr_lines.maxlen:
+            stderr_lines_dropped += 1
+        stderr_lines.append(line)
 
     def _pump_stream(stream_name: str, stream: Any) -> None:
         try:
@@ -115,7 +152,7 @@ def execute_streaming_json_command(
             stream_queue.put((stream_name, done_sentinel))
 
     def _collect_stdout_line(line: str) -> None:
-        raw_lines.append(line)
+        _append_stdout_line(line)
         try:
             event = parse_stdout_line(line)
         except Exception:  # pragma: no cover - defensive parser isolation
@@ -124,7 +161,7 @@ def execute_streaming_json_command(
             )
             return
         if event is not None:
-            events.append(event)
+            _append_event(event)
 
     stdout_thread = threading.Thread(
         target=_pump_stream, args=("stdout", proc.stdout), daemon=True
@@ -174,7 +211,7 @@ def execute_streaming_json_command(
             if stream_name == "stdout":
                 _collect_stdout_line(line)
             else:
-                stderr_lines.append(line)
+                _append_stderr_line(line)
 
         if timed_out:
             proc.kill()
@@ -193,12 +230,34 @@ def execute_streaming_json_command(
             if stream_name == "stdout":
                 _collect_stdout_line(line)
             else:
-                stderr_lines.append(line)
+                _append_stderr_line(line)
+
+        if events_dropped:
+            logger.warning(
+                "%s emitted more than %s parsed events; dropped %s oldest event(s)",
+                process_name,
+                max_events,
+                events_dropped,
+            )
+        if raw_lines_dropped:
+            logger.warning(
+                "%s emitted more than %s stdout lines; dropped %s oldest line(s)",
+                process_name,
+                max_stdout_lines,
+                raw_lines_dropped,
+            )
+        if stderr_lines_dropped:
+            logger.warning(
+                "%s emitted more than %s stderr lines; dropped %s oldest line(s)",
+                process_name,
+                max_stderr_lines,
+                stderr_lines_dropped,
+            )
 
         return StreamExecutionResult(
-            events=events,
-            raw_lines=raw_lines,
-            stderr_lines=stderr_lines,
+            events=list(events),
+            raw_lines=list(raw_lines),
+            stderr_lines=list(stderr_lines),
             exit_code=proc.returncode if proc.returncode is not None else -1,
             timed_out=timed_out,
         )
@@ -218,3 +277,14 @@ def _wait_for_process(proc: subprocess.Popen[str]) -> None:
     except subprocess.TimeoutExpired:  # pragma: no cover - defensive
         proc.kill()
         proc.wait(timeout=5.0)
+
+
+def _normalize_capture_limit(value: int | None, default: int) -> int:
+    """Normalize output capture limits and enforce a minimum of one entry."""
+    if value is None:
+        return default
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(1, normalized)

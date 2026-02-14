@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+import tempfile
+import time
 from contextlib import suppress
 from enum import Enum
 from pathlib import Path
@@ -13,6 +15,8 @@ from typing import Any
 from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
+_ATOMIC_REPLACE_MAX_RETRIES = 8
+_ATOMIC_REPLACE_RETRY_SECONDS = 0.01
 
 # ---------------------------------------------------------------------------
 # Codex CLI run results
@@ -141,13 +145,19 @@ class LoopState(BaseModel):
         path = self.state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = self.model_dump_json(indent=2)
-        tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f"{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+        )
+        tmp_path = Path(tmp_name)
         try:
-            tmp_path.write_text(payload, encoding="utf-8")
-            tmp_path.replace(path)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload)
+            _replace_file_with_retry(tmp_path, path)
         finally:
-            with suppress(FileNotFoundError):
-                tmp_path.unlink()
+            with suppress(OSError):
+                tmp_path.unlink(missing_ok=True)
 
     @classmethod
     def load(cls, repo_path: str | Path) -> LoopState | None:
@@ -164,3 +174,22 @@ class LoopState(BaseModel):
                 logger.warning("Could not load state file %s: %s", path, exc)
                 return None
         return None
+
+
+def _replace_file_with_retry(src: Path, dst: Path) -> None:
+    """Replace *dst* with *src*, retrying on transient Windows file-lock races."""
+    last_error: OSError | None = None
+    for attempt in range(_ATOMIC_REPLACE_MAX_RETRIES):
+        try:
+            src.replace(dst)
+            return
+        except PermissionError as exc:
+            last_error = exc
+        except OSError as exc:
+            if exc.errno != 13:
+                raise
+            last_error = exc
+        if attempt < _ATOMIC_REPLACE_MAX_RETRIES - 1:
+            time.sleep(_ATOMIC_REPLACE_RETRY_SECONDS * (attempt + 1))
+    if last_error is not None:
+        raise last_error

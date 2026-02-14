@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from codex_manager.schemas import (
@@ -82,6 +83,32 @@ class TestLoopState:
         assert r.round_number == 1
         assert r.commit_sha is None
         assert r.skipped is False
+
+    def test_save_remains_valid_under_concurrent_writes(self, tmp_path: Path):
+        errors: list[Exception] = []
+
+        def _writer(worker_id: int) -> None:
+            try:
+                for iteration in range(20):
+                    LoopState(
+                        repo_path=str(tmp_path),
+                        goal=f"goal-{worker_id}",
+                        mode="dry-run",
+                        current_round=iteration,
+                    ).save()
+            except Exception as exc:  # pragma: no cover - defensive capture
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_writer, args=(idx,)) for idx in range(10)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+
+        assert not errors
+        loaded = LoopState.load(tmp_path)
+        assert loaded is not None
+        assert loaded.goal.startswith("goal-")
 
 
 class TestUsageInfo:
