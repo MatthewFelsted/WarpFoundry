@@ -7,10 +7,8 @@ import logging
 import os
 import queue
 import re
-import shutil
 import string
 import subprocess
-import uuid
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -25,7 +23,22 @@ from codex_manager.gui.models import (
 )
 from codex_manager.gui.presets import get_preset, list_presets
 from codex_manager.gui.stop_guidance import get_stop_guidance
-from codex_manager.preflight import build_preflight_report, parse_agents
+from codex_manager.preflight import (
+    binary_exists as shared_binary_exists,
+)
+from codex_manager.preflight import (
+    build_preflight_report,
+    parse_agents,
+)
+from codex_manager.preflight import (
+    has_claude_auth as shared_has_claude_auth,
+)
+from codex_manager.preflight import (
+    has_codex_auth as shared_has_codex_auth,
+)
+from codex_manager.preflight import (
+    repo_write_error as shared_repo_write_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,58 +89,22 @@ def _is_valid_config_name(name: object) -> bool:
 
 def _binary_exists(binary: str) -> bool:
     """Return True when a configured CLI binary is available."""
-    if not binary:
-        return False
-    try:
-        candidate = Path(binary)
-        if candidate.exists():
-            return True
-    except Exception:
-        pass
-    return shutil.which(binary) is not None
+    return shared_binary_exists(binary)
 
 
 def _has_codex_auth() -> bool:
     """Detect whether Codex/OpenAI credentials are present."""
-    if os.getenv("CODEX_API_KEY") or os.getenv("OPENAI_API_KEY"):
-        return True
-    home = Path.home()
-    for path in (
-        home / ".codex" / "auth.json",
-        home / ".config" / "codex" / "auth.json",
-    ):
-        if path.exists():
-            return True
-    return False
+    return shared_has_codex_auth()
 
 
 def _has_claude_auth() -> bool:
     """Detect whether Claude credentials are present."""
-    if os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY"):
-        return True
-    home = Path.home()
-    for path in (
-        home / ".claude.json",
-        home / ".claude" / "auth.json",
-        home / ".config" / "claude" / "auth.json",
-        home / ".config" / "claude-code" / "auth.json",
-    ):
-        if path.exists():
-            return True
-    return False
+    return shared_has_claude_auth()
 
 
 def _repo_write_error(repo: Path) -> str | None:
     """Return a human-readable write-access error for *repo* if any."""
-    try:
-        probe_dir = repo / ".codex_manager"
-        probe_dir.mkdir(parents=True, exist_ok=True)
-        probe_path = probe_dir / f".preflight-write-{uuid.uuid4().hex}.tmp"
-        probe_path.write_text("ok", encoding="utf-8")
-        probe_path.unlink(missing_ok=True)
-        return None
-    except Exception as exc:
-        return f"Repository is not writable: {exc}"
+    return shared_repo_write_error(repo)
 
 
 def _read_text_utf8_resilient(path: Path) -> str:

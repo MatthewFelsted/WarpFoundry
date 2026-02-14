@@ -27,6 +27,13 @@ def test_stop_guidance_includes_no_progress_template() -> None:
     assert guidance["severity"] == "info"
 
 
+def test_stop_guidance_includes_brain_needs_input_template() -> None:
+    guidance = get_stop_guidance("brain_needs_input", mode="chain")
+    assert guidance
+    assert guidance["label"] == "Brain needs user input"
+    assert guidance["severity"] == "warn"
+
+
 def test_stop_guidance_falls_back_for_unknown_codes() -> None:
     guidance = get_stop_guidance("mystery_reason", mode="chain")
     assert guidance

@@ -126,6 +126,58 @@ class _ContinueBrain:
         return BrainDecision(action="continue", reasoning="ok")
 
 
+class _FollowUpBrainNeedsInput:
+    def __init__(self, config):
+        self.config = config
+        self.enabled = bool(config.enabled)
+
+    def plan_step(self, goal, step_name, base_prompt, history_summary="", ledger_context=""):
+        return base_prompt
+
+    def evaluate_step(
+        self,
+        step_name,
+        success,
+        test_outcome,
+        files_changed,
+        net_lines,
+        errors,
+        goal,
+        ledger_context="",
+    ):
+        return BrainDecision(
+            action="follow_up",
+            reasoning="Need missing context before implementation.",
+            follow_up_prompt=(
+                "Please provide: (1) exact requirements, "
+                "(2) target files, and (3) test command."
+            ),
+            severity="high",
+        )
+
+    def assess_progress(self, goal, total_loops, history_summary):
+        return BrainDecision(action="continue", reasoning="ok")
+
+
+class _ChangedEvaluator:
+    def __init__(self, test_cmd=None, skip_tests=False):
+        self.test_cmd = test_cmd
+        self.skip_tests = skip_tests
+
+    def evaluate(self, repo_path):
+        return EvalResult(
+            test_outcome=TestOutcome.SKIPPED,
+            test_summary="skipped",
+            test_exit_code=0,
+            files_changed=2,
+            net_lines_changed=11,
+            changed_files=[
+                {"path": "src/app.py", "insertions": 7, "deletions": 1},
+                {"path": "tests/test_app.py", "insertions": 5, "deletions": 0},
+            ],
+        )
+
+
 def test_chain_skips_remaining_repeats_after_terminate_tag(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
@@ -447,6 +499,85 @@ def test_chain_stops_early_when_latest_loop_has_no_progress(monkeypatch, tmp_pat
 
     assert executor.state.stop_reason == "no_progress_detected"
     assert executor.state.total_loops_completed == 1
+
+
+def test_chain_stops_when_brain_follow_up_requires_human_input(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _PlaceholderRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "BrainManager", _FollowUpBrainNeedsInput)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Brain asks for input",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=2,
+        stop_on_convergence=True,
+        test_cmd="",
+        brain_enabled=True,
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Implement one concrete feature.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.stop_reason == "brain_needs_input"
+    assert executor.state.total_steps_completed == 1
+    assert len(executor.state.results) == 1
+
+
+def test_chain_appends_execution_evidence_for_file_changes(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _OutputRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _ChangedEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Evidence block",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Make one meaningful change.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    out_file = repo / ".codex_manager" / "outputs" / "Implementation.md"
+    assert out_file.exists()
+    content = out_file.read_text(encoding="utf-8")
+    assert "Execution Evidence" in content
+    assert "Changed files:" in content
+    assert "src/app.py" in content
+    assert "tests/test_app.py" in content
 
 
 def test_chain_file_instructions_include_primary_handoff_file(tmp_path: Path):

@@ -503,6 +503,9 @@ def test_diagnostics_reports_actionable_failures(client, monkeypatch):
     assert any(a.get("key") == "install_codex_cli" for a in actions)
     assert any(a.get("key") == "codex_login" for a in actions)
     assert any(a.get("key") == "rerun_doctor" for a in actions)
+    rerun = next(a for a in actions if a.get("key") == "rerun_doctor")
+    assert '--codex-bin "codex-missing"' in rerun.get("command", "")
+    assert '--claude-bin "claude-missing"' in rerun.get("command", "")
 
 
 def test_diagnostics_reports_ready_state(client, monkeypatch, tmp_path: Path):

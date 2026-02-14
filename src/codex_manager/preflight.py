@@ -61,6 +61,8 @@ class PreflightReport:
     checks: list[PreflightCheck]
     repo_path: str
     resolved_repo_path: str
+    codex_binary: str = "codex"
+    claude_binary: str = "claude"
 
     @property
     def summary(self) -> dict[str, int]:
@@ -94,11 +96,85 @@ class PreflightReport:
             "repo_path": self.repo_path,
             "resolved_repo_path": self.resolved_repo_path,
             "requested_agents": list(self.requested_agents),
+            "codex_binary": self.codex_binary,
+            "claude_binary": self.claude_binary,
             "checks": [c.to_dict() for c in self.checks],
             "summary": self.summary,
             "ready": self.ready,
             "next_actions": [a.to_dict() for a in self.next_actions],
         }
+
+
+_PLACEHOLDER_SECRET_VALUES = {
+    "sk-...",
+    "sk-proj-...",
+    "sk-ant-...",
+    "api-key",
+    "token",
+    "token-here",
+    "xxx",
+    "your-key",
+    "your key",
+    "your_api_key",
+    "your-api-key",
+}
+_PLACEHOLDER_SECRET_SUBSTRINGS = (
+    "your-key-here",
+    "your key here",
+    "your_api_key_here",
+    "your-openai-api-key",
+    "your-anthropic-api-key",
+    "replace-me",
+    "replace_with",
+    "change-me",
+    "changeme",
+    "placeholder",
+    "set-me",
+)
+
+
+def _looks_like_placeholder_secret(value: str) -> bool:
+    """Return True for obvious placeholder API-key text."""
+    normalized = (value or "").strip().strip('"').strip("'").lower()
+    if not normalized:
+        return True
+    if normalized in _PLACEHOLDER_SECRET_VALUES:
+        return True
+    if normalized.startswith("<") and normalized.endswith(">"):
+        return True
+    if normalized.endswith("..."):
+        return True
+    return any(token in normalized for token in _PLACEHOLDER_SECRET_SUBSTRINGS)
+
+
+def _env_secret_present(var_names: tuple[str, ...]) -> bool:
+    """Return True when any configured env var has a non-placeholder secret."""
+    for name in var_names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        if _looks_like_placeholder_secret(value):
+            continue
+        return True
+    return False
+
+
+def _placeholder_env_vars(var_names: tuple[str, ...]) -> list[str]:
+    """Return env-var names that are set to obvious placeholder key text."""
+    placeholders: list[str] = []
+    for name in var_names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        if _looks_like_placeholder_secret(value):
+            placeholders.append(name)
+    return placeholders
 
 
 def binary_exists(binary: str) -> bool:
@@ -116,7 +192,7 @@ def binary_exists(binary: str) -> bool:
 
 def has_codex_auth() -> bool:
     """Detect Codex/OpenAI auth in env vars or local auth files."""
-    if os.getenv("CODEX_API_KEY") or os.getenv("OPENAI_API_KEY"):
+    if _env_secret_present(("CODEX_API_KEY", "OPENAI_API_KEY")):
         return True
     home = Path.home()
     for path in (
@@ -130,7 +206,7 @@ def has_codex_auth() -> bool:
 
 def has_claude_auth() -> bool:
     """Detect Claude auth in env vars or local auth files."""
-    if os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY"):
+    if _env_secret_present(("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")):
         return True
     home = Path.home()
     for path in (
@@ -190,6 +266,9 @@ def build_preflight_report(
     claude_binary: str = "claude",
 ) -> PreflightReport:
     """Build a structured readiness report for the requested repo and agents."""
+    codex_binary = str(codex_binary or "codex").strip() or "codex"
+    claude_binary = str(claude_binary or "claude").strip() or "claude"
+
     requested_agents: list[str] = []
     for agent in agents:
         normalized = normalize_agent(str(agent))
@@ -313,6 +392,7 @@ def build_preflight_report(
         if agent == "codex":
             codex_binary_ok = binary_exists(codex_binary)
             codex_auth_ok = has_codex_auth()
+            codex_placeholder_vars = _placeholder_env_vars(("CODEX_API_KEY", "OPENAI_API_KEY"))
             checks.append(
                 PreflightCheck(
                     category="codex",
@@ -332,7 +412,13 @@ def build_preflight_report(
                     detail=(
                         "Detected CODEX_API_KEY / OPENAI_API_KEY or Codex auth file."
                         if codex_auth_ok
-                        else "No Codex/OpenAI auth detected."
+                        else (
+                            "Detected placeholder value(s) in "
+                            + ", ".join(codex_placeholder_vars)
+                            + "."
+                            if codex_placeholder_vars
+                            else "No Codex/OpenAI auth detected."
+                        )
                     ),
                     hint=(
                         "Set CODEX_API_KEY or OPENAI_API_KEY, or run 'codex login'."
@@ -344,6 +430,9 @@ def build_preflight_report(
         else:
             claude_binary_ok = binary_exists(claude_binary)
             claude_auth_ok = has_claude_auth()
+            claude_placeholder_vars = _placeholder_env_vars(
+                ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")
+            )
             checks.append(
                 PreflightCheck(
                     category="claude_code",
@@ -365,7 +454,13 @@ def build_preflight_report(
                     detail=(
                         "Detected ANTHROPIC_API_KEY / CLAUDE_API_KEY or Claude auth file."
                         if claude_auth_ok
-                        else "No Claude auth detected."
+                        else (
+                            "Detected placeholder value(s) in "
+                            + ", ".join(claude_placeholder_vars)
+                            + "."
+                            if claude_placeholder_vars
+                            else "No Claude auth detected."
+                        )
                     ),
                     hint=(
                         "Set ANTHROPIC_API_KEY (or CLAUDE_API_KEY), or log in via Claude CLI."
@@ -380,6 +475,8 @@ def build_preflight_report(
         checks=checks,
         repo_path=raw_repo,
         resolved_repo_path=resolved_repo_path,
+        codex_binary=codex_binary,
+        claude_binary=claude_binary,
     )
 
 
@@ -399,6 +496,12 @@ def _doctor_command(report: PreflightReport) -> str:
         parts.append(f'--repo "{repo}"')
     if report.requested_agents:
         parts.append(f'--agents {",".join(report.requested_agents)}')
+    codex_binary = str(getattr(report, "codex_binary", "codex") or "codex").strip() or "codex"
+    claude_binary = (
+        str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
+    )
+    parts.append(f'--codex-bin "{codex_binary}"')
+    parts.append(f'--claude-bin "{claude_binary}"')
     return " ".join(parts)
 
 

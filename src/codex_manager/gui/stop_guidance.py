@@ -47,6 +47,15 @@ _SHARED_TEMPLATES: dict[str, GuidanceTemplate] = {
             "If needed, provide a more specific goal and rerun.",
         ),
     ),
+    "brain_needs_input": GuidanceTemplate(
+        label="Brain needs user input",
+        severity="warn",
+        summary="The brain asked for missing human context, so the run stopped to avoid token churn.",
+        next_steps=(
+            "Update step prompts with concrete targets, file paths, and test commands.",
+            "Resume with brain enabled or disable brain for direct execution.",
+        ),
+    ),
     "brain_converged": GuidanceTemplate(
         label="Brain convergence",
         severity="info",

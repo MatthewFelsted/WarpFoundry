@@ -48,6 +48,8 @@ _STEP_MEMORY_MAX_ENTRIES = 240
 _STEP_MEMORY_CONTEXT_ITEMS = 6
 _STEP_MEMORY_CONTEXT_CHARS = 2_800
 _STEP_MEMORY_EXCERPT_CHARS = 900
+_NO_PROGRESS_STREAK_RESULTS = 4
+_EVIDENCE_SUMMARY_CHARS = 1_200
 
 
 def _resolve_debug_log_path() -> Path | None:
@@ -308,14 +310,51 @@ class ChainExecutor:
             and "share the task you want implemented" in normalized
         ):
             return True
+        if normalized.startswith("working directory set to `"):
+            return True
+        if (
+            normalized.startswith("using `")
+            and "as the working directory" in normalized
+        ):
+            return True
 
         placeholders = (
             "share the task you want implemented",
             "share the task you'd like implemented",
             "tell me what you want implemented",
             "provide the task you want implemented",
+            "share the task and i'll execute from there",
+            "send the task you want implemented",
+            "send the task you want me to run",
+            "send the specific change you want",
         )
-        return any(p in normalized for p in placeholders)
+        if any(p in normalized for p in placeholders):
+            return True
+        return ChainExecutor._looks_like_human_input_request(normalized)
+
+    @staticmethod
+    def _looks_like_human_input_request(text: str) -> bool:
+        """Detect prompts/responses that ask the human for missing context."""
+        normalized = re.sub(r"\s+", " ", (text or "")).strip().lower().replace("\u2019", "'")
+        if not normalized:
+            return False
+        cues = (
+            "please provide",
+            "confirm the target",
+            "if you want me to proceed",
+            "if you want me to continue",
+            "which command",
+            "what specific",
+            "share current ui screenshots",
+            "share the task",
+            "send the task",
+        )
+        cue_hits = sum(1 for cue in cues if cue in normalized)
+        if cue_hits >= 2:
+            return True
+        if "please provide" in normalized and any(tok in normalized for tok in ("(1)", "1)", "1.", "2)", "2.")):
+            return True
+        return "confirm" in normalized and "to proceed" in normalized
 
     def _select_agent_output(self, run_result) -> str:
         """Choose the most meaningful text output from a run result."""
@@ -344,6 +383,69 @@ class ChainExecutor:
                 continue
             return cleaned
         return ""
+
+    def _has_no_progress_streak(self, *, min_results: int = _NO_PROGRESS_STREAK_RESULTS) -> bool:
+        """Return True when the latest N attempts produced zero repo deltas."""
+        if min_results <= 0:
+            return False
+        if len(self.state.results) < min_results:
+            return False
+        recent = self.state.results[-min_results:]
+        return all(r.files_changed <= 0 and r.net_lines_changed == 0 for r in recent)
+
+    def _append_execution_evidence(
+        self,
+        *,
+        out_file: Path,
+        loop_num: int,
+        step_idx: int,
+        runner_name: str,
+        commit_sha: str | None,
+        files_changed: int,
+        net_lines_changed: int,
+        changed_files: list[dict[str, Any]],
+        agent_output: str,
+    ) -> None:
+        """Append a manager-generated evidence block to the step output file."""
+        if files_changed <= 0:
+            return
+
+        lines = [
+            "",
+            "---",
+            f"## Execution Evidence (Loop {loop_num}, Step {step_idx + 1})",
+            f"- Agent: {runner_name}",
+            f"- Files changed: {files_changed}",
+            f"- Net lines changed: {net_lines_changed:+d}",
+            f"- Commit: {commit_sha or 'not committed'}",
+            "- Changed files:",
+        ]
+
+        if changed_files:
+            for item in changed_files[:40]:
+                path = str(item.get("path", "(unknown)"))
+                ins = item.get("insertions")
+                dels = item.get("deletions")
+                if isinstance(ins, int) and isinstance(dels, int):
+                    lines.append(f"  - `{path}` (+{ins} / -{dels})")
+                else:
+                    lines.append(f"  - `{path}` (binary/non-text)")
+        else:
+            lines.append("  - (details unavailable)")
+
+        summary = self._truncate_text(agent_output, _EVIDENCE_SUMMARY_CHARS)
+        if summary:
+            lines.append("- Improvement Notes:")
+            lines.append("```text")
+            lines.append(summary)
+            lines.append("```")
+
+        try:
+            with out_file.open("a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            self._log("info", f"Execution evidence saved to {out_file}")
+        except Exception as exc:
+            self._log("warn", f"Could not append execution evidence to {out_file}: {exc}")
 
     def _initialize_step_memory(self, repo: Path) -> None:
         """Load persisted cross-run memory used for step-to-step handoff."""
@@ -850,6 +952,26 @@ class ChainExecutor:
                                                 f"net_lines={result.net_lines_changed:+d}."
                                             )
                                         )
+                                        if self._looks_like_human_input_request(followup_prompt):
+                                            self._log(
+                                                "warn",
+                                                "Brain follow-up requires human input; stopping run to avoid non-productive retries.",
+                                            )
+                                            self._record_brain_note(
+                                                "follow_up_requires_input",
+                                                "Brain follow-up requested user input; run stopped.",
+                                                level="warn",
+                                                context={
+                                                    "loop": loop_num,
+                                                    "step_index": step_idx,
+                                                    "step_rep": step_rep,
+                                                    "action": decision.action,
+                                                    "prompt_preview": followup_prompt[:400],
+                                                },
+                                            )
+                                            self.state.stop_reason = "brain_needs_input"
+                                            loop_aborted = True
+                                            break
                                         self._log(
                                             "info",
                                             f"Brain recommends {decision.action} action",
@@ -1063,6 +1185,15 @@ class ChainExecutor:
                                     "(on_failure=abort)",
                                 )
                                 self.state.stop_reason = "step_failed_abort"
+                                loop_aborted = True
+                                break
+
+                            if config.stop_on_convergence and self._has_no_progress_streak():
+                                self._log(
+                                    "info",
+                                    f"No repository changes across the latest {_NO_PROGRESS_STREAK_RESULTS} step attempts â€” stopping early.",
+                                )
+                                self.state.stop_reason = "no_progress_detected"
                                 loop_aborted = True
                                 break
 
@@ -1431,7 +1562,7 @@ class ChainExecutor:
         else:
             self._log(
                 "warn",
-                f"Agent produced no text output and no file changes. "
+                f"{runner.name} produced no text output and no file changes. "
                 f"Events: {len(run_result.events)}, "
                 f"Exit: {run_result.exit_code}, "
                 f"Errors: {len(run_result.errors)}",
@@ -1455,6 +1586,15 @@ class ChainExecutor:
             f"Files: {eval_result.files_changed} | "
             f"Net \u0394: {eval_result.net_lines_changed:+d}",
         )
+        if eval_result.files_changed > 0:
+            changed_preview = ", ".join(
+                str(item.get("path", "(unknown)")) for item in eval_result.changed_files[:8]
+            )
+            if changed_preview:
+                self._log(
+                    "info",
+                    f"Changed files ({eval_result.files_changed}) via {runner.name}: {changed_preview}",
+                )
 
         # Commit or revert
         commit_sha = None
@@ -1481,6 +1621,18 @@ class ChainExecutor:
         elif config.mode == "dry-run" and not is_clean(repo):
             revert_all(repo)
             self._log("info", "Changes reverted (dry-run)")
+
+        self._append_execution_evidence(
+            out_file=out_file,
+            loop_num=loop_num,
+            step_idx=step_idx,
+            runner_name=runner.name,
+            commit_sha=commit_sha,
+            files_changed=eval_result.files_changed,
+            net_lines_changed=eval_result.net_lines_changed,
+            changed_files=eval_result.changed_files,
+            agent_output=agent_output,
+        )
 
         duration = time.monotonic() - step_start
         step_result = StepResult(
@@ -1532,6 +1684,8 @@ class ChainExecutor:
                 "changed_files": step_result.changed_files,
                 "duration_seconds": step_result.duration_seconds,
                 "output_chars": step_result.output_chars,
+                "input_tokens": step_result.input_tokens,
+                "output_tokens": step_result.output_tokens,
                 "commit_sha": step_result.commit_sha,
                 "terminate_repeats": step_result.terminate_repeats,
                 "error_message": step_result.error_message[:500],
