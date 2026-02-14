@@ -23,7 +23,6 @@ import logging
 import os
 import queue
 import re
-import shutil
 import threading
 import time
 import uuid
@@ -58,6 +57,7 @@ from codex_manager.pipeline.phases import (
     PipelineState,
 )
 from codex_manager.pipeline.tracker import LogTracker
+from codex_manager.preflight import binary_exists as shared_binary_exists
 from codex_manager.prompts.catalog import PromptCatalog, get_catalog
 from codex_manager.schemas import EvalResult
 
@@ -807,15 +807,7 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _binary_exists(binary: str) -> bool:
-        if not binary:
-            return False
-        try:
-            candidate = Path(binary)
-            if candidate.exists():
-                return True
-        except Exception:
-            pass
-        return shutil.which(binary) is not None
+        return shared_binary_exists(binary)
 
     @staticmethod
     def _has_codex_auth() -> bool:

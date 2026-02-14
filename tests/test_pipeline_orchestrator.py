@@ -601,6 +601,31 @@ def test_preflight_fails_fast_when_codex_binary_missing(monkeypatch, tmp_path: P
     assert state.total_phases_completed == 0
 
 
+def test_preflight_rejects_directory_path_as_codex_binary(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    fake_binary_dir = tmp_path / "not-a-binary"
+    fake_binary_dir.mkdir()
+    monkeypatch.setattr(PipelineOrchestrator, "_has_codex_auth", staticmethod(lambda: True))
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        codex_binary=str(fake_binary_dir),
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "preflight_failed"
+    assert state.total_phases_completed == 0
+
+
 def test_science_experiment_records_evidence_and_marks_inconclusive(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
