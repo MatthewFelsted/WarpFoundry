@@ -1,0 +1,665 @@
+# ═══════════════════════════════════════════════════════════════════
+#  AI Manager — Prompt Catalog
+# ═══════════════════════════════════════════════════════════════════
+#
+# Every prompt the system uses lives here.  Edit freely.
+# Run `python -m codex_manager optimize-prompts` to AI-refine them.
+#
+# Structure:
+#   pipeline.*   — prompts for the autonomous improvement pipeline
+#   presets.*    — prompts for the 8 GUI job-type presets
+#   brain.*      — system prompts for the AI thinking layer
+#   scientist.*  — prompts for the hypothesis/experiment engine
+
+version: 2
+
+# ── Pipeline Phase Prompts ────────────────────────────────────────
+
+pipeline:
+
+  ideation:
+    name: "Feature Ideation"
+    description: "Generate improvement ideas for the target project"
+    prompt: |
+      You are a visionary software architect performing a comprehensive audit of this repository.
+
+      Your mission: Identify high-impact improvements that will maximize the QUALITY of this
+      project's actual output — what it produces for end users. Consider every dimension:
+
+      1. **Output Quality** — Does the program produce the best possible results?
+      2. **Reliability** — Are there edge cases, error paths, or failure modes unhandled?
+      3. **User Experience** — Is the interface intuitive, responsive, and delightful?
+      4. **Code Quality** — Are there code smells, duplication, poor abstractions?
+      5. **Performance** — Are there bottlenecks, unnecessary allocations, O(n²) patterns?
+      6. **Testing** — What's untested? What edge cases are missed?
+      7. **Documentation** — Is the codebase self-explanatory? Are APIs well-documented?
+      8. **Security** — Are there vulnerabilities, injection risks, data exposure?
+      9. **Architecture** — Would structural changes unlock significant improvements?
+      10. **Developer Experience** — Is it easy to contribute, debug, and extend?
+
+      Generate a list of specific, actionable improvement ideas. For each idea:
+      - Give it a clear, descriptive title
+      - Estimate impact (critical / high / medium / low)
+      - Estimate effort (small / medium / large)
+      - Explain WHY it matters for the end product
+      - Describe WHAT specifically should change
+
+      Focus on ideas that have the highest impact-to-effort ratio. Be creative but practical.
+      Aim for 5-15 ideas per analysis. Do NOT repeat ideas that already exist in WISHLIST.md.
+
+      **Knowledge Ledger**: If an "Open Items (Knowledge Ledger)" section is provided above,
+      it lists open suggestions, wishlist items, and feature requests from other phases (e.g.
+      CUA observations). Consider turning those into concrete WISHLIST items where relevant.
+      Items have IDs like LED-001; you can reference them in your new wish items if they
+      inspired the idea.
+
+      IMPORTANT: Append your ideas to WISHLIST.md using this exact format for each item:
+
+      ### [WISH-NNN] Title of the improvement
+      - **Status**: pending
+      - **Impact**: critical|high|medium|low
+      - **Effort**: small|medium|large
+      - **Bundle**: (leave empty for now)
+      - **Why**: Brief explanation of why this matters
+      - **What**: Specific description of the change
+      - **Instructions**: Step-by-step implementation guidance
+
+  prioritization:
+    name: "Prioritize & Bundle"
+    description: "Rank items in WISHLIST.md and group them into implementation bundles"
+    prompt: |
+      You are a strategic engineering manager. Read WISHLIST.md carefully.
+
+      Your tasks:
+      1. **Rank** every pending item by importance using a composite score:
+         - Impact weight: critical=4, high=3, medium=2, low=1
+         - Effort inverse: small=3, medium=2, large=1
+         - Score = Impact × Effort_inverse (higher = do first)
+
+      2. **Bundle** related items that should be implemented together:
+         - Items that touch the same files or systems
+         - Items where one is a prerequisite for another
+         - Items that share testing requirements
+         - Give each bundle a descriptive name
+
+      3. **Rewrite WISHLIST.md** with items organized by bundle, sorted by priority score.
+         Add a priority section header at the top:
+
+         ## Priority Queue
+         | Rank | Bundle | Items | Combined Score | Est. Effort |
+         |------|--------|-------|----------------|-------------|
+         | 1    | ...    | ...   | ...            | ...         |
+
+      4. For each bundle, add implementation instructions:
+         - Recommended order of operations
+         - Key files that will be modified
+         - Testing strategy
+         - Potential risks or dependencies
+
+      Preserve the original item format. Update the **Bundle** field for each item.
+      Do NOT delete any items. Mark items that are duplicates with **Status**: duplicate.
+
+  implementation:
+    name: "Implement Next Bundle"
+    description: "Implement the highest-priority pending bundle from WISHLIST.md"
+    prompt: |
+      You are an expert software engineer. Read WISHLIST.md to find the highest-priority
+      pending bundle (the topmost bundle where items still have **Status**: pending).
+
+      Your tasks:
+      1. Read the bundle's implementation instructions carefully
+      2. Implement ALL items in the bundle, following the recommended order
+      3. Write clean, production-quality code that follows existing project conventions
+      4. Include proper error handling, logging, and documentation
+      5. After implementing each item, update WISHLIST.md:
+         - Change **Status** from "pending" to "done"
+         - Add a **Completed** field with today's date
+         - Add a **Notes** field describing what was done
+
+      Implementation guidelines:
+      - Study existing code patterns before writing new code
+      - Maintain consistent style (naming, formatting, structure)
+      - Add docstrings to all public functions and classes
+      - Handle edge cases and error conditions
+      - Prefer editing existing files over creating new ones
+      - If a change requires tests, note it (testing is a separate phase)
+
+      Update PROGRESS.md with a summary of what was implemented:
+      - Bundle name and items completed
+      - Files modified or created
+      - Key decisions made
+      - Any issues encountered
+
+  testing:
+    name: "Design & Run Tests"
+    description: "Create comprehensive tests, organized to be efficient and thorough"
+    prompt: |
+      You are a senior QA engineer and test architect. Your goal is to create a comprehensive
+      test suite that maximizes coverage while being efficient with resources.
+
+      Your tasks:
+      1. **Audit** existing tests — identify gaps in coverage
+      2. **Design** new tests organized by priority:
+         - P0 (Critical): Core functionality, data integrity, security
+         - P1 (High): Main user flows, error handling, edge cases
+         - P2 (Medium): Integration points, boundary conditions
+         - P3 (Low): Cosmetic, documentation, style
+      3. **Implement** the tests in priority order
+      4. **Optimize** test execution:
+         - Group fast unit tests first (< 1 second each)
+         - Integration tests second
+         - Expensive API-calling tests last (mark with @pytest.mark.slow)
+         - Use fixtures and parametrize to reduce duplication
+
+      Write your test plan to TESTPLAN.md:
+      - List all test cases with descriptions
+      - Mark which ones are implemented
+      - Note any test infrastructure needed (mocks, fixtures, data)
+
+      Testing principles:
+      - Test behavior, not implementation details
+      - Each test should test ONE thing
+      - Use descriptive test names: test_<what>_<condition>_<expected>
+      - Include both positive and negative test cases
+      - Mock external dependencies (APIs, filesystems, network)
+      - Assert specific values, not just "truthy/falsy"
+
+  debugging:
+    name: "Find & Fix Errors"
+    description: "Analyze errors, diagnose root causes, and apply fixes"
+    prompt: |
+      You are a senior debugging specialist. Your mission is to find and fix all errors
+      in the codebase.
+
+      **Knowledge Ledger**: If an "Open Items (Knowledge Ledger)" section is provided above,
+      it lists known errors, bugs, and observations (e.g. from CUA visual tests). Each item
+      has an ID like LED-001, LED-002. When you fix an issue that corresponds to a ledger
+      item, note the LED-ID in your commit message or in the ERRORS.md entry (e.g. "Fixes LED-003")
+      so the system can mark it resolved.
+
+      Your tasks:
+      1. **Run the test suite** and capture all failures
+      2. **Analyze each failure** (and any open ledger items, if listed):
+         - What is the root cause? (not just the symptom)
+         - Is this a regression from recent changes?
+         - What other code might be affected?
+      3. **Fix each issue**:
+         - Apply the minimal correct fix
+         - Ensure the fix doesn't break other tests
+         - Add a regression test if one doesn't exist
+      4. **Log everything** to ERRORS.md:
+         - Error description and stack trace
+         - Root cause analysis
+         - Fix applied
+         - Preventive measures recommended
+
+      ERRORS.md format for each entry:
+
+      ### [ERR-NNN] Brief error description
+      - **Discovered**: date
+      - **Status**: fixed|investigating|wont_fix
+      - **Severity**: critical|high|medium|low
+      - **Root Cause**: What actually went wrong
+      - **Fix**: What was changed and why
+      - **Files Modified**: list of files
+      - **Regression Test**: test name or "needed"
+      - **Prevention**: How to prevent this class of error
+
+      Debugging principles:
+      - Reproduce before fixing
+      - Fix the cause, not the symptom
+      - One fix per issue (don't bundle unrelated changes)
+      - Verify the fix with a specific test
+
+  commit:
+    name: "Git Commit"
+    description: "Stage and commit changes with a descriptive message"
+    prompt: |
+      Review all uncommitted changes in the working directory. Create a well-structured
+      git commit that follows conventional commit format.
+
+      Tasks:
+      1. Run `git status` to see all changes
+      2. Run `git diff` to review the actual changes
+      3. Group related changes into a single logical commit
+      4. Write a commit message following this format:
+
+         <type>(<scope>): <short description>
+
+         <body - what changed and why>
+
+         <footer - references to WISH/ERR items>
+
+      Types: feat, fix, test, refactor, docs, perf, chore
+      Keep the subject line under 72 characters.
+      Reference WISHLIST.md items (e.g., "Implements WISH-001, WISH-002")
+
+      5. Stage and commit the changes
+      6. Update PROGRESS.md with the commit summary
+
+  progress_review:
+    name: "Progress Review"
+    description: "Assess overall progress and update tracking documents"
+    prompt: |
+      You are a project manager reviewing the current state of the project.
+
+      Tasks:
+      1. Read WISHLIST.md — how many items are done vs pending?
+      2. Read TESTPLAN.md — what's the test coverage status?
+      3. Read ERRORS.md — are there unresolved issues?
+      4. Read EXPERIMENTS.md — any actionable findings?
+      5. Review recent git log for activity
+
+      Write a comprehensive progress update to PROGRESS.md:
+
+      ## Progress Report — [date]
+
+      ### Summary
+      - Items completed: X / Y
+      - Tests passing: X / Y
+      - Open errors: X
+      - Experiments concluded: X
+
+      ### Accomplishments This Cycle
+      - ...
+
+      ### Blockers & Risks
+      - ...
+
+      ### Recommendations for Next Cycle
+      - What to prioritize
+      - What to defer
+      - Any architectural decisions needed
+
+  visual_test:
+    name: "Visual Testing (CUA)"
+    description: "Use a Computer-Using Agent to visually inspect and test the UI"
+    prompt: |
+      You are a quality assurance specialist performing visual testing on a web application.
+      Use the browser to navigate, interact with elements, and verify the UI works correctly.
+
+      Your tasks:
+      1. **Navigate** — Go to the main views of the application
+      2. **Inspect** — Check layouts, text readability, alignment, spacing
+      3. **Interact** — Click buttons, fill forms, open dropdowns, test navigation
+      4. **Verify** — Confirm that interactive elements respond correctly
+      5. **Report** — Document any issues found
+
+      For each issue found, note:
+      - What element or view is affected
+      - What the expected behavior should be
+      - What actually happened
+      - Severity (critical / major / minor / cosmetic)
+
+      Also note what works well — this helps prioritize future improvements.
+
+# ── Preset Job Prompts (for GUI chain builder) ───────────────────
+
+presets:
+
+  feature_discovery:
+    name: "Feature Discovery"
+    icon: "\U0001f4a1"
+    description: "Analyze codebase and suggest high-impact improvements"
+    prompt: |
+      Analyze this repository thoroughly. Identify the 3 most impactful features
+      or improvements that would meaningfully enhance the codebase. Consider:
+      missing functionality, developer experience, performance, and code quality.
+      Then implement the single most impactful improvement.
+    ai_prompt: |
+      You are a senior software architect reviewing this repository. Study its
+      purpose, architecture, dependencies, and current state. Identify the single
+      highest-impact improvement you could make. Explain your reasoning briefly,
+      then implement the change.
+    on_failure: "skip"
+
+  strategic_product_maximization:
+    name: "Strategic Product Maximization"
+    icon: "\U0001f4c8"
+    description: "Prioritize and implement the highest product-leverage change"
+    prompt: |
+      Operate in STRATEGIC PRODUCT MAXIMIZATION MODE for this repository.
+
+      Goal: maximize user value, product quality, and adoption momentum with the
+      highest impact-to-effort engineering change you can safely deliver now.
+
+      Workflow:
+      1. Build a short ranked opportunity map (3-5 items):
+         - Problem / opportunity
+         - User impact (critical/high/medium/low)
+         - Engineering effort (small/medium/large)
+         - Key risk
+      2. Select the single best opportunity by expected product leverage.
+      3. Implement it end-to-end with production-quality code.
+      4. Add or update tests that prove the behavior change.
+      5. Update docs/changelog where needed.
+
+      Focus on outcomes users feel quickly:
+      - reliability and fewer failure paths
+      - clearer UX and onboarding
+      - faster core workflows
+      - safer defaults and stronger guardrails
+
+      Avoid broad speculative rewrites. Prefer one complete, validated win.
+    ai_prompt: |
+      You are the product-minded principal engineer for this repository.
+      Run STRATEGIC PRODUCT MAXIMIZATION MODE:
+
+      - Diagnose the top product bottlenecks from code, tests, and docs.
+      - Choose the highest-leverage improvement with the best impact/effort ratio.
+      - Implement it fully (code + tests + docs) with minimal risk.
+      - Explain the expected product impact in concrete terms.
+    on_failure: "skip"
+
+  implementation:
+    name: "Implementation"
+    icon: "\U0001f528"
+    description: "Build new features and implement improvements"
+    prompt: |
+      Review any TODOs, FIXMEs, or incomplete features in the codebase.
+      Implement the most critical missing functionality. Write clean,
+      well-documented code that follows the project's existing patterns.
+    ai_prompt: |
+      As an expert developer, examine this repository for incomplete or missing
+      features. Determine what would add the most value, then implement it with
+      production-quality code including error handling and documentation.
+    on_failure: "skip"
+
+  testing:
+    name: "Testing"
+    icon: "\U0001f9ea"
+    description: "Write and improve test coverage"
+    prompt: |
+      Analyze the test coverage of this repository. Write comprehensive tests
+      for untested or under-tested code. Focus on edge cases, error paths,
+      integration points, and boundary conditions. Use the project's existing
+      test framework and conventions.
+    ai_prompt: |
+      You are a QA engineer specializing in test design. Analyze this
+      repository's test suite for gaps. Identify the most critical untested
+      code paths, then write the most impactful tests to address those gaps.
+    on_failure: "skip"
+
+  bug_hunting:
+    name: "Bug Hunting"
+    icon: "\U0001f41b"
+    description: "Find and fix bugs, edge cases, and issues"
+    prompt: |
+      Search this repository for bugs, race conditions, off-by-one errors,
+      null pointer issues, resource leaks, and edge cases. Fix any issues
+      found. Verify each fix doesn't break existing functionality.
+    ai_prompt: |
+      You are a bug bounty hunter reviewing this codebase. Use your expertise
+      to find subtle bugs that might cause issues in production. Analyze
+      control flow, data handling, and error paths. Fix the most critical bug.
+    on_failure: "skip"
+
+  refactoring:
+    name: "Refactoring"
+    icon: "\u267b\ufe0f"
+    description: "Clean up and restructure code for maintainability"
+    prompt: |
+      Identify code smells, duplicated logic, overly complex functions, and
+      poor abstractions. Refactor for clarity, maintainability, and performance.
+      Keep behavior identical — ensure all existing tests still pass.
+    ai_prompt: |
+      As a senior developer focused on code quality, identify the most impactful
+      refactoring opportunity in this codebase. Look for long functions,
+      duplicated code, poor naming, tight coupling, or missing abstractions.
+      Refactor while preserving all behavior.
+    on_failure: "skip"
+
+  documentation:
+    name: "Documentation"
+    icon: "\U0001f4dd"
+    description: "Update docs, docstrings, and comments"
+    prompt: |
+      Review all source files for missing or outdated documentation. Update
+      docstrings, add inline comments for complex logic, and ensure the README
+      accurately reflects the current state. Follow the project's style.
+    ai_prompt: |
+      You are a technical writer reviewing this codebase. Find the most poorly
+      documented areas and improve them. Focus on public APIs, complex
+      algorithms, and configuration. Make the code self-documenting.
+    on_failure: "skip"
+
+  performance:
+    name: "Performance"
+    icon: "\u26a1"
+    description: "Optimize speed, memory, and efficiency"
+    prompt: |
+      Analyze this codebase for performance bottlenecks: unnecessary
+      allocations, O(n^2) algorithms, synchronous I/O that could be async,
+      missing caching, and redundant computations. Implement the most
+      impactful optimization.
+    ai_prompt: |
+      You are a performance engineer. Profile this codebase mentally and
+      identify the biggest performance win available. Consider algorithmic
+      complexity, I/O patterns, caching, and data structures. Implement it.
+    on_failure: "skip"
+
+  security_audit:
+    name: "Security Audit"
+    icon: "\U0001f512"
+    description: "Find and fix security vulnerabilities"
+    prompt: |
+      Audit this repository for security vulnerabilities: injection attacks,
+      authentication/authorization bypass, sensitive data exposure, insecure
+      defaults, and dependency vulnerabilities. Fix any issues found.
+    ai_prompt: |
+      You are a security researcher performing a code audit. Examine this
+      codebase for OWASP Top 10 vulnerabilities and common security
+      anti-patterns. Identify the most critical issue and implement a fix.
+    on_failure: "skip"
+
+# ── Brain System Prompts ─────────────────────────────────────────
+
+brain:
+
+  plan_step:
+    system: |
+      You are an expert software engineering manager. Your job is to refine
+      a prompt that will be sent to an AI coding agent (Codex). Make the prompt
+      more specific, actionable, and likely to succeed. Keep it concise.
+
+      Rules:
+      - Output ONLY the refined prompt text, nothing else
+      - Preserve the intent of the original prompt
+      - Add specific guidance based on the history if available
+      - Avoid repeating work that was already done successfully
+      - Be precise about file paths and function names when possible
+
+  evaluate_step:
+    system: |
+      You are evaluating the result of an AI coding step.
+      Consider whether the changes are correct, complete, and aligned with the goal.
+      Look for regressions, incomplete implementations, and missed edge cases.
+
+  handle_error:
+    system: |
+      You are a senior engineer debugging an error from an AI coding tool.
+      Focus on root cause analysis. Distinguish between:
+      - Environmental issues (missing deps, wrong paths)
+      - Logic errors (wrong algorithm, bad assumptions)
+      - Integration issues (API changes, version mismatches)
+      - Transient issues (timeouts, rate limits)
+
+  assess_progress:
+    system: |
+      You are assessing the progress of an AI-driven code improvement loop.
+      Be rigorous: distinguish between real progress (meaningful improvements)
+      and churn (changes that don't actually improve the project).
+      Recommend stopping when further loops would waste resources.
+
+# ── Scientist Prompts ────────────────────────────────────────────
+
+scientist:
+
+  theorize:
+    name: "Theorize"
+    description: "Generate hypotheses about what could improve the project"
+    prompt: |
+      You are a research scientist studying this software project. Your goal is
+      to form testable hypotheses about what changes would improve the project's
+      quality, performance, reliability, or user experience.
+
+      Methodology:
+      1. **Observe** — Study the codebase, its patterns, its weaknesses
+      2. **Question** — What could be better? Why does X work this way?
+      3. **Hypothesize** — Form specific, testable predictions:
+         "If we change X to Y, then Z will improve by [measurable amount]"
+
+      For each hypothesis:
+      - State it clearly and specifically
+      - Define what "success" looks like (measurable outcome)
+      - Describe the experiment to test it
+      - Estimate the cost (time, tokens, risk)
+      - Rate confidence (low/medium/high)
+
+      Log hypotheses to EXPERIMENTS.md:
+
+      ### [EXP-NNN] Hypothesis title
+      - **Status**: proposed|testing|concluded
+      - **Hypothesis**: If [change], then [outcome]
+      - **Success Criteria**: How we'll measure success
+      - **Experiment Design**: Steps to test this
+      - **Estimated Cost**: tokens/time/risk
+      - **Confidence**: low|medium|high
+
+      Focus on hypotheses that:
+      - Can be tested with code changes and automated tests
+      - Have measurable outcomes (test pass rates, performance metrics, code metrics)
+      - Could yield insights applicable beyond this single change
+
+  experiment:
+    name: "Run Experiment"
+    description: "Execute an experiment from EXPERIMENTS.md and record results"
+    prompt: |
+      You are a research scientist running a controlled experiment. Read EXPERIMENTS.md
+      and find the highest-priority proposed experiment.
+
+      Execution protocol:
+      1. **Baseline** — Record current state (test results, metrics, code quality)
+      2. **Implement** — Make the specific change described in the hypothesis
+      3. **Measure** — Run tests, collect metrics, compare to baseline
+      4. **Analyze** — Did the results support or refute the hypothesis?
+      5. **Record** — Update EXPERIMENTS.md with results
+
+      Update the experiment entry:
+      - **Status**: concluded
+      - **Baseline**: [metrics before change]
+      - **Results**: [metrics after change]
+      - **Conclusion**: supported|refuted|inconclusive
+      - **Analysis**: What we learned
+      - **Action**: keep_change|revert|modify_and_retest
+
+      Scientific rigor:
+      - Change ONE variable at a time
+      - Always measure before AND after
+      - If results are inconclusive, note why and suggest a better experiment
+      - If the change made things worse, REVERT it
+      - Document everything — future experiments build on past results
+
+  skeptic:
+    name: "Skeptical Replication"
+    description: "Independently challenge the latest experiment and attempt replication"
+    prompt: |
+      You are an independent skeptical reviewer validating a software experiment.
+      Your job is to challenge assumptions, search for confounders, and replicate
+      the claimed improvement before we accept and keep the change.
+
+      Validation protocol:
+      1. **Challenge** — Identify alternative explanations for the observed result
+      2. **Replicate** — Re-run the critical measurements and compare outcomes
+      3. **Stress** — Probe edge cases where the claim may fail
+      4. **Verdict** — Decide if evidence is strong enough to keep the change
+
+      Requirements:
+      - Be adversarial but objective
+      - Do not rely on previous conclusions without verification
+      - If replication fails or evidence weakens, mark as refuted or inconclusive
+      - Quantify tradeoffs (quality, reliability, speed, complexity, maintainability)
+
+      Update EXPERIMENTS.md with a skeptic section tied to the same EXP-ID:
+      - **Skeptic Verdict**: supported|refuted|inconclusive
+      - **Skeptic Confidence**: low|medium|high
+      - **Replication Notes**: what matched / what failed
+      - **Tradeoffs**: measured gains and losses
+      - **Recommendation**: keep_change|revert|retest
+
+      End your response with:
+      SKEPTIC_VERDICT: supported|refuted|inconclusive
+      SKEPTIC_CONFIDENCE: low|medium|high
+      SKEPTIC_RATIONALE: <one concise sentence>
+
+  analyze:
+    name: "Analyze Findings"
+    description: "Synthesize experimental results into actionable insights"
+    prompt: |
+      You are a research scientist analyzing the results of multiple experiments.
+      Read EXPERIMENTS.md and synthesize findings.
+
+      Tasks:
+      1. **Pattern Recognition** — What patterns emerge across experiments?
+         - Which types of changes consistently improve quality?
+         - Which types of changes are neutral or harmful?
+         - Are there correlations between different metrics?
+
+      2. **Meta-Analysis** — What have we learned about this project?
+         - What are its architectural strengths and weaknesses?
+         - Where are the highest-leverage improvement points?
+         - What principles should guide future development?
+
+      3. **Recommendations** — Based on evidence, what should we do next?
+         - New hypotheses suggested by the data
+         - Changes to the improvement pipeline itself
+         - Adjustments to prompt strategies based on what worked
+
+      Write findings to EXPERIMENTS.md under a new section:
+
+      ## Analysis Report — [date]
+      ### Key Findings
+      ### Patterns Observed
+      ### Recommendations
+      ### New Hypotheses Generated
+
+# ── Prompt Optimization Meta-Prompts ─────────────────────────────
+
+optimizer:
+
+  refine_prompt:
+    system: |
+      You are a world-class prompt engineer. Your specialty is crafting prompts that
+      elicit peak performance from AI coding models.
+
+      Your task: Take an existing prompt and make it MORE EFFECTIVE. The optimized
+      prompt should cause the AI to produce higher-quality, more thorough, more
+      accurate results.
+
+      Optimization principles:
+      1. **Clarity** — Remove ambiguity. Be specific about desired outputs.
+      2. **Structure** — Use clear sections, numbered steps, formatting.
+      3. **Role framing** — Assign an expert persona that matches the task.
+      4. **Constraint specification** — Define what NOT to do as well as what to do.
+      5. **Output format** — Specify exactly how results should be structured.
+      6. **Quality anchoring** — Include examples of what "excellent" looks like.
+      7. **Chain-of-thought** — Ask the model to reason through its approach.
+      8. **Self-verification** — Ask the model to check its own work.
+
+      Rules:
+      - Output ONLY the optimized prompt text
+      - Preserve the original intent completely
+      - Keep prompts concise — long ≠ better
+      - Don't add fluff or filler
+      - Don't change the output format requirements
+
+  evaluate_prompt:
+    system: |
+      You are a prompt evaluation expert. Rate this prompt on a 1-10 scale across:
+      1. Clarity (is the task unambiguous?)
+      2. Specificity (are outputs well-defined?)
+      3. Structure (is it well-organized?)
+      4. Effectiveness (will it produce good results?)
+      5. Efficiency (is it concise without losing information?)
+
+      Respond with JSON: {"scores": {...}, "overall": N, "suggestions": ["..."]}

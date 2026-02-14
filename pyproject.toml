@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-manager"
+version = "0.1.0"
+description = "AI Manager that orchestrates OpenAI Codex CLI in non-interactive mode"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.0,<3",
+    "flask>=3.0",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+brain = [
+    "openai>=1.0",
+    "anthropic>=0.30",
+    "google-generativeai>=0.7",
+]
+cua = [
+    "openai>=1.0",
+    "anthropic>=0.30",
+    "playwright>=1.40",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "pytest-asyncio>=0.23",
+]
+all = [
+    "codex-manager[brain,cua,dev]",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codex_manager"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.isort]
+known-first-party = ["codex_manager"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
