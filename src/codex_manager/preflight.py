@@ -158,9 +158,13 @@ def repo_write_error(repo: Path) -> str | None:
 
 
 def normalize_agent(agent: str) -> str:
-    """Normalize agent names and map ``auto`` to ``codex``."""
+    """Normalize agent names and map common aliases to canonical keys."""
     key = (agent or "codex").strip().lower()
-    return "codex" if key in {"", "auto"} else key
+    if key in {"", "auto"}:
+        return "codex"
+    if key in {"claude", "claude-code", "claude_code", "claudecode"}:
+        return "claude_code"
+    return key
 
 
 def parse_agents(raw_agents: str | None) -> list[str]:

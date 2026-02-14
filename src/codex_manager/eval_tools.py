@@ -69,6 +69,8 @@ def parse_test_command(command: str | Sequence[str] | None) -> list[str] | None:
 
     cleaned: list[str] = []
     for part in command:
+        if part is None:
+            continue
         token = str(part).strip()
         if token:
             cleaned.append(token)
@@ -92,7 +94,7 @@ class RepoEvaluator:
         timeout: int = 300,
         skip_tests: bool = False,
     ) -> None:
-        self.test_cmd = test_cmd or list(DEFAULT_TEST_CMD)
+        self.test_cmd = list(test_cmd) if test_cmd else list(DEFAULT_TEST_CMD)
         self.timeout = timeout
         self.skip_tests = skip_tests
 

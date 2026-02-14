@@ -22,6 +22,12 @@ class TestRepoEvaluator:
         evaluator = RepoEvaluator(test_cmd=["echo", "ok"])
         assert evaluator.test_cmd == ["echo", "ok"]
 
+    def test_custom_test_cmd_is_copied(self):
+        command = ["echo", "ok"]
+        evaluator = RepoEvaluator(test_cmd=command)
+        command.append("mutated")
+        assert evaluator.test_cmd == ["echo", "ok"]
+
     def test_default_test_cmd(self):
         evaluator = RepoEvaluator()
         assert evaluator.test_cmd == ["python", "-m", "pytest", "-q"]
@@ -53,6 +59,9 @@ class TestParseTestCommand:
 
     def test_normalizes_sequence_input(self):
         assert parse_test_command(["pytest", " ", "-q"]) == ["pytest", "-q"]
+
+    def test_normalizes_sequence_input_ignores_none(self):
+        assert parse_test_command(["pytest", None, " ", "-q"]) == ["pytest", "-q"]
 
     def test_parses_unquoted_windows_backslash_path(self, monkeypatch):
         monkeypatch.setattr("codex_manager.eval_tools._is_windows_platform", lambda: True)

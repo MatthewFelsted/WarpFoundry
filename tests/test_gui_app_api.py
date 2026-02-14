@@ -552,6 +552,29 @@ def test_diagnostics_warns_on_unknown_agents(client):
     assert "Unknown agent" in unknown["detail"]
 
 
+def test_diagnostics_accepts_string_agents_with_aliases(client, monkeypatch):
+    monkeypatch.setattr(preflight_module, "binary_exists", lambda _binary: True)
+    monkeypatch.setattr(preflight_module, "has_codex_auth", lambda: True)
+    monkeypatch.setattr(preflight_module, "has_claude_auth", lambda: True)
+
+    resp = client.post(
+        "/api/diagnostics",
+        json={"repo_path": "", "agents": "codex,claude"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["requested_agents"] == ["codex", "claude_code"]
+
+
+def test_normalize_requested_agents_supports_iterable_items_with_csv_tokens():
+    assert gui_app_module._normalize_requested_agents(("codex,claude", "auto")) == [
+        "codex",
+        "claude_code",
+    ]
+
+
 def test_docs_api_lists_curated_docs(client):
     resp = client.get("/api/docs")
     data = resp.get_json()

@@ -25,7 +25,7 @@ from codex_manager.gui.models import (
 )
 from codex_manager.gui.presets import get_preset, list_presets
 from codex_manager.gui.stop_guidance import get_stop_guidance
-from codex_manager.preflight import build_preflight_report
+from codex_manager.preflight import build_preflight_report, parse_agents
 
 logger = logging.getLogger(__name__)
 
@@ -159,9 +159,13 @@ def _read_text_utf8_resilient(path: Path) -> str:
 
 
 def _normalize_agent(agent: str) -> str:
-    """Normalize agent keys and map ``auto`` to ``codex`` for preflight checks."""
+    """Normalize agent keys and map common aliases to canonical keys."""
     key = (agent or "codex").strip().lower()
-    return "codex" if key == "auto" else key
+    if key in {"", "auto"}:
+        return "codex"
+    if key in {"claude", "claude-code", "claude_code", "claudecode"}:
+        return "claude_code"
+    return key
 
 
 def _collect_chain_agents(config: ChainConfig) -> set[str]:
@@ -215,11 +219,13 @@ def _agent_preflight_issues(
 def _normalize_requested_agents(raw_agents: object) -> list[str]:
     """Normalize requested diagnostics agents, defaulting to Codex + Claude."""
     normalized: list[str] = []
-    if isinstance(raw_agents, list):
+    if isinstance(raw_agents, str):
+        normalized = parse_agents(raw_agents)
+    elif isinstance(raw_agents, (list, tuple, set)):
         for item in raw_agents:
-            key = _normalize_agent(str(item))
-            if key and key not in normalized:
-                normalized.append(key)
+            for key in parse_agents(str(item)):
+                if key and key not in normalized:
+                    normalized.append(key)
     if not normalized:
         normalized = ["codex", "claude_code"]
     return normalized

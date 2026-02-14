@@ -12,6 +12,11 @@ def test_parse_agents_normalizes_and_deduplicates() -> None:
     assert parsed == ["codex", "claude_code"]
 
 
+def test_parse_agents_supports_claude_aliases() -> None:
+    parsed = preflight.parse_agents("claude, claude-code claudecode claude_code")
+    assert parsed == ["claude_code"]
+
+
 def test_build_preflight_report_warns_when_repo_not_provided(monkeypatch) -> None:
     monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
     monkeypatch.setattr(preflight, "has_codex_auth", lambda: True)
