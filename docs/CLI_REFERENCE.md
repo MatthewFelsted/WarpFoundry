@@ -55,6 +55,8 @@ python -m codex_manager pipeline --repo <path> [options]
 | `--brain` | false |
 | `--brain-model` | `gpt-5.2` |
 | `--agent` | `codex` (`codex` or `claude_code`) |
+| `--codex-bin` | `codex` |
+| `--claude-bin` | `claude` |
 | `--test-cmd` | config default |
 | `--timeout` | `600` |
 | `--max-tokens` | `5000000` |
@@ -148,6 +150,7 @@ python -m codex_manager --repo /repo --goal "Increase test coverage" --rounds 3 
 python -m codex_manager strategic --repo /repo --mode dry-run --rounds 6
 python -m codex_manager doctor --repo /repo --agents codex,claude_code
 python -m codex_manager pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
+python -m codex_manager pipeline --repo /repo --agent claude_code --claude-bin /usr/local/bin/claude
 python -m codex_manager optimize-prompts --dry-run
 python -m codex_manager list-recipes --recipe autopilot_default
 python -m codex_manager visual-test --url http://localhost:5088 --provider anthropic

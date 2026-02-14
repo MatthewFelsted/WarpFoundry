@@ -82,6 +82,23 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
     assert calls["doctor_repo"] == str(repo)
 
 
+def test_pipeline_parser_accepts_binary_overrides() -> None:
+    parser = main_module._build_parser()
+    args = parser.parse_args(
+        [
+            "pipeline",
+            "--repo",
+            "C:/repo",
+            "--codex-bin",
+            "codex-dev",
+            "--claude-bin",
+            "claude-dev",
+        ]
+    )
+    assert args.codex_bin == "codex-dev"
+    assert args.claude_bin == "claude-dev"
+
+
 def test_main_dispatches_gui(monkeypatch) -> None:
     calls: dict[str, object] = {}
 
@@ -304,6 +321,8 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
         brain=False,
         brain_model="gpt-5.2",
         agent="codex",
+        codex_bin="codex-missing",
+        claude_bin="claude-missing",
         test_cmd=None,
         timeout=60,
         max_tokens=1000,
@@ -353,6 +372,8 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
         brain=True,
         brain_model="gpt-5.2",
         agent="codex",
+        codex_bin="codex-custom",
+        claude_bin="claude-custom",
         test_cmd="pytest -q",
         timeout=120,
         max_tokens=5000,
@@ -368,6 +389,8 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
     assert StubPipeline.last_instance.repo_path == repo.resolve()
     assert StubPipeline.last_instance.config.test_cmd == "pytest -q"
     assert StubPipeline.last_instance.config.science_enabled is True
+    assert StubPipeline.last_instance.config.codex_binary == "codex-custom"
+    assert StubPipeline.last_instance.config.claude_binary == "claude-custom"
     assert "AI Manager - Pipeline Summary" in captured.out
 
 
@@ -386,6 +409,8 @@ def test_run_pipeline_preflight_failure_stops_before_orchestrator(
         brain=False,
         brain_model="gpt-5.2",
         agent="codex",
+        codex_bin="codex",
+        claude_bin="claude",
         test_cmd=None,
         timeout=60,
         max_tokens=1000,
@@ -432,6 +457,8 @@ def test_run_pipeline_preflight_uses_selected_agent(monkeypatch, tmp_path: Path)
         brain=False,
         brain_model="gpt-5.2",
         agent="claude_code",
+        codex_bin="codex-custom",
+        claude_bin="claude-custom",
         test_cmd=None,
         timeout=60,
         max_tokens=1000,
@@ -443,6 +470,8 @@ def test_run_pipeline_preflight_uses_selected_agent(monkeypatch, tmp_path: Path)
     assert main_module._run_pipeline(args) == 0
     assert captured_guard_args["repo"] == repo.resolve()
     assert captured_guard_args["agents"] == ["claude_code"]
+    assert captured_guard_args["codex_bin"] == "codex-custom"
+    assert captured_guard_args["claude_bin"] == "claude-custom"
 
 
 def test_optimize_prompts_local_only_uses_ollama_model(monkeypatch, capsys) -> None:

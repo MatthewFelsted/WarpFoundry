@@ -105,6 +105,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Agent to use for execution (default: codex).",
     )
     pipe_p.add_argument(
+        "--codex-bin",
+        type=str,
+        default="codex",
+        help="Path to the codex CLI binary (default: codex).",
+    )
+    pipe_p.add_argument(
+        "--claude-bin",
+        type=str,
+        default="claude",
+        help="Path to the Claude Code CLI binary (default: claude).",
+    )
+    pipe_p.add_argument(
         "--test-cmd",
         type=str,
         default=None,
@@ -646,6 +658,8 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         brain_enabled=args.brain,
         brain_model=args.brain_model,
         local_only=args.local_only,
+        codex_binary=getattr(args, "codex_bin", "codex"),
+        claude_binary=getattr(args, "claude_bin", "claude"),
         timeout_per_phase=args.timeout,
         max_total_tokens=args.max_tokens,
         max_time_minutes=args.max_time,
