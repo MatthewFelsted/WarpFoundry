@@ -252,6 +252,8 @@ class PipelineState(BaseModel):
     total_cycles_completed: int = 0
     total_phases_completed: int = 0
     results: list[PhaseResult] = Field(default_factory=list)
+    successes: int = 0
+    failures: int = 0
     stop_reason: str | None = None
     total_tokens: int = 0
     elapsed_seconds: float = 0.0
@@ -262,9 +264,14 @@ class PipelineState(BaseModel):
     last_log_level: str = ""
     last_log_message: str = ""
 
-    def to_summary(self) -> dict[str, Any]:
-        """Return a summary dict for API responses."""
-        return {
+    def to_summary(self, *, since_results: int | None = None) -> dict[str, Any]:
+        """Return a summary dict for API responses.
+
+        When ``since_results`` is provided, returns only new result rows as
+        ``results_delta`` to keep polling payloads small.
+        """
+        total_results = len(self.results)
+        payload: dict[str, Any] = {
             "running": self.running,
             "paused": self.paused,
             "current_cycle": self.current_cycle,
@@ -273,15 +280,21 @@ class PipelineState(BaseModel):
             "current_phase_started_at_epoch_ms": self.current_phase_started_at_epoch_ms,
             "total_cycles": self.total_cycles_completed,
             "total_phases": self.total_phases_completed,
-            "total_results": len(self.results),
-            "results": [r.model_dump() for r in self.results],
+            "total_results": total_results,
             "stop_reason": self.stop_reason,
             "total_tokens": self.total_tokens,
             "elapsed_seconds": round(self.elapsed_seconds, 1),
             "improvement_pct": self.improvement_pct,
-            "successes": sum(1 for r in self.results if r.success),
-            "failures": sum(1 for r in self.results if not r.success),
+            "successes": self.successes,
+            "failures": self.failures,
             "last_log_epoch_ms": self.last_log_epoch_ms,
             "last_log_level": self.last_log_level,
             "last_log_message": self.last_log_message,
         }
+        if since_results is None:
+            payload["results"] = [r.model_dump() for r in self.results]
+            return payload
+
+        offset = min(max(0, since_results), total_results)
+        payload["results_delta"] = [r.model_dump() for r in self.results[offset:]]
+        return payload

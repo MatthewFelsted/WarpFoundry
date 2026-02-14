@@ -100,6 +100,17 @@ def _is_valid_config_name(name: object) -> bool:
     return raw == _sanitize_config_name(raw)
 
 
+def _parse_since_results_arg(raw: str | None) -> int | None:
+    """Parse polling delta offset from query string."""
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return None
+    return max(0, value)
+
+
 def _binary_exists(binary: str) -> bool:
     """Return True when a configured CLI binary is available."""
     return shared_binary_exists(binary)
@@ -504,7 +515,16 @@ def api_pause():
 
 @app.route("/api/chain/status")
 def api_status():
-    return jsonify(_attach_stop_guidance(executor.get_state(), mode="chain"))
+    since_results = _parse_since_results_arg(request.args.get("since_results"))
+    if since_results is None:
+        payload = executor.get_state()
+    else:
+        summary_fn = getattr(executor, "get_state_summary", None)
+        if callable(summary_fn):
+            payload = summary_fn(since_results=since_results)
+        else:
+            payload = executor.get_state()
+    return jsonify(_attach_stop_guidance(payload, mode="chain"))
 
 
 @app.route("/api/chain/outputs")
@@ -1065,11 +1085,27 @@ def api_pipeline_pause():
 def api_pipeline_status():
     """Return current pipeline state."""
     global _pipeline_executor
+    since_results = _parse_since_results_arg(request.args.get("since_results"))
     if _pipeline_executor is None:
         from codex_manager.pipeline.phases import PipelineState
 
-        return jsonify(_attach_stop_guidance(PipelineState().to_summary(), mode="pipeline"))
-    return jsonify(_attach_stop_guidance(_pipeline_executor.state.to_summary(), mode="pipeline"))
+        return jsonify(
+            _attach_stop_guidance(
+                PipelineState().to_summary(since_results=since_results),
+                mode="pipeline",
+            )
+        )
+
+    to_summary = getattr(_pipeline_executor.state, "to_summary", None)
+    if not callable(to_summary):
+        payload = {}
+    else:
+        try:
+            payload = to_summary(since_results=since_results)
+        except TypeError:
+            # Backward-compatible fallback for patched/mocked states in tests.
+            payload = to_summary()
+    return jsonify(_attach_stop_guidance(payload, mode="pipeline"))
 
 
 @app.route("/api/pipeline/stream")

@@ -1312,6 +1312,10 @@ class PipelineOrchestrator:
                                 )
 
                         self.state.results.append(result)
+                        if result.success:
+                            self.state.successes += 1
+                        else:
+                            self.state.failures += 1
                         self.state.total_phases_completed += 1
                         self.state.total_tokens += result.input_tokens + result.output_tokens
                         self.state.elapsed_seconds = time.monotonic() - start_time
@@ -1446,6 +1450,10 @@ class PipelineOrchestrator:
                                         phase, cycle_num, iteration, followup_prompt,
                                     )
                                     self.state.results.append(followup_result)
+                                    if followup_result.success:
+                                        self.state.successes += 1
+                                    else:
+                                        self.state.failures += 1
                                     self.state.total_phases_completed += 1
                                     self.state.total_tokens += followup_result.input_tokens + followup_result.output_tokens
                                     self.state.elapsed_seconds = time.monotonic() - start_time

@@ -1511,6 +1511,12 @@ let eventSource = null;
 let pollTimer = null;
 let chainOutputFiles = [];
 let _lastOutputRefreshStepCount = -1;
+let chainResultsCache = [];
+let pipeResultsCache = [];
+let chainResultsCount = 0;
+let pipeResultsCount = 0;
+let _chainResultsRenderSignature = '';
+let _pipeResultsRenderSignature = '';
 let chainLogEntries = [];
 let pipeLogEntries = [];
 let chainLastActivityMs = 0;
@@ -3131,6 +3137,9 @@ async function startChain() {
 
   // Clear previous results
   chainLogEntries = [];
+  chainResultsCache = [];
+  chainResultsCount = 0;
+  _chainResultsRenderSignature = '';
   chainLastActivityMs = 0;
   chainRunning = true;
   chainPaused = false;
@@ -3280,9 +3289,12 @@ function stopPolling() {
 
 async function pollStatus() {
   try {
-    const s = await api('/api/chain/status');
+    const s = await api('/api/chain/status?since_results=' + encodeURIComponent(chainResultsCount));
     updateProgress(s);
-    updateResults(s.results || []);
+    const next = _consumeResultsPayload(s, chainResultsCache, chainResultsCount);
+    chainResultsCache = next.results;
+    chainResultsCount = next.total;
+    updateResults(chainResultsCache);
     const done = s.total_steps_completed || 0;
     if (done !== _lastOutputRefreshStepCount) {
       _lastOutputRefreshStepCount = done;
@@ -3415,7 +3427,64 @@ function _restoreOpenChangedFileRows(tbodyId, openKeys) {
   });
 }
 
+function _parseResultCount(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.floor(n);
+}
+
+function _consumeResultsPayload(payload, cache, knownCount) {
+  if (Array.isArray(payload.results)) {
+    const full = payload.results;
+    const total = _parseResultCount(payload.total_results, full.length);
+    return { results: full, total: Math.max(full.length, total) };
+  }
+
+  if (!Array.isArray(payload.results_delta)) {
+    return { results: cache, total: knownCount };
+  }
+
+  const delta = payload.results_delta;
+  const total = _parseResultCount(payload.total_results, knownCount + delta.length);
+  let next = cache;
+
+  if (total === 0) {
+    next = [];
+  } else if (total < next.length) {
+    next = next.slice(0, total);
+  }
+
+  if (delta.length) next = next.concat(delta);
+  if (total < next.length) next = next.slice(0, total);
+
+  return { results: next, total: Math.max(total, next.length) };
+}
+
+function _resultsSignature(results) {
+  const len = Array.isArray(results) ? results.length : 0;
+  if (!len) return '0';
+  const last = results[len - 1] || {};
+  const changedFiles = Array.isArray(last.changed_files) ? last.changed_files.length : 0;
+  return [
+    len,
+    last.loop_number || 0,
+    last.step_index || 0,
+    last.cycle || 0,
+    String(last.phase || ''),
+    String(last.step_name || ''),
+    String(last.test_outcome || ''),
+    Number(last.files_changed || 0),
+    Number(last.net_lines_changed || 0),
+    Number(last.duration_seconds || 0),
+    changedFiles,
+  ].join('|');
+}
+
 function updateResults(results) {
+  const signature = _resultsSignature(results);
+  if (signature === _chainResultsRenderSignature) return;
+  _chainResultsRenderSignature = signature;
+
   const tbody = document.getElementById('results-body');
   const openKeys = _captureOpenChangedFileRows('results-body');
   if (!results.length) {
@@ -3625,6 +3694,12 @@ async function saveConfig() {
 function resetExecutionPanelsToDefaults() {
   chainLogEntries = [];
   pipeLogEntries = [];
+  chainResultsCache = [];
+  pipeResultsCache = [];
+  chainResultsCount = 0;
+  pipeResultsCount = 0;
+  _chainResultsRenderSignature = '';
+  _pipeResultsRenderSignature = '';
   chainLastActivityMs = 0;
   pipeLastActivityMs = 0;
   chainRunning = false;
@@ -4260,6 +4335,9 @@ async function startPipeline() {
   pipeConfig.phases = phases;
 
   pipeLogEntries = [];
+  pipeResultsCache = [];
+  pipeResultsCount = 0;
+  _pipeResultsRenderSignature = '';
   pipeLastActivityMs = 0;
   pipeRunning = true;
   pipePaused = false;
@@ -4354,9 +4432,12 @@ function startPipePolling() {
 
 async function pollPipeStatus() {
   try {
-    const s = await api('/api/pipeline/status');
+    const s = await api('/api/pipeline/status?since_results=' + encodeURIComponent(pipeResultsCount));
     updatePipeProgress(s);
-    updatePipeResults(s.results || []);
+    const next = _consumeResultsPayload(s, pipeResultsCache, pipeResultsCount);
+    pipeResultsCache = next.results;
+    pipeResultsCount = next.total;
+    updatePipeResults(pipeResultsCache);
 
     if (!s.running) {
       setPipeControlsRunning(false);
@@ -4420,6 +4501,10 @@ function updatePipeProgress(s) {
 }
 
 function updatePipeResults(results) {
+  const signature = _resultsSignature(results);
+  if (signature === _pipeResultsRenderSignature) return;
+  _pipeResultsRenderSignature = signature;
+
   const tbody = document.getElementById('pipe-results-body');
   const openKeys = _captureOpenChangedFileRows('pipe-results-body');
   if (!results.length) {

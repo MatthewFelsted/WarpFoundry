@@ -203,6 +203,21 @@ class ChainExecutor:
     def get_state(self) -> dict:
         return self.state.model_dump()
 
+    def get_state_summary(self, *, since_results: int | None = None) -> dict[str, Any]:
+        """Return polling-friendly state, optionally including only new results."""
+        payload: dict[str, Any] = self.state.model_dump(exclude={"results"})
+        results = self.state.results
+        total_results = len(results)
+        payload["total_results"] = total_results
+
+        if since_results is None:
+            payload["results"] = [r.model_dump() for r in results]
+            return payload
+
+        offset = min(max(0, since_results), total_results)
+        payload["results_delta"] = [r.model_dump() for r in results[offset:]]
+        return payload
+
     # ------------------------------------------------------------------
     # Logging helper
     # ------------------------------------------------------------------

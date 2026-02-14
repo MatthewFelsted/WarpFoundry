@@ -473,6 +473,44 @@ def test_chain_status_includes_actionable_stop_guidance(client, monkeypatch):
     assert any("Increase the token budget" in step for step in guidance["next_steps"])
 
 
+def test_chain_status_supports_results_delta_polling(client, monkeypatch):
+    observed_since: list[int | None] = []
+
+    class _Exec:
+        @staticmethod
+        def get_state():
+            return {"running": True, "paused": False, "stop_reason": None}
+
+        @staticmethod
+        def get_state_summary(*, since_results: int | None = None):
+            observed_since.append(since_results)
+            return {
+                "running": True,
+                "paused": False,
+                "stop_reason": None,
+                "total_results": 4,
+                "results_delta": [
+                    {
+                        "loop_number": 2,
+                        "step_index": 1,
+                        "step_name": "Testing",
+                        "test_outcome": "passed",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(gui_app_module, "executor", _Exec())
+    resp = client.get("/api/chain/status", query_string={"since_results": "3"})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert observed_since == [3]
+    assert data["total_results"] == 4
+    assert len(data["results_delta"]) == 1
+    assert "results" not in data
+
+
 def test_pipeline_status_includes_actionable_stop_guidance(client, monkeypatch):
     class _PipelineState:
         @staticmethod
@@ -501,6 +539,45 @@ def test_pipeline_status_includes_actionable_stop_guidance(client, monkeypatch):
     assert guidance["label"] == "Preflight checks failed"
     assert guidance["severity"] == "error"
     assert any("Setup Diagnostics" in step for step in guidance["next_steps"])
+
+
+def test_pipeline_status_supports_results_delta_polling(client, monkeypatch):
+    observed_since: list[int | None] = []
+
+    class _PipelineState:
+        @staticmethod
+        def to_summary(*, since_results: int | None = None):
+            observed_since.append(since_results)
+            return {
+                "running": True,
+                "paused": False,
+                "stop_reason": None,
+                "total_cycles": 2,
+                "total_phases": 8,
+                "total_results": 8,
+                "results_delta": [
+                    {
+                        "phase": "implementation",
+                        "iteration": 2,
+                        "success": True,
+                        "test_outcome": "passed",
+                    }
+                ],
+            }
+
+    class _Exec:
+        state = _PipelineState()
+
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _Exec())
+    resp = client.get("/api/pipeline/status", query_string={"since_results": "7"})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert observed_since == [7]
+    assert data["total_results"] == 8
+    assert len(data["results_delta"]) == 1
+    assert "results" not in data
 
 
 def _check_by_key(payload: dict, category: str, key: str) -> dict:
