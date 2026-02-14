@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import math
+import os
 import queue
 import shutil
 import subprocess
@@ -20,10 +22,13 @@ logger = logging.getLogger(__name__)
 
 def resolve_binary(name: str) -> str:
     """Resolve a binary name to a full executable path when possible."""
-    resolved = shutil.which(name)
+    expanded = os.path.expandvars(os.path.expanduser(str(name or "").strip()))
+    if not expanded:
+        return ""
+    resolved = shutil.which(expanded)
     if resolved:
         return resolved
-    return name
+    return expanded
 
 
 def coerce_int(value: Any) -> int:
@@ -35,7 +40,7 @@ def coerce_int(value: Any) -> int:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        if value != value:  # NaN
+        if not math.isfinite(value):
             return 0
         return int(value)
     if isinstance(value, str):

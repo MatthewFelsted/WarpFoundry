@@ -48,6 +48,23 @@ def test_binary_exists_requires_explicit_file_to_be_executable(tmp_path: Path) -
     assert preflight.binary_exists(str(candidate)) is True
 
 
+def test_binary_exists_expands_environment_variables(monkeypatch, tmp_path: Path) -> None:
+    var_name = "CODEX_MANAGER_TEST_BIN_DIR"
+    monkeypatch.setenv(var_name, str(tmp_path))
+
+    if os.name == "nt":
+        runnable = tmp_path / "tool.cmd"
+        runnable.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+        configured = f"%{var_name}%\\tool.cmd"
+    else:
+        runnable = tmp_path / "tool"
+        runnable.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+        runnable.chmod(runnable.stat().st_mode | 0o111)
+        configured = f"${var_name}/tool"
+
+    assert preflight.binary_exists(configured) is True
+
+
 def test_build_preflight_report_warns_when_repo_not_provided(monkeypatch) -> None:
     monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
     monkeypatch.setattr(preflight, "has_codex_auth", lambda: True)

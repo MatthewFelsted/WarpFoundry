@@ -25,6 +25,20 @@ class _DummyRunner(AgentRunner):
         return RunResult(success=True, exit_code=0)
 
 
+class _OtherDummyRunner(AgentRunner):
+    name = "other"
+
+    def run(
+        self,
+        repo_path: str | Path,
+        prompt: str,
+        *,
+        full_auto: bool = False,
+        extra_args: list[str] | None = None,
+    ) -> RunResult:
+        return RunResult(success=True, exit_code=0)
+
+
 def test_register_get_and_list_agents(monkeypatch) -> None:
     monkeypatch.setattr(agent_runner_module, "_REGISTRY", {})
 
@@ -43,3 +57,20 @@ def test_get_agent_class_raises_helpful_error(monkeypatch) -> None:
     register_agent("codex", _DummyRunner)
     with pytest.raises(KeyError, match=r"Available: codex"):
         get_agent_class("missing")
+
+
+def test_register_agent_rejects_empty_keys(monkeypatch) -> None:
+    monkeypatch.setattr(agent_runner_module, "_REGISTRY", {})
+
+    with pytest.raises(ValueError, match="non-empty"):
+        register_agent("   ", _DummyRunner)
+
+
+def test_register_agent_rejects_conflicting_re_registration(monkeypatch) -> None:
+    monkeypatch.setattr(agent_runner_module, "_REGISTRY", {})
+
+    register_agent("codex", _DummyRunner)
+    register_agent("codex", _DummyRunner)
+
+    with pytest.raises(ValueError, match=r"already registered"):
+        register_agent("codex", _OtherDummyRunner)

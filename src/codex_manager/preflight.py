@@ -194,7 +194,7 @@ def _placeholder_env_vars(var_names: tuple[str, ...]) -> list[str]:
 
 def binary_exists(binary: str) -> bool:
     """Return ``True`` when an executable exists for *binary*."""
-    binary = str(binary or "").strip()
+    binary = os.path.expandvars(os.path.expanduser(str(binary or "").strip()))
     if not binary:
         return False
     try:

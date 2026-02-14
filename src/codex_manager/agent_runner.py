@@ -55,15 +55,28 @@ _REGISTRY: dict[str, type[AgentRunner]] = {}
 
 def register_agent(key: str, cls: type[AgentRunner]) -> None:
     """Register an agent runner class under a lookup key."""
-    _REGISTRY[key] = cls
+    normalized_key = (key or "").strip()
+    if not normalized_key:
+        raise ValueError("Agent key must be a non-empty string")
+    if not isinstance(cls, type) or not issubclass(cls, AgentRunner):
+        raise TypeError("Registered agent must be an AgentRunner subclass")
+
+    existing = _REGISTRY.get(normalized_key)
+    if existing is not None and existing is not cls:
+        raise ValueError(
+            f"Agent '{normalized_key}' is already registered with {existing.__name__}"
+        )
+
+    _REGISTRY[normalized_key] = cls
 
 
 def get_agent_class(key: str) -> type[AgentRunner]:
     """Look up a registered agent runner class by key."""
-    if key not in _REGISTRY:
+    normalized_key = (key or "").strip()
+    if normalized_key not in _REGISTRY:
         available = ", ".join(sorted(_REGISTRY)) or "(none)"
-        raise KeyError(f"Unknown agent '{key}'. Available: {available}")
-    return _REGISTRY[key]
+        raise KeyError(f"Unknown agent '{normalized_key}'. Available: {available}")
+    return _REGISTRY[normalized_key]
 
 
 def list_agents() -> list[str]:
