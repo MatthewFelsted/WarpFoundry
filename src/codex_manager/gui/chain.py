@@ -55,6 +55,14 @@ _STEP_MEMORY_CONTEXT_CHARS = 2_800
 _STEP_MEMORY_EXCERPT_CHARS = 900
 _NO_PROGRESS_STREAK_RESULTS = 4
 _EVIDENCE_SUMMARY_CHARS = 1_200
+_MUTATING_JOB_TYPES = {
+    "implementation",
+    "bug_hunting",
+    "refactoring",
+    "performance",
+    "security_audit",
+    "strategic_product_maximization",
+}
 
 
 def _resolve_debug_log_path() -> Path | None:
@@ -412,6 +420,11 @@ class ChainExecutor:
             return False
         recent = self.state.results[-min_results:]
         return all(r.files_changed <= 0 and r.net_lines_changed == 0 for r in recent)
+
+    @staticmethod
+    def _step_requires_repo_delta(step: TaskStep) -> bool:
+        """Return True when the step should normally produce repository edits."""
+        return (step.job_type or "").strip().lower() in _MUTATING_JOB_TYPES
 
     def _append_execution_evidence(
         self,
@@ -1392,6 +1405,9 @@ class ChainExecutor:
                     "job_type": cua_result.job_type,
                     "agent_used": cua_result.agent_used,
                     "mode": config.mode,
+                    "agent_success": cua_result.agent_success,
+                    "validation_success": cua_result.validation_success,
+                    "tests_passed": cua_result.tests_passed,
                     "success": cua_result.success,
                     "test_outcome": cua_result.test_outcome,
                     "files_changed": cua_result.files_changed,
@@ -1705,6 +1721,38 @@ class ChainExecutor:
             agent_output=agent_output,
         )
 
+        tests_outcome = eval_result.test_outcome.value
+        tests_passed = tests_outcome == "passed"
+        tests_validation_success = tests_outcome in ("passed", "skipped")
+        requires_repo_delta = self._step_requires_repo_delta(step)
+        has_repo_delta = (
+            eval_result.files_changed > 0
+            or eval_result.net_lines_changed != 0
+            or bool(commit_sha)
+        )
+        repo_delta_success = (not requires_repo_delta) or has_repo_delta or terminate_repeats
+        validation_success = tests_validation_success and repo_delta_success
+        final_success = bool(run_result.success) and validation_success
+
+        validation_failures: list[str] = []
+        if not tests_validation_success:
+            validation_failures.append(f"tests={tests_outcome}")
+        if requires_repo_delta and not has_repo_delta and not terminate_repeats:
+            validation_failures.append("no repository changes detected")
+        if validation_failures and run_result.success:
+            self._log(
+                "warn",
+                "Validation marked step as failed despite agent exit success: "
+                + ", ".join(validation_failures),
+            )
+
+        error_message = "; ".join(run_result.errors) if run_result.errors else ""
+        if validation_failures:
+            validation_msg = "Validation failed: " + ", ".join(validation_failures)
+            error_message = (
+                f"{error_message}; {validation_msg}" if error_message else validation_msg
+            )
+
         duration = time.monotonic() - step_start
         step_result = StepResult(
             loop_number=loop_num,
@@ -1714,13 +1762,16 @@ class ChainExecutor:
             agent_used=runner.name,
             prompt_used=prompt,
             terminate_repeats=terminate_repeats,
-            success=run_result.success,
-            test_outcome=eval_result.test_outcome.value,
+            agent_success=bool(run_result.success),
+            validation_success=validation_success,
+            tests_passed=tests_passed,
+            success=final_success,
+            test_outcome=tests_outcome,
             files_changed=eval_result.files_changed,
             net_lines_changed=eval_result.net_lines_changed,
             changed_files=eval_result.changed_files,
             commit_sha=commit_sha,
-            error_message="; ".join(run_result.errors) if run_result.errors else "",
+            error_message=error_message,
             duration_seconds=round(duration, 1),
             output_chars=len(agent_output),
             input_tokens=run_result.usage.input_tokens,
@@ -1748,6 +1799,9 @@ class ChainExecutor:
                 "job_type": step_result.job_type,
                 "agent_used": step_result.agent_used,
                 "mode": config.mode,
+                "agent_success": step_result.agent_success,
+                "validation_success": step_result.validation_success,
+                "tests_passed": step_result.tests_passed,
                 "success": step_result.success,
                 "test_outcome": step_result.test_outcome,
                 "files_changed": step_result.files_changed,
@@ -1879,6 +1933,9 @@ class ChainExecutor:
                 step_name=step_label,
                 job_type="visual_test",
                 agent_used="cua",
+                agent_success=False,
+                validation_success=False,
+                tests_passed=False,
                 success=False,
                 error_message=f"CUA not installed: {exc}",
                 duration_seconds=round(time.monotonic() - step_start, 1),
@@ -1959,6 +2016,9 @@ class ChainExecutor:
                 job_type="visual_test",
                 agent_used=f"cua:{provider.value}",
                 prompt_used=prompt_record,
+                agent_success=result.success,
+                validation_success=result.success,
+                tests_passed=result.success,
                 success=result.success,
                 test_outcome="passed" if result.success else "failed",
                 files_changed=0,
@@ -1984,6 +2044,9 @@ class ChainExecutor:
                 step_name=step_label,
                 job_type="visual_test",
                 agent_used="cua",
+                agent_success=False,
+                validation_success=False,
+                tests_passed=False,
                 success=False,
                 error_message=str(exc),
                 duration_seconds=round(time.monotonic() - step_start, 1),
@@ -2052,6 +2115,9 @@ class ChainExecutor:
                         step_name=step.name or step.job_type,
                         job_type=step.job_type,
                         agent_used=step.agent,
+                        agent_success=False,
+                        validation_success=False,
+                        tests_passed=False,
                         success=False,
                         error_message=str(exc),
                     )

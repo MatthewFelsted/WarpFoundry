@@ -97,6 +97,9 @@ class StepResult(BaseModel):
     agent_used: str = "codex"  # which agent ran this step
     prompt_used: str = ""
     terminate_repeats: bool = False
+    agent_success: bool = False
+    validation_success: bool = False
+    tests_passed: bool = False
     success: bool = False
     test_outcome: str = "error"
     files_changed: int = 0

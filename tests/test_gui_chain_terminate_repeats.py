@@ -190,6 +190,24 @@ class _ChangedEvaluator:
         )
 
 
+class _FailingChangedEvaluator:
+    def __init__(self, test_cmd=None, skip_tests=False):
+        self.test_cmd = test_cmd
+        self.skip_tests = skip_tests
+
+    def evaluate(self, repo_path):
+        return EvalResult(
+            test_outcome=TestOutcome.FAILED,
+            test_summary="tests failed",
+            test_exit_code=1,
+            files_changed=1,
+            net_lines_changed=3,
+            changed_files=[
+                {"path": "src/app.py", "insertions": 3, "deletions": 0},
+            ],
+        )
+
+
 class _CommitRunner:
     name = "StubCodex"
 
@@ -502,6 +520,128 @@ def test_chain_ignores_placeholder_status_output(monkeypatch, tmp_path: Path):
         assert "Share the task you want implemented" not in memory_path.read_text(
             encoding="utf-8"
         )
+
+
+def test_chain_marks_implementation_noop_as_failed_validation(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _OutputRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Implementation no-op guard",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Implement one concrete feature.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.results
+    result = executor.state.results[0]
+    assert result.agent_success is True
+    assert result.validation_success is False
+    assert result.tests_passed is False
+    assert result.success is False
+    assert "no repository changes detected" in result.error_message
+
+
+def test_chain_keeps_discovery_noop_as_success(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _OutputRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Discovery no-op allowed",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Discovery",
+                job_type="feature_discovery",
+                prompt_mode="custom",
+                custom_prompt="List and rank opportunities.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.results
+    result = executor.state.results[0]
+    assert result.agent_success is True
+    assert result.validation_success is True
+    assert result.tests_passed is False
+    assert result.success is True
+
+
+def test_chain_marks_step_failed_when_tests_fail(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _OutputRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _FailingChangedEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Test failure propagates",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="pytest -q",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Implement and validate.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.results
+    result = executor.state.results[0]
+    assert result.agent_success is True
+    assert result.validation_success is False
+    assert result.tests_passed is False
+    assert result.success is False
+    assert "tests=failed" in result.error_message
 
 
 def test_chain_stops_early_when_latest_loop_has_no_progress(monkeypatch, tmp_path: Path):

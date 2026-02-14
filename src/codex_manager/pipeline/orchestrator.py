@@ -68,6 +68,11 @@ from codex_manager.schemas import EvalResult
 
 logger = logging.getLogger(__name__)
 
+_MUTATING_PHASES = {
+    PipelinePhase.IMPLEMENTATION,
+    PipelinePhase.DEBUGGING,
+}
+
 
 class PipelineOrchestrator:
     """Drives the full autonomous improvement pipeline.
@@ -316,7 +321,7 @@ class PipelineOrchestrator:
         baseline_eval: EvalResult,
         result: PhaseResult,
     ) -> tuple[str, str]:
-        if not result.success:
+        if not result.agent_success:
             return "refuted", "agent execution failed"
 
         before = baseline_eval.test_outcome.value
@@ -339,7 +344,7 @@ class PipelineOrchestrator:
         baseline_eval: EvalResult,
         result: PhaseResult,
     ) -> tuple[str, str, str]:
-        if not result.success:
+        if not result.agent_success:
             return "refuted", "agent execution failed", "low"
 
         output = result.agent_final_message or ""
@@ -603,6 +608,7 @@ class PipelineOrchestrator:
         rollback_action = "not_applicable"
         if phase in (PipelinePhase.EXPERIMENT, PipelinePhase.SKEPTIC):
             if verdict != "supported":
+                result.validation_success = False
                 result.success = False
                 evidence_reason = f"Science verdict={verdict}: {rationale}"
                 result.error_message = (
@@ -700,6 +706,9 @@ class PipelineOrchestrator:
             "phase": phase.value,
             "iteration": iteration,
             "agent": result.agent_used,
+            "agent_success": result.agent_success,
+            "validation_success": result.validation_success,
+            "tests_passed": result.tests_passed,
             "success": result.success,
             "verdict": verdict,
             "verdict_rationale": rationale,
@@ -801,6 +810,10 @@ class PipelineOrchestrator:
             PipelinePhase.DEBUGGING,
             PipelinePhase.SKEPTIC,
         )
+
+    @staticmethod
+    def _phase_requires_repo_delta(phase: PipelinePhase) -> bool:
+        return phase in _MUTATING_PHASES
 
     def _auto_commit_repo(
         self,
@@ -1197,6 +1210,9 @@ class PipelineOrchestrator:
                                 "phase": phase.value,
                                 "iteration": 1,
                                 "mode": config.mode,
+                                "agent_success": bool(cua_result),
+                                "validation_success": bool(cua_result),
+                                "tests_passed": bool(cua_result),
                                 "success": bool(cua_result),
                                 "test_outcome": "passed" if cua_result else "failed",
                                 "files_changed": 0,
@@ -1399,6 +1415,9 @@ class PipelineOrchestrator:
                                 "phase": phase.value,
                                 "iteration": iteration,
                                 "mode": config.mode,
+                                "agent_success": result.agent_success,
+                                "validation_success": result.validation_success,
+                                "tests_passed": result.tests_passed,
                                 "success": result.success,
                                 "test_outcome": result.test_outcome,
                                 "files_changed": result.files_changed,
@@ -1536,6 +1555,9 @@ class PipelineOrchestrator:
                                             "phase": phase.value,
                                             "iteration": iteration,
                                             "mode": config.mode,
+                                            "agent_success": followup_result.agent_success,
+                                            "validation_success": followup_result.validation_success,
+                                            "tests_passed": followup_result.tests_passed,
                                             "success": followup_result.success,
                                             "test_outcome": followup_result.test_outcome,
                                             "files_changed": followup_result.files_changed,
@@ -1848,6 +1870,9 @@ class PipelineOrchestrator:
                 cycle=cycle,
                 phase=phase.value,
                 iteration=iteration,
+                agent_success=False,
+                validation_success=False,
+                tests_passed=False,
                 success=False,
                 test_summary=str(exc),
                 error_message=str(exc),
@@ -1948,20 +1973,55 @@ class PipelineOrchestrator:
                 revert_all(repo)
                 self._log("info", "  Changes reverted (dry-run)")
 
+        tests_outcome = eval_result.test_outcome.value
+        tests_passed = tests_outcome == "passed"
+        tests_validation_success = tests_outcome in ("passed", "skipped")
+        requires_repo_delta = self._phase_requires_repo_delta(phase)
+        has_repo_delta = (
+            eval_result.files_changed > 0
+            or eval_result.net_lines_changed != 0
+            or bool(commit_sha)
+        )
+        repo_delta_success = (not requires_repo_delta) or has_repo_delta or terminate_repeats
+        validation_success = tests_validation_success and repo_delta_success
+        final_success = bool(run_result.success) and validation_success
+
+        validation_failures: list[str] = []
+        if not tests_validation_success:
+            validation_failures.append(f"tests={tests_outcome}")
+        if requires_repo_delta and not has_repo_delta and not terminate_repeats:
+            validation_failures.append("no repository changes detected")
+        if validation_failures and run_result.success:
+            self._log(
+                "warn",
+                "  Validation marked phase as failed despite agent exit success: "
+                + ", ".join(validation_failures),
+            )
+
+        error_message = "; ".join(run_result.errors) if run_result.errors else ""
+        if validation_failures:
+            validation_msg = "Validation failed: " + ", ".join(validation_failures)
+            error_message = (
+                f"{error_message}; {validation_msg}" if error_message else validation_msg
+            )
+
         duration = time.monotonic() - phase_start
         return PhaseResult(
             cycle=cycle,
             phase=phase.value,
             iteration=iteration,
-            success=run_result.success,
-            test_outcome=eval_result.test_outcome.value,
+            agent_success=bool(run_result.success),
+            validation_success=validation_success,
+            tests_passed=tests_passed,
+            success=final_success,
+            test_outcome=tests_outcome,
             test_summary=eval_result.test_summary[:2000],
             test_exit_code=eval_result.test_exit_code,
             files_changed=eval_result.files_changed,
             net_lines_changed=eval_result.net_lines_changed,
             changed_files=eval_result.changed_files,
             commit_sha=commit_sha,
-            error_message="; ".join(run_result.errors) if run_result.errors else "",
+            error_message=error_message,
             duration_seconds=round(duration, 1),
             input_tokens=run_result.usage.input_tokens,
             output_tokens=run_result.usage.output_tokens,

@@ -269,6 +269,22 @@ class _SpyEvaluator:
         )
 
 
+class _FailingChangedEvaluator:
+    def __init__(self, test_cmd=None, timeout=300, skip_tests=False):
+        self.test_cmd = test_cmd
+        self.skip_tests = skip_tests
+
+    def evaluate(self, repo_path):
+        return EvalResult(
+            test_outcome=TestOutcome.FAILED,
+            test_summary="tests failed",
+            test_exit_code=1,
+            files_changed=1,
+            net_lines_changed=4,
+            changed_files=[{"path": "README.md", "insertions": 4, "deletions": 0}],
+        )
+
+
 def test_default_phase_order_inherits_global_agent():
     cfg = PipelineConfig(agent="claude_code")
     phases = cfg.get_phase_order()
@@ -486,6 +502,110 @@ def test_quoted_test_command_is_parsed(monkeypatch, tmp_path: Path):
     assert _SpyEvaluator.instances
     assert _SpyEvaluator.instances[0].skip_tests is False
     assert _SpyEvaluator.instances[0].test_cmd == ["pytest", "-k", "slow suite", "-q"]
+
+
+def test_implementation_phase_noop_is_validation_failure(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement one change.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.results
+    result = state.results[0]
+    assert result.agent_success is True
+    assert result.validation_success is False
+    assert result.tests_passed is False
+    assert result.success is False
+    assert "no repository changes detected" in result.error_message
+
+
+def test_non_mutating_phase_noop_can_still_succeed(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Brainstorm only.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.results
+    result = state.results[0]
+    assert result.agent_success is True
+    assert result.validation_success is True
+    assert result.tests_passed is False
+    assert result.success is True
+
+
+def test_pipeline_phase_marks_failed_tests_as_failure(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _FailingChangedEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="pytest -q",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement and validate.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.results
+    result = state.results[0]
+    assert result.agent_success is True
+    assert result.validation_success is False
+    assert result.tests_passed is False
+    assert result.success is False
+    assert "tests=failed" in result.error_message
 
 
 def test_pipeline_phase_execution_is_non_interactive(monkeypatch, tmp_path: Path):
@@ -943,6 +1063,8 @@ def test_record_science_trial_rolls_back_failed_experiment(tmp_path: Path):
         cycle=1,
         phase=PipelinePhase.EXPERIMENT.value,
         iteration=1,
+        agent_success=True,
+        validation_success=True,
         success=True,
         test_outcome="skipped",
         test_summary="post",
@@ -1010,6 +1132,8 @@ def test_record_science_trial_ids_are_unique(tmp_path: Path):
         cycle=1,
         phase=PipelinePhase.EXPERIMENT.value,
         iteration=1,
+        agent_success=True,
+        validation_success=True,
         success=True,
         test_outcome="skipped",
         test_summary="post",
@@ -1022,6 +1146,8 @@ def test_record_science_trial_ids_are_unique(tmp_path: Path):
         cycle=1,
         phase=PipelinePhase.EXPERIMENT.value,
         iteration=2,
+        agent_success=True,
+        validation_success=True,
         success=True,
         test_outcome="skipped",
         test_summary="post",

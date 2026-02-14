@@ -214,6 +214,9 @@ class PhaseResult(BaseModel):
     cycle: int = 0
     phase: str
     iteration: int
+    agent_success: bool = False
+    validation_success: bool = False
+    tests_passed: bool = False
     success: bool = False
     test_outcome: str = "skipped"
     test_summary: str = ""
