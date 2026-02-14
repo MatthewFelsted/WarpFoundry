@@ -8,24 +8,44 @@
 /* â”€â”€ Reset & Base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:        #0d1117;
-  --surface:   #161b22;
-  --surface2:  #1c2333;
-  --border:    #30363d;
-  --text:      #e6edf3;
-  --text2:     #8b949e;
-  --accent:    #58a6ff;
-  --accent2:   #79c0ff;
-  --success:   #3fb950;
-  --warning:   #d29922;
-  --danger:    #f85149;
-  --purple:    #bc8cff;
-  --radius:    8px;
-  --font:      'Segoe UI', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+  --bg:        #070b11;
+  --bg-elev:   #0f1622;
+  --surface:   #131d2b;
+  --surface2:  #1b2738;
+  --surface3:  #23334a;
+  --border:    #2d3d53;
+  --border-soft: rgba(160, 190, 228, 0.24);
+  --text:      #edf4ff;
+  --text2:     #a1b4cd;
+  --text3:     #7f94af;
+  --accent:    #6ec7ff;
+  --accent2:   #a1ddff;
+  --success:   #47c07b;
+  --warning:   #dfaa58;
+  --danger:    #ff6f6f;
+  --purple:    #8ea7ff;
+  --radius:    10px;
+  --radius-lg: 14px;
+  --shadow-md: 0 12px 34px rgba(3, 8, 20, 0.38);
+  --font:      'Aptos', 'Segoe UI Variable', 'Trebuchet MS', 'Segoe UI', sans-serif;
   --mono:      'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 html,body{height:100%;overflow:hidden}
-body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;display:flex;flex-direction:column}
+body{
+  font-family:var(--font);
+  background:
+    radial-gradient(circle at 2% 8%, rgba(110,199,255,.14), transparent 38%),
+    radial-gradient(circle at 98% -4%, rgba(142,167,255,.16), transparent 36%),
+    var(--bg);
+  color:var(--text);
+  font-size:14px;
+  line-height:1.45;
+  display:flex;
+  flex-direction:column;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
 
 /* â”€â”€ Scrollbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -34,14 +54,29 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 ::-webkit-scrollbar-thumb:hover{background:var(--text2)}
 
 /* â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-header{display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:52px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;position:relative;z-index:100;overflow:visible}
-.logo{font-size:18px;font-weight:700;letter-spacing:-.3px}
-.logo span{color:var(--accent)}
-.header-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;min-width:0}
+header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px 18px;
+  padding:10px 18px;
+  min-height:62px;
+  background:linear-gradient(180deg, rgba(19,29,43,.96), rgba(15,22,34,.9));
+  border-bottom:1px solid var(--border-soft);
+  backdrop-filter:blur(8px);
+  flex-shrink:0;
+  position:relative;
+  z-index:100;
+  overflow:visible
+}
+.header-brand{display:flex;align-items:center;gap:14px;min-width:0;flex-wrap:wrap}
+.logo{font-size:19px;font-weight:700;letter-spacing:.1px;white-space:nowrap}
+.logo span{color:var(--accent2);filter:drop-shadow(0 0 8px rgba(110,199,255,.42))}
+.header-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;min-width:0;flex-wrap:wrap;justify-content:flex-end}
 .header-actions select,.header-actions button{font-size:13px}
 #difficulty-mode-toggle{flex-shrink:0;position:relative;z-index:2}
 .header-actions select{min-width:120px;max-width:180px}
-.header-doc-links{display:flex;gap:6px;align-items:center;margin-left:12px}
+.header-doc-links{display:flex;gap:6px;align-items:center}
 .header-doc-links .btn{padding:5px 9px;font-size:12px}
 
 /* Docs modal */
@@ -56,30 +91,38 @@ header{display:flex;align-items:center;justify-content:space-between;padding:0 2
 .docs-content{padding:14px 16px;flex:1;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.55}
 
 /* â”€â”€ Layout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-main{display:grid;grid-template-columns:420px 1fr;flex:1;overflow:hidden}
+main{display:grid;grid-template-columns:minmax(360px,420px) minmax(0,1fr);flex:1;overflow:hidden}
 .panel{overflow-y:auto;padding:20px}
-#chain-panel{border-right:1px solid var(--border);display:flex;flex-direction:column;gap:16px}
+#chain-panel{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px}
 #exec-panel{overflow-x:hidden;overflow-y:auto;padding:20px}
 #exec-panel > *{margin-bottom:16px}
 #exec-panel > *:last-child{margin-bottom:0}
 #pipeline-exec{overflow-x:hidden;overflow-y:auto}
 
 /* â”€â”€ Shared UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-h2{font-size:15px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:4px}
-h3{font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px}
-label{font-size:12px;color:var(--text2);display:block;margin-bottom:4px}
+h2{font-size:15px;font-weight:700;letter-spacing:.2px;color:var(--text2);margin-bottom:6px}
+h3{font-size:13px;font-weight:650;color:var(--text2);margin-bottom:8px}
+label{font-size:12px;color:var(--text2);display:block;margin-bottom:5px}
 input[type="text"],input[type="number"],select,textarea{
-  width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);
-  background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;outline:none;transition:border .15s}
-input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+  width:100%;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius);
+  background:linear-gradient(180deg, rgba(15,22,34,.92), rgba(15,22,34,.82));color:var(--text);
+  font-family:var(--font);font-size:13px;outline:none;transition:border .15s, box-shadow .15s, background .15s}
+input:hover,select:hover,textarea:hover{border-color:var(--border-soft)}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(110,199,255,.22);background:var(--surface)}
 /* Improve native select menu readability across Chromium variants (incl. Brave). */
 select option{background:var(--surface);color:var(--text)}
 textarea{resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.5}
 input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-align:middle}
 
-.btn{padding:7px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface2);color:var(--text);cursor:pointer;font-size:13px;font-family:var(--font);transition:all .15s}
-.btn:hover{background:var(--border)}
-.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn{
+  padding:8px 14px;border:1px solid var(--border);border-radius:9px;
+  background:linear-gradient(180deg, var(--surface2), var(--surface));
+  color:var(--text);cursor:pointer;font-size:13px;font-family:var(--font);
+  transition:transform .15s, border-color .15s, background .15s, box-shadow .15s
+}
+.btn:hover{background:var(--surface3);border-color:var(--border-soft);transform:translateY(-1px)}
+.btn:active{transform:translateY(0)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
 .btn-primary{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
 .btn-primary:hover{background:var(--accent2)}
 .btn-danger{border-color:var(--danger);color:var(--danger)}
@@ -89,11 +132,24 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .btn-warning{border-color:var(--warning);color:var(--warning)}
 .btn-warning:hover{background:rgba(210,153,34,.15)}
 
-.config-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
+.config-section{
+  background:linear-gradient(180deg, rgba(19,29,43,.96), rgba(16,23,35,.93));
+  border:1px solid var(--border-soft);border-radius:var(--radius-lg);padding:14px 15px;
+  box-shadow:var(--shadow-md)
+}
 .form-row{margin-bottom:10px}
 .form-row:last-child{margin-bottom:0}
 .form-row-inline{display:flex;gap:12px;align-items:center}
 .form-row-inline > *{flex:1}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible{
+  outline:none;
+  box-shadow:0 0 0 3px rgba(110,199,255,.28);
+}
 
 /* â”€â”€ Mode Toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mode-toggle{display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
@@ -149,6 +205,7 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .step-item.selected{border-color:var(--accent);background:rgba(88,166,255,.08)}
 .step-item.duplicate-step{border-color:var(--danger);background:rgba(248,81,73,.10)}
 .step-item.disabled-step{opacity:.45}
+.step-item:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(110,199,255,.3)}
 .step-num{font-size:12px;font-weight:700;color:var(--text2);width:18px;text-align:center}
 .step-icon{font-size:16px;width:22px;text-align:center}
 .step-name{flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -189,6 +246,12 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .progress-info{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px}
 .progress-bar{height:8px;background:var(--bg);border-radius:4px;overflow:hidden}
 .progress-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--accent),var(--purple));transition:width .4s ease;width:0}
+.progress-fill.running{animation:progressPulse 1.8s ease-in-out infinite}
+@keyframes progressPulse{
+  0%{filter:saturate(95%) brightness(94%)}
+  50%{filter:saturate(130%) brightness(108%)}
+  100%{filter:saturate(95%) brightness(94%)}
+}
 .activity-heartbeat{margin-top:8px;font-size:11px;color:var(--text2);min-height:1.2em}
 .progress-last-log{
   margin-top:6px;font-size:11px;color:var(--text2);
@@ -224,7 +287,7 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .pipe-logs-head-row .pipe-logs-files{flex:1;min-width:0}
 .pipe-logs-head-row .pipe-logs-files .log-tabs{margin-bottom:0}
 .log-tabs{display:flex;gap:2px;margin-bottom:8px;flex-wrap:wrap}
-.log-empty{color:var(--text2);font-style:italic}
+.log-empty{color:var(--text2);font-style:normal}
 .log-entry{display:flex;gap:8px;align-items:flex-start;padding:2px 0;border-bottom:1px dashed rgba(139,148,158,.2)}
 .log-entry:last-child{border-bottom:none}
 .log-entry .log-time{color:var(--text2);white-space:nowrap;flex:0 0 72px}
@@ -232,6 +295,40 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .log-info{color:var(--text)}
 .log-warn{color:var(--warning)}
 .log-error{color:var(--danger)}
+
+.state-card{
+  border:1px dashed var(--border-soft);
+  border-radius:var(--radius);
+  background:rgba(15,22,34,.84);
+  color:var(--text2);
+  font-size:12px;
+  line-height:1.45;
+  padding:11px 12px;
+}
+.state-card strong{color:var(--text)}
+.state-card.loading{
+  position:relative;
+  padding-left:36px;
+}
+.state-card.loading::before{
+  content:'';
+  position:absolute;
+  left:12px;
+  top:50%;
+  width:14px;
+  height:14px;
+  margin-top:-7px;
+  border-radius:50%;
+  border:2px solid rgba(161,180,205,.4);
+  border-top-color:var(--accent2);
+  animation:spin .8s linear infinite;
+}
+.state-card.error{
+  border-color:rgba(255,111,111,.45);
+  background:rgba(255,111,111,.09);
+  color:#ffd6d6;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* â”€â”€ Results Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .results-section{margin-top:4px}
@@ -241,6 +338,7 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .results-table td{padding:7px 10px;border-bottom:1px solid var(--border)}
 .results-table tr:last-child td{border-bottom:none}
 .results-table tr:hover td{background:var(--surface2)}
+.results-table td .state-card{margin:4px 0}
 .file-changes-cell{min-width:230px;max-width:420px}
 .file-changes-empty{color:var(--text2);font-size:12px}
 .file-changes-details{display:block}
@@ -279,11 +377,23 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
   box-shadow:0 10px 28px rgba(0,0,0,.35);word-break:break-word
 }
 .toast.toast-exit{animation:toastFade .2s ease forwards}
-.toast-success{background:var(--success)}
-.toast-error{background:var(--danger)}
-.toast-info{background:var(--accent)}
+.toast-success{background:#228958}
+.toast-error{background:#b83f3f}
+.toast-info{background:#2f6f98}
 @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
 @keyframes toastFade{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}
+
+.visually-hidden{
+  position:absolute !important;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0;
+}
 
 /* â”€â”€ Difficulty mode visibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .easy-only{display:none}
@@ -390,17 +500,18 @@ body.mode-medium .easy-only{display:none}
 .run-plan-actions{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 
 /* â”€â”€ Tab Navigation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-.tab-nav{display:flex;gap:2px;margin-left:24px}
-.tab-nav button{padding:6px 16px;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-family:var(--font);font-weight:500;border-bottom:2px solid transparent;transition:all .15s}
+.tab-nav{display:flex;gap:2px}
+.tab-nav button{padding:7px 16px;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-family:var(--font);font-weight:500;border-bottom:2px solid transparent;transition:all .15s}
 .tab-nav button:hover{color:var(--text)}
 .tab-nav button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.tab-nav button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .tab-content{display:none}
 .tab-content.active{display:grid}
 
 /* â”€â”€ Pipeline Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-#pipeline-view{grid-template-columns:420px 1fr;flex:1;overflow:hidden}
+#pipeline-view{grid-template-columns:minmax(360px,420px) minmax(0,1fr);flex:1;overflow:hidden}
 .pipeline-panel{overflow-y:auto;padding:20px}
-#pipeline-config{border-right:1px solid var(--border);display:flex;flex-direction:column;gap:16px}
+#pipeline-config{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px}
 #pipeline-exec > *{margin-bottom:16px}
 #pipeline-exec > *:last-child{margin-bottom:0}
 .phase-list{display:flex;flex-direction:column;gap:4px}
@@ -409,6 +520,7 @@ body.mode-medium .easy-only{display:none}
 .phase-item.disabled-phase{opacity:.45}
 .phase-header{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;user-select:none}
 .phase-header:hover{background:rgba(255,255,255,.03)}
+.phase-header:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(110,199,255,.3)}
 .phase-expand-arrow{font-size:10px;color:var(--text2);transition:transform .2s;width:14px;text-align:center}
 .phase-item.expanded .phase-expand-arrow{transform:rotate(90deg)}
 .phase-icon{font-size:15px;width:22px;text-align:center}
@@ -425,7 +537,8 @@ body.mode-medium .easy-only{display:none}
 .log-tabs button{padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text2);cursor:pointer;font-size:11px;font-family:var(--font);transition:all .15s}
 .log-tabs button:hover{background:var(--surface2)}
 .log-tabs button.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
-.log-content{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-family:var(--mono);font-size:12px;line-height:1.6;min-height:180px;height:28vh;max-height:70vh;resize:vertical;overflow-y:auto;overflow-x:auto;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;color:var(--text2)}
+.log-content{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-family:var(--mono);font-size:12px;line-height:1.6;min-height:180px;height:28vh;max-height:70vh;resize:vertical;overflow-y:auto;overflow-x:auto;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;color:var(--text2);transition:border-color .15s, background .15s}
+.log-content.is-loading{border-color:var(--border-soft);background:rgba(15,22,34,.78);color:var(--text3)}
 .log-viewer{overflow-x:hidden}
 .results-wrap{overflow-x:auto}
 
@@ -442,28 +555,56 @@ body.mode-medium .easy-only{display:none}
 .browse-item-icon{font-size:16px;width:22px;text-align:center;flex-shrink:0}
 .browse-item-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .browse-item-git{font-size:10px;padding:2px 6px;border-radius:8px;background:rgba(63,185,80,.15);color:var(--success);font-weight:600;flex-shrink:0}
-.browse-empty{padding:24px 16px;text-align:center;color:var(--text2);font-size:13px;font-style:italic}
+.browse-empty{padding:24px 16px;text-align:center;color:var(--text2);font-size:13px;font-style:normal}
 .browse-drives{display:flex;gap:6px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid var(--border)}
 .browse-drives button{padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);cursor:pointer;font-size:12px;font-family:var(--mono);transition:all .1s}
 .browse-drives button:hover{background:var(--surface2);border-color:var(--accent)}
 .browse-modal-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
 
 /* â”€â”€ Responsive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-@media(max-width:900px){
-  main,#pipeline-view{grid-template-columns:1fr;grid-template-rows:auto 1fr}
-  #chain-panel,#pipeline-config{border-right:none;border-bottom:1px solid var(--border);max-height:50vh}
+@media(max-width:1280px){
+  header{padding:10px 14px}
+  .header-brand{width:100%}
+  .header-actions{width:100%;justify-content:flex-start}
+  .header-doc-links{order:2}
+}
+@media(max-width:980px){
+  html,body{overflow:auto;height:auto;min-height:100%}
+  body{min-height:100dvh}
+  main,#pipeline-view{grid-template-columns:1fr;grid-template-rows:auto auto;overflow:visible}
+  #chain-panel,#pipeline-config{border-right:none;border-bottom:1px solid var(--border-soft);max-height:none}
+  #exec-panel,#pipeline-exec{overflow:visible}
+  .panel,.pipeline-panel{padding:14px}
   .recipe-grid{grid-template-columns:1fr}
   .run-plan-grid{grid-template-columns:1fr}
+  .exec-controls{flex-wrap:wrap}
+  .header-doc-links{width:100%;flex-wrap:wrap}
+  .tab-nav{width:100%}
+  .mode-toggle{min-width:200px}
+}
+@media(max-width:640px){
+  .header-actions select{min-width:100px}
+  #toast-stack{right:12px;bottom:12px}
+  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal{max-height:88vh}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+    scroll-behavior:auto !important;
+  }
 }
 </style>
 </head>
 
 <body>
+<div id="sr-announcer" class="visually-hidden" aria-live="assertive" aria-atomic="true"></div>
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <!-- HEADER                                                        -->
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <header>
-  <div style="display:flex;align-items:center">
+  <div class="header-brand">
     <div class="logo"><span>&#9889;</span> Codex Manager</div>
     <div class="header-doc-links">
       <button class="btn" onclick="openDoc('quickstart')" title="Open quick start guide">Quickstart</button>
@@ -471,9 +612,9 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" onclick="openDoc('troubleshooting')" title="Open troubleshooting guide">Troubleshooting</button>
       <button class="btn" onclick="openDoc('cli_reference')" title="Open CLI reference">CLI Reference</button>
     </div>
-    <div class="tab-nav" id="main-tabs">
-      <button class="active" data-tab="chain" onclick="switchTab('chain')">Chain Builder</button>
-      <button data-tab="pipeline" onclick="switchTab('pipeline')">Pipeline</button>
+    <div class="tab-nav" id="main-tabs" role="tablist" aria-label="Primary views">
+      <button id="tab-chain" class="active" data-tab="chain" role="tab" tabindex="0" aria-selected="true" aria-controls="chain-view" onclick="switchTab('chain')">Chain Builder</button>
+      <button id="tab-pipeline" data-tab="pipeline" role="tab" tabindex="-1" aria-selected="false" aria-controls="pipeline-view" onclick="switchTab('pipeline')">Pipeline</button>
     </div>
   </div>
   <div class="header-actions">
@@ -495,7 +636,7 @@ body.mode-medium .easy-only{display:none}
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <!-- MAIN LAYOUT                                                   -->
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
-<main class="tab-content active" id="chain-view">
+<main class="tab-content active" id="chain-view" role="tabpanel" aria-labelledby="tab-chain">
 
 <!-- â”€â”€ LEFT PANEL: Chain Builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
 <aside class="panel" id="chain-panel">
@@ -509,7 +650,7 @@ body.mode-medium .easy-only{display:none}
       <div class="repo-row">
         <input type="text" id="repo-path" placeholder="C:\path\to\your\repo" oninput="validateRepo()" title="Full path to your git repository">
         <button class="btn" onclick="openBrowse('repo-path')" title="Browse for folder">Browse</button>
-        <span class="repo-status" id="repo-status"></span>
+        <span class="repo-status" id="repo-status" aria-live="polite"></span>
       </div>
     </div>
     <div class="diag-card">
@@ -817,8 +958,8 @@ body.mode-medium .easy-only{display:none}
     <div class="log-toolbar">
       <label><input type="checkbox" id="show-debug-logs" onchange="toggleDebugLogs()"> Show debug messages</label>
     </div>
-    <div class="log-viewer" id="log-viewer">
-      <div class="log-empty">Waiting to start...</div>
+    <div class="log-viewer" id="log-viewer" aria-live="polite">
+      <div class="log-empty state-card">Waiting to start...</div>
     </div>
   </div>
 
@@ -831,7 +972,7 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" onclick="refreshChainOutputs(true)">Refresh</button>
     </div>
     <div id="chain-output-dir" style="font-size:11px;color:var(--text2);margin-bottom:6px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:100%"></div>
-    <div class="log-content" id="chain-output-content">Run a chain to generate step output files.</div>
+    <div class="log-content" id="chain-output-content" aria-live="polite">Run a chain to generate step output files.</div>
   </div>
 
   <!-- Results -->
@@ -852,7 +993,9 @@ body.mode-medium .easy-only{display:none}
             <th>Commit</th>
           </tr>
         </thead>
-        <tbody id="results-body"></tbody>
+        <tbody id="results-body">
+          <tr><td colspan="9"><div class="state-card">No execution results yet. Run a chain to populate this table.</div></td></tr>
+        </tbody>
       </table>
     </div>
   </div>
@@ -863,7 +1006,7 @@ body.mode-medium .easy-only{display:none}
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <!-- PIPELINE VIEW                                                  -->
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
-<div class="tab-content" id="pipeline-view">
+<div class="tab-content" id="pipeline-view" role="tabpanel" aria-labelledby="tab-pipeline" hidden>
 
 <!-- â”€â”€ LEFT: Pipeline Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
 <aside class="pipeline-panel" id="pipeline-config">
@@ -877,7 +1020,7 @@ body.mode-medium .easy-only{display:none}
       <div class="repo-row">
         <input type="text" id="pipe-repo-path" placeholder="C:\path\to\your\repo" oninput="validatePipeRepo()">
         <button class="btn" onclick="openBrowse('pipe-repo-path')" title="Browse for folder">Browse</button>
-        <span class="repo-status" id="pipe-repo-status"></span>
+        <span class="repo-status" id="pipe-repo-status" aria-live="polite"></span>
       </div>
     </div>
     <div class="diag-card">
@@ -1225,11 +1368,11 @@ body.mode-medium .easy-only{display:none}
         </div>
       </div>
     </div>
-    <div class="log-viewer" id="pipe-log-viewer">
-      <div class="log-empty">Configure phases and click Start Pipeline...</div>
+    <div class="log-viewer" id="pipe-log-viewer" aria-live="polite">
+      <div class="log-empty state-card">Configure phases and click Start Pipeline...</div>
     </div>
     <h3 id="log-file-label" style="margin-top:4px">Log File Contents</h3>
-    <div class="log-content" id="log-file-content">Select a log file above to view its contents.</div>
+    <div class="log-content" id="log-file-content" aria-live="polite">Select a log file above to view its contents.</div>
   </div>
 
   <!-- Results -->
@@ -1249,7 +1392,9 @@ body.mode-medium .easy-only{display:none}
             <th>Time</th>
           </tr>
         </thead>
-        <tbody id="pipe-results-body"></tbody>
+        <tbody id="pipe-results-body">
+          <tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>
+        </tbody>
       </table>
     </div>
   </div>
@@ -1621,7 +1766,10 @@ function onPermissionControlChanged(target) {
 }
 
 function openPermissionsHelpModal() {
-  document.getElementById('permissions-help-overlay').classList.remove('hidden');
+  const overlay = document.getElementById('permissions-help-overlay');
+  overlay.classList.remove('hidden');
+  const closeBtn = overlay.querySelector('.permissions-help-header .btn');
+  if (closeBtn) closeBtn.focus();
 }
 
 function closePermissionsHelpModal() {
@@ -1652,6 +1800,7 @@ async function loadDoc(docKey) {
 
   try {
     const doc = await api('/api/docs/' + docKey);
+    if (doc.error) throw new Error(doc.error);
     if (titleEl) titleEl.textContent = doc.title || 'Documentation';
     if (subtitleEl) subtitleEl.textContent = doc.filename || '';
     contentEl.textContent = doc.content || '(empty)';
@@ -1666,6 +1815,8 @@ function openDoc(docKey) {
   const overlay = document.getElementById('docs-overlay');
   if (!overlay) return;
   overlay.classList.remove('hidden');
+  const closeBtn = overlay.querySelector('.docs-modal-header .btn');
+  if (closeBtn) closeBtn.focus();
   loadDoc(docKey || 'quickstart');
 }
 
@@ -2054,6 +2205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderActivityHeartbeats();
   if (activityHeartbeatTimer) clearInterval(activityHeartbeatTimer);
   activityHeartbeatTimer = setInterval(renderActivityHeartbeats, 1000);
+  switchTab('chain');
   applyMode(currentMode);
   loadConfigList();
   renderSteps();
@@ -2166,8 +2318,25 @@ async function createProject() {
 
 /* â”€â”€ API helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 async function api(url, opts) {
-  const r = await fetch(url, opts);
-  return r.json();
+  try {
+    const r = await fetch(url, opts);
+    const raw = await r.text();
+    let data = {};
+    if (raw) {
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        data = { error: 'Server returned malformed JSON.' };
+      }
+    }
+    if (!r.ok) {
+      if (!data || typeof data !== 'object') data = {};
+      if (!data.error) data.error = 'Request failed (' + r.status + ' ' + r.statusText + ')';
+    }
+    return data;
+  } catch (e) {
+    return { error: 'Network error: ' + (e && e.message ? e.message : String(e)) };
+  }
 }
 
 async function postJson(url, body) {
@@ -2636,12 +2805,13 @@ async function refreshDiagnostics(target, opts) {
   try {
     const payload = _diagnosticPayload(target);
     const data = await postJson('/api/diagnostics', payload);
+    if (data && data.error) throw new Error(data.error);
     if (diagRequestSeq[target] !== reqId) return;
     renderDiagnostics(target, data || {});
   } catch (e) {
     if (diagRequestSeq[target] !== reqId) return;
     summaryEl.textContent = 'Diagnostics request failed.';
-    listEl.innerHTML = '<div class="diag-item diag-fail"><div class="diag-detail">Could not load diagnostics. Check server logs.</div></div>';
+    listEl.innerHTML = '<div class="diag-item diag-fail"><div class="diag-detail">Could not load diagnostics. ' + esc((e && e.message) || 'Check server logs.') + '</div></div>';
   }
 }
 
@@ -2741,7 +2911,7 @@ function renderSteps() {
   const duplicateIds = duplicateStepIdSet(collisionDetails);
 
   if (!config.steps.length) {
-    list.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text2);font-size:13px">No steps yet. Click <b>+ Add Step</b> to begin.</div>';
+    list.innerHTML = '<div class="state-card">No steps yet. Click <strong>+ Add Step</strong> to begin.</div>';
     renderStepCollisionAlert([]);
     document.getElementById('step-details-wrap').style.display = 'none';
     scheduleDiagnosticsRefresh('chain');
@@ -2755,7 +2925,10 @@ function renderSteps() {
     const dupMark = duplicateIds.has(step.id)
       ? '<span class="step-dup-mark" title="Duplicate output filename - rename this step">&#10060;</span>'
       : '<span class="step-dup-mark"></span>';
-    return '<div class="step-item ' + sel + ' ' + dis + ' ' + dup + '" onclick="selectStep(\'' + step.id + '\')">'
+    return '<div class="step-item ' + sel + ' ' + dis + ' ' + dup + '"'
+      + ' role="button" tabindex="0" aria-pressed="' + (step.id === selectedStepId ? 'true' : 'false') + '"'
+      + ' onclick="selectStep(\'' + step.id + '\')"'
+      + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();selectStep(\'' + step.id + '\')}">'
       + '<span class="step-num">' + (i+1) + '</span>'
       + '<span class="step-icon">' + getPresetIcon(step.job_type) + '</span>'
       + '<span class="step-name">' + esc(step.name || step.job_type) + (step.loop_count > 1 ? ' <span style="font-size:10px;color:var(--accent);font-weight:600">\u00d7' + step.loop_count + '</span>' : '') + '</span>'
@@ -2964,9 +3137,9 @@ async function startChain() {
   renderActivityHeartbeats();
   document.getElementById('progress-last-log').textContent = 'Last log: waiting for first message...';
   renderStopGuidance('chain-stop-guidance', null, false);
-  document.getElementById('log-viewer').innerHTML = '';
-  document.getElementById('results-body').innerHTML = '';
-  document.getElementById('chain-output-content').textContent = 'Waiting for step output files...';
+  document.getElementById('log-viewer').innerHTML = '<div class="log-empty state-card loading">Connecting to live log stream...</div>';
+  document.getElementById('results-body').innerHTML = '<tr><td colspan="9"><div class="state-card loading">Waiting for step results...</div></td></tr>';
+  setLogContentState(document.getElementById('chain-output-content'), 'Waiting for step output files...', 'loading');
   document.getElementById('chain-output-select').innerHTML = '<option value="">No output files yet</option>';
   document.getElementById('chain-output-dir').textContent = '';
   _lastOutputRefreshStepCount = -1;
@@ -2976,6 +3149,8 @@ async function startChain() {
     chainRunning = false;
     chainPaused = false;
     renderActivityHeartbeats();
+    document.getElementById('log-viewer').innerHTML = '<div class="log-empty state-card error">Could not start chain. Check diagnostics and configuration.</div>';
+    document.getElementById('results-body').innerHTML = '<tr><td colspan="9"><div class="state-card">No execution results yet. Run a chain to populate this table.</div></td></tr>';
     toast(resp.error, 'error');
     return;
   }
@@ -2991,12 +3166,20 @@ async function startChain() {
 }
 
 async function stopChain() {
-  await postJson('/api/chain/stop');
+  const r = await postJson('/api/chain/stop');
+  if (r.error) {
+    toast(r.error, 'error');
+    return;
+  }
   toast('Stop requested', 'info');
 }
 
 async function pauseChain() {
   const r = await postJson('/api/chain/pause');
+  if (r.error) {
+    toast(r.error, 'error');
+    return;
+  }
   document.getElementById('btn-pause').innerHTML = r.status === 'paused' ? '&#9654; Resume' : '&#9208; Pause';
 }
 
@@ -3067,7 +3250,7 @@ function renderChainLogViewer() {
   viewer.innerHTML = '';
   const filtered = chainLogEntries.filter(e => shouldShowLogEntry(e, false));
   if (!filtered.length) {
-    viewer.innerHTML = '<div class="log-empty">No log entries to show.</div>';
+    viewer.innerHTML = '<div class="log-empty state-card">No log entries to show.</div>';
     return;
   }
   filtered.forEach(e => appendLogEntry('log-viewer', e));
@@ -3138,7 +3321,9 @@ function updateProgress(s) {
     pct = maxSteps > 0 ? Math.min(100, Math.round(done / maxSteps * 100)) : 0;
   }
 
-  document.getElementById('progress-fill').style.width = pct + '%';
+  const progressFill = document.getElementById('progress-fill');
+  progressFill.style.width = pct + '%';
+  progressFill.classList.toggle('running', !!s.running && !s.paused);
 
   // Token count + improvement badge
   let tokenText = (s.total_tokens || 0).toLocaleString() + ' tokens';
@@ -3233,6 +3418,10 @@ function _restoreOpenChangedFileRows(tbodyId, openKeys) {
 function updateResults(results) {
   const tbody = document.getElementById('results-body');
   const openKeys = _captureOpenChangedFileRows('results-body');
+  if (!results.length) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="state-card">No execution results yet. Run a chain to populate this table.</div></td></tr>';
+    return;
+  }
   tbody.innerHTML = results.map((r, idx) => {
     const badge = r.test_outcome === 'passed' ? 'badge-pass'
                 : r.test_outcome === 'failed' ? 'badge-fail'
@@ -3254,16 +3443,23 @@ function updateResults(results) {
   _restoreOpenChangedFileRows('results-body', openKeys);
 }
 
+function setLogContentState(el, text, state) {
+  if (!el) return;
+  el.classList.toggle('is-loading', state === 'loading');
+  el.textContent = text;
+}
+
 async function refreshChainOutputs(keepSelection = true) {
   const sel = document.getElementById('chain-output-select');
   const content = document.getElementById('chain-output-content');
   const dirEl = document.getElementById('chain-output-dir');
   const prev = keepSelection ? (sel.value || '') : '';
+  setLogContentState(content, 'Loading output files...', 'loading');
 
   if (!config.repo_path) {
     chainOutputFiles = [];
     sel.innerHTML = '<option value="">No output files yet</option>';
-    content.textContent = 'Set a repository path and run a chain to generate outputs.';
+    setLogContentState(content, 'Set a repository path and run a chain to generate outputs.');
     dirEl.textContent = '';
     return;
   }
@@ -3275,7 +3471,7 @@ async function refreshChainOutputs(keepSelection = true) {
 
     if (!chainOutputFiles.length) {
       sel.innerHTML = '<option value="">No output files yet</option>';
-      content.textContent = 'No step output files were found for this repository yet.';
+      setLogContentState(content, 'No step output files were found for this repository yet.');
       dirEl.textContent = data.output_dir ? ('Directory: ' + data.output_dir) : '';
       return;
     }
@@ -3292,7 +3488,7 @@ async function refreshChainOutputs(keepSelection = true) {
       await viewChainOutput(next);
     }
   } catch (e) {
-    content.textContent = 'Could not load step outputs.';
+    setLogContentState(content, 'Could not load step outputs.');
   }
 }
 
@@ -3301,16 +3497,21 @@ async function viewChainOutput(name) {
   const content = document.getElementById('chain-output-content');
   const filename = name || sel.value;
   if (!filename) {
-    content.textContent = 'Select an output file to view its contents.';
+    setLogContentState(content, 'Select an output file to view its contents.');
     return;
   }
+  setLogContentState(content, 'Loading output file...', 'loading');
   try {
     const url = '/api/chain/outputs/' + encodeURIComponent(filename)
       + '?repo_path=' + encodeURIComponent(config.repo_path || '');
     const data = await api(url);
-    content.textContent = data.content || '(empty file)';
+    if (data.error) {
+      setLogContentState(content, data.error);
+      return;
+    }
+    setLogContentState(content, data.content || '(empty file)');
   } catch (e) {
-    content.textContent = 'Could not read output file.';
+    setLogContentState(content, 'Could not read output file.');
   }
 }
 
@@ -3441,22 +3642,24 @@ function resetExecutionPanelsToDefaults() {
   document.getElementById('progress-text').textContent = 'Ready';
   document.getElementById('progress-tokens').textContent = '0 tokens';
   document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('progress-fill').classList.remove('running');
   document.getElementById('progress-last-log').textContent = 'Last log: none yet';
   renderStopGuidance('chain-stop-guidance', null, false);
-  document.getElementById('log-viewer').innerHTML = '<div class="log-empty">Waiting to start...</div>';
-  document.getElementById('results-body').innerHTML = '';
+  document.getElementById('log-viewer').innerHTML = '<div class="log-empty state-card">Waiting to start...</div>';
+  document.getElementById('results-body').innerHTML = '<tr><td colspan="9"><div class="state-card">No execution results yet. Run a chain to populate this table.</div></td></tr>';
   document.getElementById('show-debug-logs').checked = false;
 
   document.getElementById('pipe-progress-text').textContent = 'Ready';
   document.getElementById('pipe-progress-tokens').textContent = '0 tokens';
   document.getElementById('pipe-progress-fill').style.width = '0%';
+  document.getElementById('pipe-progress-fill').classList.remove('running');
   document.getElementById('pipe-progress-last-log').textContent = 'Last log: none yet';
   renderStopGuidance('pipe-stop-guidance', null, false);
-  document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty">Configure phases and click Start Pipeline...</div>';
-  document.getElementById('pipe-results-body').innerHTML = '';
+  document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card">Configure phases and click Start Pipeline...</div>';
+  document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
   document.getElementById('pipe-show-debug-logs').checked = false;
 
-  document.getElementById('log-file-content').textContent = 'Select a log file above to view its contents.';
+  setLogContentState(document.getElementById('log-file-content'), 'Select a log file above to view its contents.');
   document.querySelectorAll('#log-file-tabs button').forEach((btn, idx) => {
     btn.classList.toggle('active', idx === 0);
   });
@@ -3579,6 +3782,8 @@ function _ensureToastStack() {
   if (!stack) {
     stack = document.createElement('div');
     stack.id = 'toast-stack';
+    stack.setAttribute('aria-live', 'polite');
+    stack.setAttribute('aria-atomic', 'false');
     document.body.appendChild(stack);
   }
   return stack;
@@ -3589,6 +3794,11 @@ function toast(msg, type) {
   const el = document.createElement('div');
   el.className = 'toast toast-' + (type || 'info');
   el.textContent = msg;
+  const announcer = document.getElementById('sr-announcer');
+  if (announcer) {
+    announcer.textContent = '';
+    setTimeout(() => { announcer.textContent = msg; }, 10);
+  }
   stack.appendChild(el);
   setTimeout(() => {
     el.classList.add('toast-exit');
@@ -3605,10 +3815,15 @@ function toast(msg, type) {
 
 function switchTab(tabId) {
   document.querySelectorAll('#main-tabs button').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === tabId);
+    const active = b.dataset.tab === tabId;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+    b.setAttribute('tabindex', active ? '0' : '-1');
   });
   document.querySelectorAll('.tab-content').forEach(el => {
-    el.classList.toggle('active', el.id === tabId + '-view');
+    const active = el.id === tabId + '-view';
+    el.classList.toggle('active', active);
+    el.hidden = !active;
   });
   if (tabId === 'pipeline' && !pipelinePhases.length) {
     loadPipelinePhases();
@@ -3734,7 +3949,7 @@ const _phasePromptOverrides = {};
 function renderPipelinePhases() {
   const list = document.getElementById('phase-list');
   if (!pipelinePhases.length) {
-    list.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text2);font-size:12px">Loading phases...</div>';
+    list.innerHTML = '<div class="state-card loading">Loading phases...</div>';
     scheduleDiagnosticsRefresh('pipeline');
     return;
   }
@@ -3754,7 +3969,9 @@ function renderPipelinePhases() {
 
     return '<div class="phase-item" data-phase="' + p.key + '">'
       // Header row (clickable to expand)
-      + '<div class="phase-header" onclick="togglePhaseExpand(this.parentElement)">'
+      + '<div class="phase-header" role="button" tabindex="0" aria-expanded="false"'
+      + ' onclick="togglePhaseExpand(this.parentElement)"'
+      + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();togglePhaseExpand(this.parentElement)}">'
       +   '<span class="phase-expand-arrow">\u25B6</span>'
       +   '<input type="checkbox" checked data-phase-enabled="' + p.key + '" style="accent-color:var(--accent)" onclick="event.stopPropagation()" onchange="scheduleDiagnosticsRefresh(\'pipeline\')">'
       +   '<span class="phase-icon">' + icon + '</span>'
@@ -3809,7 +4026,9 @@ function renderPipelinePhases() {
 }
 
 function togglePhaseExpand(el) {
-  el.classList.toggle('expanded');
+  const expanded = el.classList.toggle('expanded');
+  const header = el.querySelector('.phase-header');
+  if (header) header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 }
 
 function onPhasePromptEdit(key, value) {
@@ -4047,14 +4266,16 @@ async function startPipeline() {
   renderActivityHeartbeats();
   document.getElementById('pipe-progress-last-log').textContent = 'Last log: waiting for first message...';
   renderStopGuidance('pipe-stop-guidance', null, false);
-  document.getElementById('pipe-log-viewer').innerHTML = '';
-  document.getElementById('pipe-results-body').innerHTML = '';
+  document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card loading">Connecting to live log stream...</div>';
+  document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card loading">Waiting for phase results...</div></td></tr>';
 
   const resp = await postJson('/api/pipeline/start', pipeConfig);
   if (resp.error) {
     pipeRunning = false;
     pipePaused = false;
     renderActivityHeartbeats();
+    document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card error">Could not start pipeline. Check diagnostics and configuration.</div>';
+    document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
     toast(resp.error, 'error');
     return;
   }
@@ -4069,12 +4290,20 @@ async function startPipeline() {
 }
 
 async function stopPipeline() {
-  await postJson('/api/pipeline/stop');
+  const r = await postJson('/api/pipeline/stop');
+  if (r.error) {
+    toast(r.error, 'error');
+    return;
+  }
   toast('Stop requested', 'info');
 }
 
 async function pausePipeline() {
   const r = await postJson('/api/pipeline/pause');
+  if (r.error) {
+    toast(r.error, 'error');
+    return;
+  }
   document.getElementById('pipe-btn-pause').innerHTML = r.status === 'paused' ? '&#9654; Resume' : '&#9208; Pause';
 }
 
@@ -4100,7 +4329,7 @@ function renderPipeLogViewer() {
   viewer.innerHTML = '';
   const filtered = pipeLogEntries.filter(e => shouldShowLogEntry(e, true));
   if (!filtered.length) {
-    viewer.innerHTML = '<div class="log-empty">No log entries to show.</div>';
+    viewer.innerHTML = '<div class="log-empty state-card">No log entries to show.</div>';
     return;
   }
   filtered.forEach(e => appendLogEntry('pipe-log-viewer', e));
@@ -4154,7 +4383,9 @@ function updatePipeProgress(s) {
       (s.total_cycles || 0) / Math.max(1, pipeConfig.max_cycles) * 100
     )));
   }
-  document.getElementById('pipe-progress-fill').style.width = pct + '%';
+  const pipeProgressFill = document.getElementById('pipe-progress-fill');
+  pipeProgressFill.style.width = pct + '%';
+  pipeProgressFill.classList.toggle('running', !!s.running && !s.paused);
 
   // Token count + improvement badge (consistent with chain builder)
   let tokenText = (s.total_tokens || 0).toLocaleString() + ' tokens';
@@ -4191,6 +4422,10 @@ function updatePipeProgress(s) {
 function updatePipeResults(results) {
   const tbody = document.getElementById('pipe-results-body');
   const openKeys = _captureOpenChangedFileRows('pipe-results-body');
+  if (!results.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
+    return;
+  }
   tbody.innerHTML = results.map((r, idx) => {
     const statusBadge = r.success ? 'badge-pass' : 'badge-fail';
     const statusText = r.success ? 'ok' : 'failed';
@@ -4221,19 +4456,23 @@ async function viewLogFile(filename) {
   const label = document.getElementById('log-file-label');
   if (label) label.textContent = filename;
   const el = document.getElementById('log-file-content');
-  el.textContent = 'Loading...';
+  setLogContentState(el, 'Loading file...', 'loading');
   const repoPath = (pipeConfig.repo_path || config.repo_path || '').trim();
   if (!repoPath) {
-    el.textContent = 'Set Repository Path in the Pipeline panel to read log files.';
+    setLogContentState(el, 'Set Repository Path in the Pipeline panel to read log files.');
     return;
   }
   try {
     const url = '/api/pipeline/logs/' + encodeURIComponent(filename)
       + '?repo_path=' + encodeURIComponent(repoPath);
     const r = await api(url);
-    el.textContent = r.content || '(empty - this phase may not have written to this file yet)';
+    if (r.error) {
+      setLogContentState(el, r.error);
+      return;
+    }
+    setLogContentState(el, r.content || '(empty - this phase may not have written to this file yet)');
   } catch(e) {
-    el.textContent = 'Could not load file.';
+    setLogContentState(el, 'Could not load file.');
   }
 }
 // â”€â”€ Browse modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4244,7 +4483,10 @@ function openBrowse(targetInputId) {
   _browseTarget = targetInputId;
   const input = document.getElementById(targetInputId);
   const startPath = input ? input.value.trim() : '';
-  document.getElementById('browse-overlay').classList.remove('hidden');
+  const overlay = document.getElementById('browse-overlay');
+  overlay.classList.remove('hidden');
+  const primaryBtn = overlay.querySelector('.browse-modal-footer .btn-primary');
+  if (primaryBtn) primaryBtn.focus();
   browseTo(startPath);
 }
 
@@ -4254,7 +4496,7 @@ async function browseTo(path) {
   const listEl  = document.getElementById('browse-list');
   const drivesEl = document.getElementById('browse-drives');
 
-  listEl.innerHTML = '<div class="browse-empty">Loading...</div>';
+  listEl.innerHTML = '<div class="browse-empty state-card loading">Loading folders...</div>';
   drivesEl.innerHTML = '';
   drivesEl.style.display = 'none';
 
@@ -4285,7 +4527,7 @@ async function browseTo(path) {
     }
 
     if (!r.dirs.length && !r.parent) {
-      html += '<div class="browse-empty">No subdirectories found</div>';
+      html += '<div class="browse-empty state-card">No subdirectories found.</div>';
     }
 
     r.dirs.forEach(d => {
@@ -4300,7 +4542,7 @@ async function browseTo(path) {
 
     listEl.innerHTML = html;
   } catch (e) {
-    listEl.innerHTML = '<div class="browse-empty">Error loading directory</div>';
+    listEl.innerHTML = '<div class="browse-empty state-card error">Could not load this directory.</div>';
   }
 }
 
@@ -4337,9 +4579,9 @@ function escHtml(s) {
 <!-- BROWSE MODAL                                                   -->
 <!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <div id="browse-overlay" class="browse-modal-overlay hidden" onclick="if(event.target===this)browseClose()">
-  <div class="browse-modal">
+  <div class="browse-modal" role="dialog" aria-modal="true" aria-labelledby="browse-title">
     <div class="browse-modal-header">
-      <h3>Browse for Folder</h3>
+      <h3 id="browse-title">Browse for Folder</h3>
     </div>
     <div class="browse-path-bar" id="browse-path"></div>
     <div class="browse-drives" id="browse-drives" style="display:none"></div>
@@ -4420,9 +4662,9 @@ function escHtml(s) {
 </div>
 
 <div id="permissions-help-overlay" class="hidden" onclick="if(event.target===this)closePermissionsHelpModal()">
-  <div class="permissions-help-modal">
+  <div class="permissions-help-modal" role="dialog" aria-modal="true" aria-labelledby="permissions-help-title">
     <div class="permissions-help-header">
-      <h3>Permission Settings Guide</h3>
+      <h3 id="permissions-help-title">Permission Settings Guide</h3>
       <button class="btn" onclick="closePermissionsHelpModal()">Close</button>
     </div>
     <div class="permissions-help-body">
