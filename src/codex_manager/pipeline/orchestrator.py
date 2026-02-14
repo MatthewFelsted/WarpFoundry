@@ -794,6 +794,37 @@ class PipelineOrchestrator:
 
         return True, ""
 
+    @staticmethod
+    def _is_auto_commit_candidate_phase(phase: PipelinePhase) -> bool:
+        return phase in (
+            PipelinePhase.IMPLEMENTATION,
+            PipelinePhase.DEBUGGING,
+            PipelinePhase.SKEPTIC,
+        )
+
+    def _auto_commit_repo(
+        self,
+        *,
+        repo: Path,
+        cycle_num: int,
+        commit_scope: str,
+    ) -> bool:
+        """Commit repository changes for an auto-commit checkpoint."""
+        if is_clean(repo):
+            return False
+        try:
+            msg = generate_commit_message(
+                cycle_num * 100,
+                commit_scope,
+                "pipeline",
+            )
+            sha = commit_all(repo, msg)
+            self._log("info", f"  Auto-committed: {sha}")
+            return True
+        except Exception as exc:
+            self._log("warn", f"  Auto-commit failed: {exc}")
+            return False
+
     def _check_phase_boundary_token_budget(self, config: PipelineConfig) -> bool:
         """Stop at phase boundary once token budget is exhausted in non-strict mode."""
         if getattr(config, "strict_token_budget", False):
@@ -1105,6 +1136,9 @@ class PipelineOrchestrator:
 
         phase_order = config.get_phase_order()
         self._log("info", f"Pipeline phases: {[p.phase.value for p in phase_order]}")
+        commit_frequency = (config.commit_frequency or "per_phase").strip().lower()
+        if config.auto_commit and config.mode == "apply":
+            self._log("info", f"Auto-commit policy: {commit_frequency}")
 
         # Unlimited mode uses a very high ceiling; the improvement-threshold
         # check (inside _check_stop_conditions) is what actually ends the run.
@@ -1131,6 +1165,9 @@ class PipelineOrchestrator:
                 }
                 science_latest_hypothesis_id = ""
                 science_latest_experiment_id = ""
+                cycle_has_auto_commit_candidate = False
+                cycle_science_commit_ok = True
+                cycle_science_commit_reason = ""
 
                 for phase_cfg in phase_order:
                     self._pause_event.wait()
@@ -1592,32 +1629,53 @@ class PipelineOrchestrator:
                                 "warn",
                                 f"  Auto-commit skipped: {science_commit_reason}",
                             )
+                            cycle_science_commit_ok = False
+                            if not cycle_science_commit_reason:
+                                cycle_science_commit_reason = science_commit_reason
 
                     if (
                         config.auto_commit
                         and config.mode == "apply"
-                        and phase in (
-                            PipelinePhase.IMPLEMENTATION,
-                            PipelinePhase.DEBUGGING,
-                            PipelinePhase.SKEPTIC,
-                        )
+                        and commit_frequency == "per_phase"
+                        and self._is_auto_commit_candidate_phase(phase)
                         and (phase != PipelinePhase.SKEPTIC or science_commit_ok)
-                        and not is_clean(repo)
                     ):
-                        try:
-                            msg = generate_commit_message(
-                                cycle_num * 100,
-                                f"pipeline-{phase.value}",
-                                "pipeline",
-                            )
-                            sha = commit_all(repo, msg)
-                            self._log("info", f"  Auto-committed: {sha}")
-                        except Exception as exc:
-                            self._log("warn", f"  Auto-commit failed: {exc}")
+                        self._auto_commit_repo(
+                            repo=repo,
+                            cycle_num=cycle_num,
+                            commit_scope=f"pipeline-{phase.value}",
+                        )
+
+                    if self._is_auto_commit_candidate_phase(phase):
+                        cycle_has_auto_commit_candidate = True
 
                     if self._check_phase_boundary_token_budget(config):
                         cycle_aborted = True
                         break
+
+                if (
+                    not cycle_aborted
+                    and config.auto_commit
+                    and config.mode == "apply"
+                    and commit_frequency == "per_cycle"
+                ):
+                    if not cycle_has_auto_commit_candidate:
+                        self._log(
+                            "info",
+                            f"  Auto-commit skipped for cycle {cycle_num}: no eligible phases ran.",
+                        )
+                    elif not cycle_science_commit_ok:
+                        reason = cycle_science_commit_reason or "science commit gate failed"
+                        self._log(
+                            "warn",
+                            f"  Auto-commit skipped for cycle {cycle_num}: {reason}",
+                        )
+                    else:
+                        self._auto_commit_repo(
+                            repo=repo,
+                            cycle_num=cycle_num,
+                            commit_scope=f"pipeline-cycle-{cycle_num}",
+                        )
 
                 if cycle_aborted:
                     break

@@ -205,6 +205,18 @@ def test_pipeline_start_rejects_invalid_permission_value(client, tmp_path: Path)
     assert "Invalid config" in data["error"]
 
 
+def test_pipeline_start_rejects_invalid_commit_frequency(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(repo, commit_frequency="every_step"),
+    )
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data
+    assert "Invalid config" in data["error"]
+
+
 def test_pipeline_start_rejects_invalid_phase_key(client, monkeypatch, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])

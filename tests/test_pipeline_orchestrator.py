@@ -94,6 +94,26 @@ class _NoopRunner:
         )
 
 
+class _PhaseWriteRunner:
+    name = "StubCodex"
+    calls: ClassVar[int] = 0
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        self.__class__.calls += 1
+        repo = Path(repo_path)
+        target = repo / "README.md"
+        existing = target.read_text(encoding="utf-8") if target.exists() else ""
+        target.write_text(existing + f"edit {self.__class__.calls}\n", encoding="utf-8")
+        return RunResult(
+            success=True,
+            exit_code=0,
+            usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+
 class _CaptureAutoRunner:
     name = "StubCodex"
     full_auto_calls: ClassVar[list[bool]] = []
@@ -530,6 +550,144 @@ def test_phase_terminate_tag_skips_remaining_iterations(monkeypatch, tmp_path: P
     assert len(state.results) == 1
     assert state.results[0].terminate_repeats is True
     assert _TerminateIterationRunner.calls == 1
+
+
+def test_auto_commit_per_phase_commits_after_each_eligible_phase(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _PhaseWriteRunner.calls = 0
+    commit_calls: list[str] = []
+    real_commit_all = orchestrator_module.commit_all
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _PhaseWriteRunner)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "commit_all",
+        lambda repo_path, msg: (commit_calls.append(msg) or real_commit_all(repo_path, msg)),
+    )
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="apply",
+        max_cycles=1,
+        auto_commit=True,
+        commit_frequency="per_phase",
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement something.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.DEBUGGING,
+                iterations=1,
+                custom_prompt="Fix what is broken.",
+            ),
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    assert len(commit_calls) == 2
+
+
+def test_auto_commit_per_cycle_commits_once_at_cycle_end(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _PhaseWriteRunner.calls = 0
+    commit_calls: list[str] = []
+    real_commit_all = orchestrator_module.commit_all
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _PhaseWriteRunner)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "commit_all",
+        lambda repo_path, msg: (commit_calls.append(msg) or real_commit_all(repo_path, msg)),
+    )
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="apply",
+        max_cycles=1,
+        auto_commit=True,
+        commit_frequency="per_cycle",
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement something.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.DEBUGGING,
+                iterations=1,
+                custom_prompt="Fix what is broken.",
+            ),
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    assert len(commit_calls) == 1
+    assert any("pipeline-cycle-1" in msg for msg in commit_calls)
+
+
+def test_auto_commit_manual_skips_non_commit_phase_auto_commits(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _PhaseWriteRunner.calls = 0
+    commit_calls: list[str] = []
+    real_commit_all = orchestrator_module.commit_all
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _PhaseWriteRunner)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "commit_all",
+        lambda repo_path, msg: (commit_calls.append(msg) or real_commit_all(repo_path, msg)),
+    )
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="apply",
+        max_cycles=1,
+        auto_commit=True,
+        commit_frequency="manual",
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement something.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.DEBUGGING,
+                iterations=1,
+                custom_prompt="Fix what is broken.",
+            ),
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    assert len(commit_calls) == 0
+    files_changed, _, _ = diff_numstat(repo)
+    assert files_changed > 0
 
 
 def test_brain_follow_up_executes_extra_phase_and_logs(monkeypatch, tmp_path: Path):

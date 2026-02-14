@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 CodexSandboxMode = Literal["read-only", "workspace-write", "danger-full-access"]
 CodexApprovalPolicy = Literal["untrusted", "on-failure", "on-request", "never"]
 CodexReasoningEffort = Literal["inherit", "low", "medium", "high", "xhigh"]
+CommitFrequency = Literal["per_phase", "per_cycle", "manual"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -185,7 +186,7 @@ class PipelineGUIConfig(BaseModel):
 
     # Git settings
     auto_commit: bool = True
-    commit_frequency: str = "per_phase"  # "per_phase" | "per_cycle" | "manual"
+    commit_frequency: CommitFrequency = "per_phase"
 
     # Local-only mode — force all AI calls through Ollama
     local_only: bool = False

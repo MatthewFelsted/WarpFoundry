@@ -38,6 +38,14 @@ class TestPermissionConfigValidation:
         with pytest.raises(ValidationError):
             PipelineConfig(codex_approval_policy="always")
 
+    def test_pipeline_gui_config_rejects_invalid_commit_frequency(self):
+        with pytest.raises(ValidationError):
+            PipelineGUIConfig(commit_frequency="every_step")
+
+    def test_pipeline_config_rejects_invalid_commit_frequency(self):
+        with pytest.raises(ValidationError):
+            PipelineConfig(commit_frequency="every_step")
+
     def test_chain_config_rejects_invalid_reasoning_effort(self):
         with pytest.raises(ValidationError):
             ChainConfig(codex_reasoning_effort="ultra")

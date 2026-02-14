@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, model_validator
 CodexSandboxMode = Literal["read-only", "workspace-write", "danger-full-access"]
 CodexApprovalPolicy = Literal["untrusted", "on-failure", "on-request", "never"]
 CodexReasoningEffort = Literal["inherit", "low", "medium", "high", "xhigh"]
+CommitFrequency = Literal["per_phase", "per_cycle", "manual"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -176,7 +177,7 @@ class PipelineConfig(BaseModel):
 
     # Git settings
     auto_commit: bool = True  # commit after implementation + debugging phases
-    commit_frequency: str = "per_phase"  # "per_phase" | "per_cycle" | "manual"
+    commit_frequency: CommitFrequency = "per_phase"
 
     @model_validator(mode="after")
     def _validate_danger_confirmation(self) -> PipelineConfig:
