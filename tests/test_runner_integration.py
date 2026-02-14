@@ -148,6 +148,22 @@ class TestCodexRunnerIntegration:
         assert result.success is True
         assert (repo / "stub-created.txt").exists()
 
+    def test_parser_failures_do_not_abort_subprocess_collection(self, tmp_path: Path):
+        stub = _make_stub_cli(tmp_path, "codex_stub", CODEX_STUB_SCRIPT)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        runner = CodexRunner(codex_binary=stub, timeout=30, env_overrides={"STUB_MODE": "success"})
+
+        def _raise_parser_error(_line: str):
+            raise RuntimeError("bad parser")
+
+        runner._parse_line = _raise_parser_error  # type: ignore[method-assign]
+        result = runner.run(repo, "write file", full_auto=True)
+
+        assert result.success is True
+        assert result.events == []
+
     def test_blocked_permission_path_surfaces_error(self, tmp_path: Path):
         stub = _make_stub_cli(tmp_path, "codex_stub", CODEX_STUB_SCRIPT)
         repo = tmp_path / "repo"

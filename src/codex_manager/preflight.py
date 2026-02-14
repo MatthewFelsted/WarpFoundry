@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +51,21 @@ class PreflightAction:
             "command": self.command,
             "severity": self.severity,
         }
+
+
+@dataclass(frozen=True)
+class AgentPreflightSpec:
+    """Static check metadata for one supported agent implementation."""
+
+    category: str
+    binary_label: str
+    binary_hint: str
+    auth_label: str
+    auth_env_vars: tuple[str, ...]
+    auth_detector: Callable[[], bool]
+    auth_detected_detail: str
+    auth_missing_detail: str
+    auth_hint: str
 
 
 @dataclass(frozen=True)
@@ -183,9 +198,9 @@ def binary_exists(binary: str) -> bool:
         return False
     try:
         candidate = Path(binary)
-        if candidate.exists():
+        if candidate.is_file():
             return True
-    except Exception:
+    except OSError:
         pass
     return shutil.which(binary) is not None
 
@@ -218,6 +233,78 @@ def has_claude_auth() -> bool:
         if path.exists():
             return True
     return False
+
+
+_SUPPORTED_AGENT_SPECS: dict[str, AgentPreflightSpec] = {
+    "codex": AgentPreflightSpec(
+        category="codex",
+        binary_label="Codex CLI binary available",
+        binary_hint="Install Codex CLI or update --codex-bin.",
+        auth_label="Codex authentication detected",
+        auth_env_vars=("CODEX_API_KEY", "OPENAI_API_KEY"),
+        auth_detector=lambda: has_codex_auth(),
+        auth_detected_detail="Detected CODEX_API_KEY / OPENAI_API_KEY or Codex auth file.",
+        auth_missing_detail="No Codex/OpenAI auth detected.",
+        auth_hint="Set CODEX_API_KEY or OPENAI_API_KEY, or run 'codex login'.",
+    ),
+    "claude_code": AgentPreflightSpec(
+        category="claude_code",
+        binary_label="Claude Code CLI binary available",
+        binary_hint="Install Claude Code CLI or update --claude-bin.",
+        auth_label="Claude authentication detected",
+        auth_env_vars=("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+        auth_detector=lambda: has_claude_auth(),
+        auth_detected_detail="Detected ANTHROPIC_API_KEY / CLAUDE_API_KEY or Claude auth file.",
+        auth_missing_detail="No Claude auth detected.",
+        auth_hint="Set ANTHROPIC_API_KEY (or CLAUDE_API_KEY), or log in via Claude CLI.",
+    ),
+}
+
+
+def _auth_failure_detail(placeholder_vars: list[str], missing_detail: str) -> str:
+    if placeholder_vars:
+        return "Detected placeholder value(s) in " + ", ".join(placeholder_vars) + "."
+    return missing_detail
+
+
+def _agent_binary_for_key(agent: str, *, codex_binary: str, claude_binary: str) -> str:
+    if agent == "claude_code":
+        return claude_binary
+    return codex_binary
+
+
+def _build_supported_agent_checks(
+    *,
+    agent: str,
+    binary_name: str,
+) -> list[PreflightCheck]:
+    spec = _SUPPORTED_AGENT_SPECS[agent]
+    binary_ok = binary_exists(binary_name)
+    auth_ok = spec.auth_detector()
+    placeholder_vars = _placeholder_env_vars(spec.auth_env_vars)
+
+    return [
+        PreflightCheck(
+            category=spec.category,
+            key="binary",
+            label=spec.binary_label,
+            status="pass" if binary_ok else "fail",
+            detail=f"Configured binary: {binary_name}",
+            hint=spec.binary_hint if not binary_ok else "",
+        ),
+        PreflightCheck(
+            category=spec.category,
+            key="auth",
+            label=spec.auth_label,
+            status="pass" if auth_ok else "fail",
+            detail=(
+                spec.auth_detected_detail
+                if auth_ok
+                else _auth_failure_detail(placeholder_vars, spec.auth_missing_detail)
+            ),
+            hint=spec.auth_hint if not auth_ok else "",
+        ),
+    ]
 
 
 def repo_write_error(repo: Path) -> str | None:
@@ -376,7 +463,7 @@ def build_preflight_report(
             )
 
     for agent in requested_agents:
-        if agent not in {"codex", "claude_code"}:
+        if agent not in _SUPPORTED_AGENT_SPECS:
             checks.append(
                 PreflightCheck(
                     category="agents",
@@ -389,86 +476,14 @@ def build_preflight_report(
             )
             continue
 
-        if agent == "codex":
-            codex_binary_ok = binary_exists(codex_binary)
-            codex_auth_ok = has_codex_auth()
-            codex_placeholder_vars = _placeholder_env_vars(("CODEX_API_KEY", "OPENAI_API_KEY"))
-            checks.append(
-                PreflightCheck(
-                    category="codex",
-                    key="binary",
-                    label="Codex CLI binary available",
-                    status="pass" if codex_binary_ok else "fail",
-                    detail=f"Configured binary: {codex_binary}",
-                    hint="Install Codex CLI or update --codex-bin." if not codex_binary_ok else "",
-                )
+        checks.extend(
+            _build_supported_agent_checks(
+                agent=agent,
+                binary_name=_agent_binary_for_key(
+                    agent, codex_binary=codex_binary, claude_binary=claude_binary
+                ),
             )
-            checks.append(
-                PreflightCheck(
-                    category="codex",
-                    key="auth",
-                    label="Codex authentication detected",
-                    status="pass" if codex_auth_ok else "fail",
-                    detail=(
-                        "Detected CODEX_API_KEY / OPENAI_API_KEY or Codex auth file."
-                        if codex_auth_ok
-                        else (
-                            "Detected placeholder value(s) in "
-                            + ", ".join(codex_placeholder_vars)
-                            + "."
-                            if codex_placeholder_vars
-                            else "No Codex/OpenAI auth detected."
-                        )
-                    ),
-                    hint=(
-                        "Set CODEX_API_KEY or OPENAI_API_KEY, or run 'codex login'."
-                        if not codex_auth_ok
-                        else ""
-                    ),
-                )
-            )
-        else:
-            claude_binary_ok = binary_exists(claude_binary)
-            claude_auth_ok = has_claude_auth()
-            claude_placeholder_vars = _placeholder_env_vars(
-                ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")
-            )
-            checks.append(
-                PreflightCheck(
-                    category="claude_code",
-                    key="binary",
-                    label="Claude Code CLI binary available",
-                    status="pass" if claude_binary_ok else "fail",
-                    detail=f"Configured binary: {claude_binary}",
-                    hint="Install Claude Code CLI or update --claude-bin."
-                    if not claude_binary_ok
-                    else "",
-                )
-            )
-            checks.append(
-                PreflightCheck(
-                    category="claude_code",
-                    key="auth",
-                    label="Claude authentication detected",
-                    status="pass" if claude_auth_ok else "fail",
-                    detail=(
-                        "Detected ANTHROPIC_API_KEY / CLAUDE_API_KEY or Claude auth file."
-                        if claude_auth_ok
-                        else (
-                            "Detected placeholder value(s) in "
-                            + ", ".join(claude_placeholder_vars)
-                            + "."
-                            if claude_placeholder_vars
-                            else "No Claude auth detected."
-                        )
-                    ),
-                    hint=(
-                        "Set ANTHROPIC_API_KEY (or CLAUDE_API_KEY), or log in via Claude CLI."
-                        if not claude_auth_ok
-                        else ""
-                    ),
-                )
-            )
+        )
 
     return PreflightReport(
         requested_agents=requested_agents,

@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
-import queue
+import os
 import re
-import shutil
-import subprocess
-import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from codex_manager.agent_runner import AgentRunner, register_agent
+from codex_manager.runner_common import (
+    coerce_int,
+    execute_streaming_json_command,
+    resolve_binary,
+)
 from codex_manager.schemas import (
     CodexEvent,
     EventKind,
@@ -22,20 +24,6 @@ from codex_manager.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_binary(name: str) -> str:
-    """Resolve a binary name to its full path.
-
-    On Windows, ``subprocess.Popen`` cannot execute ``.cmd`` / ``.bat``
-    wrappers (like those created by npm) without ``shell=True``.  Using
-    ``shutil.which`` resolves to the full path including the extension,
-    which lets Popen run them directly.
-    """
-    resolved = shutil.which(name)
-    if resolved:
-        return resolved
-    return name
 
 
 # Default inactivity timeout for a single Codex run (seconds).
@@ -173,7 +161,7 @@ class CodexRunner(AgentRunner):
         full_auto: bool,
         extra_args: list[str] | None,
     ) -> list[str]:
-        cmd = [_resolve_binary(self.codex_binary), "exec"]
+        cmd = [resolve_binary(self.codex_binary), "exec"]
         # Explicit workspace so sandbox allows writes in this directory
         cmd.extend(["--cd", str(repo_path)])
         if use_json:
@@ -204,135 +192,35 @@ class CodexRunner(AgentRunner):
 
     def _execute(self, cmd: list[str], cwd: Path) -> RunResult:
         """Spawn the subprocess and consume its JSONL stdout."""
-        import os
-
         env = {**os.environ, **self.env_overrides}
-
-        proc = subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-        )
-
-        events: list[CodexEvent] = []
-        raw_lines: list[str] = []
-        stderr_lines: list[str] = []
-        if proc.stdout is None or proc.stderr is None:
-            raise RuntimeError("Codex subprocess pipes are unexpectedly unavailable")
-
-        stream_queue: queue.Queue[tuple[str, str | None]] = queue.Queue()
-        done_sentinel = None
-
-        def _pump_stream(stream_name: str, stream: Any) -> None:
-            try:
-                for line in stream:
-                    stream_queue.put((stream_name, line.rstrip("\n\r")))
-            finally:
-                stream_queue.put((stream_name, done_sentinel))
-
-        stdout_thread = threading.Thread(
-            target=_pump_stream, args=("stdout", proc.stdout), daemon=True
-        )
-        stderr_thread = threading.Thread(
-            target=_pump_stream, args=("stderr", proc.stderr), daemon=True
-        )
-        stdout_thread.start()
-        stderr_thread.start()
-
         inactivity_timeout = self.timeout if self.timeout > 0 else None
-        last_activity = time.monotonic()
-        closed_streams: set[str] = set()
-        timed_out = False
+        execution = execute_streaming_json_command(
+            cmd=cmd,
+            cwd=cwd,
+            env=env,
+            timeout_seconds=self.timeout,
+            parse_stdout_line=self._parse_line,
+            process_name="Codex",
+        )
+        stderr_text = execution.stderr_text
 
-        try:
-            while len(closed_streams) < 2:
-                if (
-                    inactivity_timeout is not None
-                    and (time.monotonic() - last_activity) >= inactivity_timeout
-                ):
-                    timed_out = True
-                    break
+        if execution.timed_out:
+            timeout_msg = (
+                f"Codex process timed out after {inactivity_timeout}s with no output activity"
+            )
+            return RunResult(
+                success=False,
+                exit_code=-1,
+                events=execution.events,
+                errors=[timeout_msg] + ([stderr_text] if stderr_text else []),
+            )
 
-                wait_seconds = 0.25
-                if inactivity_timeout is not None:
-                    remaining = inactivity_timeout - (time.monotonic() - last_activity)
-                    wait_seconds = max(0.05, min(0.5, remaining))
-
-                try:
-                    stream_name, payload = stream_queue.get(timeout=wait_seconds)
-                except queue.Empty:
-                    if (
-                        proc.poll() is not None
-                        and not stdout_thread.is_alive()
-                        and not stderr_thread.is_alive()
-                    ):
-                        break
-                    continue
-
-                if payload is done_sentinel:
-                    closed_streams.add(stream_name)
-                    continue
-
-                last_activity = time.monotonic()
-                if not payload:
-                    continue
-
-                if stream_name == "stdout":
-                    raw_lines.append(payload)
-                    event = self._parse_line(payload)
-                    if event is not None:
-                        events.append(event)
-                else:
-                    stderr_lines.append(payload)
-
-            if timed_out:
-                proc.kill()
-
-            proc.wait()
-
-            # Drain any buffered lines produced just before process exit.
-            while True:
-                try:
-                    stream_name, payload = stream_queue.get_nowait()
-                except queue.Empty:
-                    break
-                if payload is done_sentinel or not payload:
-                    continue
-                if stream_name == "stdout":
-                    raw_lines.append(payload)
-                    event = self._parse_line(payload)
-                    if event is not None:
-                        events.append(event)
-                else:
-                    stderr_lines.append(payload)
-
-            stderr_text = "\n".join(stderr_lines).strip()
-
-            if timed_out:
-                timeout_msg = (
-                    f"Codex process timed out after {inactivity_timeout}s with no output activity"
-                )
-                return RunResult(
-                    success=False,
-                    exit_code=-1,
-                    events=events,
-                    errors=[timeout_msg] + ([stderr_text] if stderr_text else []),
-                )
-
-            exit_code = proc.returncode
-            return self._aggregate(events, exit_code, stderr_text, raw_lines)
-        finally:
-            stdout_thread.join(timeout=1.0)
-            stderr_thread.join(timeout=1.0)
-            if proc.stdout is not None and not proc.stdout.closed:
-                proc.stdout.close()
-            if proc.stderr is not None and not proc.stderr.closed:
-                proc.stderr.close()
+        return self._aggregate(
+            execution.events,
+            execution.exit_code,
+            stderr_text,
+            execution.raw_lines,
+        )
 
     # ------------------------------------------------------------------
     # JSONL parsing helpers
@@ -590,12 +478,12 @@ def _extract_usage(data: dict[str, Any]) -> UsageInfo:
             if isinstance(nested_usage, dict):
                 usage_raw = nested_usage
 
-    input_tokens = max(0, _coerce_int(usage_raw.get("input_tokens", 0)))
-    output_tokens = max(0, _coerce_int(usage_raw.get("output_tokens", 0)))
-    cached_input = max(0, _coerce_int(usage_raw.get("cached_input_tokens", 0)))
-    cache_read = max(0, _coerce_int(usage_raw.get("cache_read_input_tokens", 0)))
-    cache_creation = max(0, _coerce_int(usage_raw.get("cache_creation_input_tokens", 0)))
-    total_tokens = max(0, _coerce_int(usage_raw.get("total_tokens", 0)))
+    input_tokens = max(0, coerce_int(usage_raw.get("input_tokens", 0)))
+    output_tokens = max(0, coerce_int(usage_raw.get("output_tokens", 0)))
+    cached_input = max(0, coerce_int(usage_raw.get("cached_input_tokens", 0)))
+    cache_read = max(0, coerce_int(usage_raw.get("cache_read_input_tokens", 0)))
+    cache_creation = max(0, coerce_int(usage_raw.get("cache_creation_input_tokens", 0)))
+    total_tokens = max(0, coerce_int(usage_raw.get("total_tokens", 0)))
     if total_tokens <= 0:
         total_tokens = input_tokens + output_tokens + cached_input + cache_read + cache_creation
 
@@ -640,35 +528,6 @@ def _infer_error_from_events(events: list[CodexEvent]) -> str | None:
                 return text.strip()
 
     return None
-
-
-def _coerce_int(value: Any) -> int:
-    """Best-effort integer coercion for loosely typed CLI payloads."""
-    if value is None:
-        return 0
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if value != value:  # NaN
-            return 0
-        return int(value)
-    if isinstance(value, str):
-        cleaned = value.strip().replace(",", "")
-        if not cleaned:
-            return 0
-        try:
-            return int(cleaned)
-        except ValueError:
-            try:
-                return int(float(cleaned))
-            except (TypeError, ValueError, OverflowError):
-                return 0
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0
 
 
 register_agent("codex", CodexRunner)

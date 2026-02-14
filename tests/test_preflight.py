@@ -24,6 +24,10 @@ def test_parse_agents_supports_claude_aliases() -> None:
     assert parsed == ["claude_code"]
 
 
+def test_binary_exists_rejects_directories(tmp_path: Path) -> None:
+    assert preflight.binary_exists(str(tmp_path)) is False
+
+
 def test_build_preflight_report_warns_when_repo_not_provided(monkeypatch) -> None:
     monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
     monkeypatch.setattr(preflight, "has_codex_auth", lambda: True)
