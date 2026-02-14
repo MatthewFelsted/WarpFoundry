@@ -81,6 +81,7 @@ _PIPELINE_LOG_FILES = frozenset(
         "ERRORS.md",
         "EXPERIMENTS.md",
         "PROGRESS.md",
+        "SCIENTIST_REPORT.md",
         "BRAIN.md",
         "HISTORY.md",
     }
@@ -557,6 +558,103 @@ def _resolve_pipeline_logs_repo(repo_hint: str = "") -> Path | None:
 def _pipeline_logs_dir(repo: Path) -> Path:
     """Return the pipeline logs directory under ``.codex_manager``."""
     return repo / ".codex_manager" / "logs"
+
+
+def _extract_markdown_section_lines(
+    markdown: str,
+    *,
+    heading_prefix: str,
+    heading_level: int = 2,
+) -> list[str]:
+    """Extract lines in the section whose heading starts with *heading_prefix*."""
+    if not markdown.strip():
+        return []
+    lines = markdown.splitlines()
+    prefix = heading_prefix.strip().lower()
+    in_section = False
+    collected: list[str] = []
+    boundary = re.compile(rf"^#{{1,{max(1, heading_level)}}}\s+")
+    heading_start = "#" * max(1, heading_level) + " "
+
+    for line in lines:
+        stripped = line.strip()
+        if not in_section:
+            if stripped.startswith(heading_start):
+                heading_text = stripped[len(heading_start) :].strip().lower()
+                if heading_text.startswith(prefix):
+                    in_section = True
+            continue
+
+        if boundary.match(stripped):
+            break
+        collected.append(line)
+    return collected
+
+
+def _parse_markdown_table(lines: list[str]) -> list[dict[str, str]]:
+    """Parse the first markdown table found in *lines*."""
+    if not lines:
+        return []
+
+    def _split_row(row: str) -> list[str]:
+        return [cell.strip().replace(r"\|", "|") for cell in row.strip().strip("|").split("|")]
+
+    for idx in range(0, len(lines) - 1):
+        header_line = lines[idx].strip()
+        sep_line = lines[idx + 1].strip()
+        if not header_line.startswith("|") or not sep_line.startswith("|"):
+            continue
+        headers = _split_row(header_line)
+        sep_cells = _split_row(sep_line)
+        if not headers or len(sep_cells) < len(headers):
+            continue
+        if not all(re.match(r"^:?-{3,}:?$", cell) for cell in sep_cells[: len(headers)]):
+            continue
+
+        rows: list[dict[str, str]] = []
+        for raw in lines[idx + 2 :]:
+            row_line = raw.strip()
+            if not row_line:
+                break
+            if not row_line.startswith("|"):
+                break
+            cells = _split_row(row_line)
+            if len(cells) < len(headers):
+                cells.extend([""] * (len(headers) - len(cells)))
+            row = {headers[col].strip(): cells[col].strip() for col in range(len(headers))}
+            rows.append(row)
+        return rows
+    return []
+
+
+def _extract_code_fence_text(lines: list[str]) -> str:
+    """Return text between the first fenced-code block in *lines*."""
+    if not lines:
+        return ""
+    in_fence = False
+    captured: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if in_fence:
+                break
+            in_fence = True
+            continue
+        if in_fence:
+            captured.append(line.rstrip())
+    if captured:
+        return "\n".join(captured).strip()
+    return "\n".join(line.rstrip() for line in lines).strip()
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    """Coerce *value* to int where possible."""
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
 
 
 def _docs_dir() -> Path | None:
@@ -1240,6 +1338,7 @@ def api_pipeline_phases():
         DEFAULT_ITERATIONS,
         DEFAULT_PHASE_ORDER,
         PHASE_LOG_FILES,
+        PipelinePhase,
         SCIENCE_PHASES,
         SELF_IMPROVEMENT_PHASES,
     )
@@ -1253,7 +1352,16 @@ def api_pipeline_phases():
         catalog = None
 
     phases = []
-    for phase in list(DEFAULT_PHASE_ORDER) + CUA_PHASES + SCIENCE_PHASES + SELF_IMPROVEMENT_PHASES:
+    ordered_phases = list(DEFAULT_PHASE_ORDER)
+    try:
+        implementation_idx = ordered_phases.index(PipelinePhase.IMPLEMENTATION)
+    except ValueError:
+        implementation_idx = 0
+    ordered_phases[implementation_idx:implementation_idx] = list(SCIENCE_PHASES)
+    ordered_phases.extend(CUA_PHASES)
+    ordered_phases.extend(SELF_IMPROVEMENT_PHASES)
+
+    for phase in ordered_phases:
         key = phase.value
         is_science = phase in SCIENCE_PHASES
         is_cua = phase in CUA_PHASES
@@ -1503,6 +1611,209 @@ def api_pipeline_log(filename: str):
             "filename": filename,
             "repo_path": str(repo),
             "logs_dir": str(log_path.parent),
+        }
+    )
+
+
+@app.route("/api/pipeline/science-dashboard")
+def api_pipeline_science_dashboard():
+    """Return structured Scientist dashboard data for the GUI modal."""
+    repo = _resolve_pipeline_logs_repo(request.args.get("repo_path", ""))
+    if repo is None:
+        return jsonify(
+            {
+                "available": False,
+                "repo_path": "",
+                "summary": {
+                    "current_cycle": 0,
+                    "science_trials": 0,
+                    "hypotheses": 0,
+                    "supported": 0,
+                    "refuted": 0,
+                    "inconclusive": 0,
+                    "rollbacks": 0,
+                    "trial_tokens": 0,
+                    "implementation_phases": 0,
+                },
+                "action_items": [],
+                "timeline": [],
+                "phase_breakdown": [],
+                "implementation": [],
+                "top_files": [],
+                "analysis_excerpt": "",
+                "message": "Set Repository Path in the Pipeline panel to load Scientist dashboard data.",
+            }
+        )
+
+    logs_dir = _pipeline_logs_dir(repo)
+    science_dir = logs_dir / "scientist"
+    report_path = logs_dir / "SCIENTIST_REPORT.md"
+    trials_path = science_dir / "TRIALS.jsonl"
+
+    report_text = ""
+    if report_path.is_file():
+        try:
+            report_text = _read_text_utf8_resilient(report_path)
+        except Exception as exc:
+            logger.warning("Could not read Scientist report %s: %s", report_path, exc)
+
+    timeline: list[dict[str, object]] = []
+    phase_counts: dict[str, int] = {}
+    verdict_counts = {"supported": 0, "refuted": 0, "inconclusive": 0}
+    hypotheses: set[str] = set()
+    rollback_count = 0
+    trial_tokens = 0
+
+    if trials_path.is_file():
+        try:
+            raw = _read_text_utf8_resilient(trials_path)
+        except Exception as exc:
+            logger.warning("Could not read science trials file %s: %s", trials_path, exc)
+            raw = ""
+
+        for line in raw.splitlines():
+            row = line.strip()
+            if not row:
+                continue
+            try:
+                payload = json.loads(row)
+            except json.JSONDecodeError:
+                continue
+
+            hypothesis = payload.get("hypothesis") or {}
+            baseline = payload.get("baseline") or {}
+            post = payload.get("post") or {}
+            usage = payload.get("usage") or {}
+            hypothesis_id = str(hypothesis.get("id", "")).strip()
+            verdict = str(payload.get("verdict", "")).strip().lower()
+            phase = str(payload.get("phase", "")).strip().lower()
+            rollback = str(payload.get("rollback_action", "")).strip().lower()
+
+            if hypothesis_id:
+                hypotheses.add(hypothesis_id)
+            if verdict in verdict_counts:
+                verdict_counts[verdict] += 1
+            if rollback == "reverted":
+                rollback_count += 1
+            if phase:
+                phase_counts[phase] = phase_counts.get(phase, 0) + 1
+            trial_tokens += _safe_int(usage.get("total_tokens"), 0)
+
+            timeline.append(
+                {
+                    "timestamp": str(payload.get("timestamp", "")).strip(),
+                    "cycle": _safe_int(payload.get("cycle"), 0),
+                    "phase": phase,
+                    "hypothesis_id": hypothesis_id,
+                    "verdict": verdict or "n/a",
+                    "confidence": str(payload.get("confidence", "")).strip().lower() or "n/a",
+                    "baseline_test": str(baseline.get("test_outcome", "")).strip() or "n/a",
+                    "post_test": str(post.get("test_outcome", "")).strip() or "n/a",
+                    "files_changed": _safe_int(post.get("files_changed"), 0),
+                    "net_lines_changed": _safe_int(post.get("net_lines_changed"), 0),
+                    "rollback_action": rollback or "n/a",
+                }
+            )
+
+    action_lines = _extract_markdown_section_lines(
+        report_text,
+        heading_prefix="Action Plan",
+        heading_level=2,
+    )
+    action_items: list[str] = []
+    for line in action_lines:
+        match = re.match(r"^\s*-\s*\[[ xX]\]\s+(.+)$", line.strip())
+        if not match:
+            continue
+        item = re.sub(r"\s+", " ", match.group(1)).strip()
+        if item:
+            action_items.append(item)
+
+    impl_lines = _extract_markdown_section_lines(
+        report_text,
+        heading_prefix="Implementation and Code Changes",
+        heading_level=2,
+    )
+    impl_rows = _parse_markdown_table(impl_lines)
+    implementation: list[dict[str, object]] = []
+    for row in impl_rows:
+        implementation.append(
+            {
+                "cycle": _safe_int(row.get("Cycle"), 0),
+                "phase": str(row.get("Phase", "")).strip().lower(),
+                "iteration": _safe_int(row.get("Iter"), 0),
+                "status": str(row.get("Status", "")).strip().lower() or "unknown",
+                "tests": str(row.get("Tests", "")).strip() or "unknown",
+                "files": _safe_int(row.get("Files"), 0),
+                "net_delta": str(row.get("Net Delta", "")).strip(),
+                "commit": str(row.get("Commit", "")).strip(),
+            }
+        )
+
+    top_lines = _extract_markdown_section_lines(
+        report_text,
+        heading_prefix="Most-Touched Files",
+        heading_level=3,
+    )
+    top_rows = _parse_markdown_table(top_lines)
+    top_files: list[dict[str, object]] = []
+    for row in top_rows:
+        path = str(row.get("File", "")).strip()
+        if not path:
+            continue
+        top_files.append({"path": path, "touches": _safe_int(row.get("Touches"), 0)})
+
+    analysis_lines = _extract_markdown_section_lines(
+        report_text,
+        heading_prefix="Latest Analyze Output",
+        heading_level=2,
+    )
+    analysis_excerpt = _extract_code_fence_text(analysis_lines)
+    if len(analysis_excerpt) > 3000:
+        analysis_excerpt = analysis_excerpt[:3000].rstrip() + "\n...[truncated]..."
+
+    current_cycle = 0
+    if timeline:
+        current_cycle = max(_safe_int(item.get("cycle"), 0) for item in timeline)
+    elif implementation:
+        current_cycle = max(_safe_int(item.get("cycle"), 0) for item in implementation)
+
+    available = bool(report_path.is_file() or trials_path.is_file())
+    phase_breakdown = [
+        {"phase": phase, "count": count}
+        for phase, count in sorted(phase_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+    return jsonify(
+        {
+            "available": available,
+            "repo_path": str(repo),
+            "paths": {
+                "report": str(report_path),
+                "trials": str(trials_path),
+            },
+            "summary": {
+                "current_cycle": current_cycle,
+                "science_trials": len(timeline),
+                "hypotheses": len(hypotheses),
+                "supported": verdict_counts["supported"],
+                "refuted": verdict_counts["refuted"],
+                "inconclusive": verdict_counts["inconclusive"],
+                "rollbacks": rollback_count,
+                "trial_tokens": trial_tokens,
+                "implementation_phases": len(implementation),
+            },
+            "action_items": action_items[:20],
+            "timeline": timeline[-60:],
+            "phase_breakdown": phase_breakdown,
+            "implementation": implementation[-60:],
+            "top_files": top_files[:20],
+            "analysis_excerpt": analysis_excerpt,
+            "message": (
+                ""
+                if available
+                else "Scientist artifacts are not available yet. Run a pipeline with Scientist Mode enabled."
+            ),
         }
     )
 

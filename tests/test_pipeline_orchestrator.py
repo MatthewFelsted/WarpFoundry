@@ -306,6 +306,18 @@ def test_default_phase_order_inherits_global_agent():
     assert all(p.agent == "claude_code" for p in phases)
 
 
+def test_default_science_order_runs_before_implementation():
+    cfg = PipelineConfig(science_enabled=True)
+    phase_order = [p.phase for p in cfg.get_phase_order()]
+
+    assert phase_order.index(PipelinePhase.THEORIZE) < phase_order.index(
+        PipelinePhase.IMPLEMENTATION
+    )
+    assert phase_order.index(PipelinePhase.ANALYZE) < phase_order.index(
+        PipelinePhase.IMPLEMENTATION
+    )
+
+
 def test_dry_run_commit_phase_reverts_changes(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
@@ -1072,9 +1084,12 @@ def test_science_experiment_records_evidence_and_marks_inconclusive(monkeypatch,
     assert "Science verdict=inconclusive" in result.error_message
 
     science_dir = repo / ".codex_manager" / "logs" / "scientist"
+    report_file = repo / ".codex_manager" / "logs" / "SCIENTIST_REPORT.md"
     assert (science_dir / "TRIALS.jsonl").exists()
     assert (science_dir / "EVIDENCE.md").exists()
     assert (science_dir / "EXPERIMENTS_LATEST.md").exists()
+    assert report_file.exists()
+    assert "Science Trial Timeline" in report_file.read_text(encoding="utf-8")
 
     lines = (science_dir / "TRIALS.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 1

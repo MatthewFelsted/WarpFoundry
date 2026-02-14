@@ -69,6 +69,9 @@ pipeline:
     description: "Rank items in WISHLIST.md and group them into implementation bundles"
     prompt: |
       You are a strategic engineering manager. Read WISHLIST.md carefully.
+      If a "Current SCIENTIST_REPORT.md" section is provided in context, treat its
+      action plan and TODO checklist as evidence-backed inputs for prioritization.
+      Items grounded in validated experiments should be promoted unless risk is high.
 
       Your tasks:
       1. **Rank** every pending item by importance using a composite score:
@@ -96,6 +99,10 @@ pipeline:
          - Testing strategy
          - Potential risks or dependencies
 
+      5. If Scientist Mode findings are present, annotate bundles with:
+         - Which EXP-ID evidence supports the bundle
+         - Whether the bundle is "validated", "inconclusive", or "speculative"
+
       Preserve the original item format. Update the **Bundle** field for each item.
       Do NOT delete any items. Mark items that are duplicates with **Status**: duplicate.
 
@@ -105,6 +112,8 @@ pipeline:
     prompt: |
       You are an expert software engineer. Read WISHLIST.md to find the highest-priority
       pending bundle (the topmost bundle where items still have **Status**: pending).
+      If "Current SCIENTIST_REPORT.md" is provided, use its action checklist as the
+      implementation handoff and map each code change to a checklist item when possible.
 
       Your tasks:
       1. Read the bundle's implementation instructions carefully
@@ -126,6 +135,7 @@ pipeline:
 
       Update PROGRESS.md with a summary of what was implemented:
       - Bundle name and items completed
+      - Scientist action items addressed (if any)
       - Files modified or created
       - Key decisions made
       - Any issues encountered
@@ -659,12 +669,18 @@ scientist:
          - Changes to the improvement pipeline itself
          - Adjustments to prompt strategies based on what worked
 
+      4. **Implementation Handoff** — Produce a concrete execution checklist:
+         - 5-10 specific TODO items
+         - Each item must reference evidence (EXP-ID or measured delta)
+         - Include expected impact, risk, and validation test for each item
+
       Write findings to EXPERIMENTS.md under a new section:
 
       ## Analysis Report — [date]
       ### Key Findings
       ### Patterns Observed
       ### Recommendations
+      ### Implementation Handoff Checklist
       ### New Hypotheses Generated
 
 # ── Prompt Optimization Meta-Prompts ─────────────────────────────

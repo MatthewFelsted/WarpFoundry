@@ -59,13 +59,14 @@ If your target repo is Discover Chain, use its path and the command will add Dis
 python -m codex_manager pipeline --repo /path/to/repo --mode dry-run --cycles 2
 ```
 
-Pipeline phases include ideation, prioritization, implementation, testing, debugging, commit, and progress review (plus optional visual/science phases).
+Pipeline phases include ideation, prioritization, implementation, testing, debugging, commit, and progress review. When Scientist Mode is enabled, science phases run before implementation so findings can drive code changes in the same cycle.
 
 Inspect:
 
 - `.codex_manager/logs/WISHLIST.md`
 - `.codex_manager/logs/TESTPLAN.md`
 - `.codex_manager/logs/ERRORS.md`
+- `.codex_manager/logs/SCIENTIST_REPORT.md` (when Scientist Mode is enabled)
 - `.codex_manager/logs/PROGRESS.md`
 
 ## Step 5: Enable apply mode

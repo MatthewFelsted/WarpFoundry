@@ -532,6 +532,55 @@ body.mode-medium .easy-only{display:none}
 .run-plan-danger.hidden{display:none}
 .run-plan-actions{padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 
+/* Scientist dashboard modal */
+#science-dashboard-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:2950;display:flex;align-items:center;justify-content:center;padding:24px}
+#science-dashboard-overlay.hidden{display:none}
+.science-dashboard-modal{
+  width:1120px;max-width:100%;max-height:84vh;overflow:hidden;
+  background:linear-gradient(165deg, rgba(19,29,43,.98), rgba(7,11,17,.98));
+  border:1px solid var(--border-soft);border-radius:14px;box-shadow:0 24px 72px rgba(0,0,0,.58);
+  display:flex;flex-direction:column
+}
+.science-dashboard-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.science-dashboard-header h3{margin:0;font-size:16px;color:var(--text)}
+.science-dashboard-subtitle{font-size:12px;color:var(--text2);margin-top:4px;line-height:1.45}
+.science-dashboard-actions{display:flex;gap:8px;flex-wrap:wrap}
+.science-dashboard-body{padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:14px}
+.science-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.science-card{
+  border:1px solid var(--border);border-radius:10px;padding:10px;background:rgba(19,29,43,.75);
+  display:flex;flex-direction:column;gap:4px
+}
+.science-card-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px}
+.science-card-value{font-size:19px;font-weight:700;color:var(--text)}
+.science-card-value.pass{color:var(--success)}
+.science-card-value.fail{color:var(--danger)}
+.science-card-value.warn{color:var(--warning)}
+.science-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.science-panel{border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:10px}
+.science-panel h4{font-size:12px;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px}
+.science-list{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text2)}
+.science-list-item{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.science-list-item .name{color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.science-list-item .count{font-family:var(--mono);color:var(--text2);font-size:11px}
+.science-bars{display:flex;flex-direction:column;gap:8px}
+.science-bar-row{display:grid;grid-template-columns:88px 1fr 44px;gap:8px;align-items:center}
+.science-bar-label{font-size:11px;color:var(--text2);text-transform:capitalize}
+.science-bar-track{height:10px;background:var(--surface2);border-radius:999px;overflow:hidden}
+.science-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.science-bar-fill.pass{background:linear-gradient(90deg,#2ea66a,#61d995)}
+.science-bar-fill.fail{background:linear-gradient(90deg,#d14a4a,#ff7c7c)}
+.science-bar-fill.warn{background:linear-gradient(90deg,#be8a3b,#f4bd64)}
+.science-bar-value{font-family:var(--mono);font-size:11px;color:var(--text2);text-align:right}
+.science-table-wrap{max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:8px}
+.science-table{width:100%;border-collapse:collapse;font-size:12px}
+.science-table th{position:sticky;top:0;background:var(--surface);padding:6px 8px;color:var(--text2);text-align:left;border-bottom:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.3px}
+.science-table td{padding:6px 8px;border-bottom:1px solid var(--border)}
+.science-table tr:last-child td{border-bottom:none}
+.science-analysis{max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:var(--mono);font-size:11px;color:var(--text2);line-height:1.5}
+.science-empty{font-size:12px;color:var(--text2);padding:10px;border:1px dashed var(--border-soft);border-radius:8px;background:rgba(15,22,34,.65)}
+.science-open-btn{margin-top:8px;display:flex;justify-content:flex-end}
+
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Tab Navigation Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .tab-nav{display:flex;gap:2px}
 .tab-nav button{padding:7px 16px;border:none;background:transparent;color:var(--text2);cursor:pointer;font-size:13px;font-family:var(--font);font-weight:500;border-bottom:2px solid transparent;transition:all .15s}
@@ -614,11 +663,15 @@ body.mode-medium .easy-only{display:none}
   .header-doc-links{width:100%;flex-wrap:wrap}
   .tab-nav{width:100%}
   .mode-toggle{min-width:200px}
+  .science-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .science-grid{grid-template-columns:1fr}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
   #toast-stack{right:12px;bottom:12px}
-  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal{max-height:88vh}
+  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal{max-height:88vh}
+  .science-cards{grid-template-columns:1fr}
+  .science-bar-row{grid-template-columns:72px 1fr 38px}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{
@@ -1128,9 +1181,9 @@ body.mode-medium .easy-only{display:none}
         <strong style="color:var(--purple)">Scientist Mode</strong> - theorize, experiment, skeptic, analyze
       </label>
       <p style="font-size:11px;color:var(--text2);margin:4px 0 0 22px">
-        Applies the scientific method: forms testable hypotheses about what could
-        improve the project, runs controlled experiments, requires skeptical replication,
-        and keeps only changes that produce measurable improvement.
+        Applies the scientific method before implementation: forms testable hypotheses,
+        runs controlled experiments, requires skeptical replication, and generates
+        an action plan used by subsequent coding phases.
       </p>
     </div>
   </div>
@@ -1469,9 +1522,13 @@ body.mode-medium .easy-only{display:none}
           <button data-file="TESTPLAN.md" onclick="viewLogFile('TESTPLAN.md')">TESTPLAN</button>
           <button data-file="ERRORS.md" onclick="viewLogFile('ERRORS.md')">ERRORS</button>
           <button data-file="EXPERIMENTS.md" onclick="viewLogFile('EXPERIMENTS.md')">EXPERIMENTS</button>
+          <button data-file="SCIENTIST_REPORT.md" onclick="viewLogFile('SCIENTIST_REPORT.md')">SCIENCE REPORT</button>
           <button data-file="PROGRESS.md" onclick="viewLogFile('PROGRESS.md')">PROGRESS</button>
           <button data-file="BRAIN.md" onclick="viewLogFile('BRAIN.md')">BRAIN</button>
           <button data-file="HISTORY.md" onclick="viewLogFile('HISTORY.md')">HISTORY</button>
+        </div>
+        <div class="science-open-btn">
+          <button class="btn btn-primary" onclick="openScienceDashboardModal()">Open Scientist Dashboard</button>
         </div>
       </div>
     </div>
@@ -1674,6 +1731,7 @@ const _permissionProfileUiState = { chain: null, pipeline: null };
 const _modalFocusReturnTargets = Object.create(null);
 const _modalOverlayIds = [
   'docs-overlay',
+  'science-dashboard-overlay',
   'permissions-help-overlay',
   'run-plan-overlay',
   'readonly-warning-overlay',
@@ -2472,6 +2530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     closeRunPlanModal({ action: 'cancel' });
+    closeScienceDashboardModal();
     closePermissionsHelpModal();
     closeReadOnlyWarningModal('cancel');
     closeDocsModal();
@@ -5060,6 +5119,208 @@ async function viewLogFile(filename) {
     setLogContentState(el, 'Could not load file.');
   }
 }
+
+function closeScienceDashboardModal() {
+  _closeOverlay('science-dashboard-overlay');
+}
+
+function _scienceNumber(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '0';
+  return num.toLocaleString();
+}
+
+function _scienceSignedNumber(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '0';
+  const abs = Math.abs(num).toLocaleString();
+  return (num >= 0 ? '+' : '-') + abs;
+}
+
+function _scienceBadgeClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'supported' || s === 'ok' || s === 'passed') return 'pass';
+  if (s === 'refuted' || s === 'failed') return 'fail';
+  return 'warn';
+}
+
+function _renderScienceBars(containerId, rows, total) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!rows || !rows.length) {
+    el.innerHTML = '<div class="science-empty">No data yet.</div>';
+    return;
+  }
+  const denom = Math.max(1, Number(total || 0));
+  el.innerHTML = '<div class="science-bars">' + rows.map(row => {
+    const label = esc(String(row.label || row.phase || 'n/a'));
+    const count = Number(row.count || 0);
+    const pct = Math.max(0, Math.min(100, (count / denom) * 100));
+    const cls = _scienceBadgeClass(label);
+    return '<div class="science-bar-row">'
+      + '<div class="science-bar-label">' + label + '</div>'
+      + '<div class="science-bar-track"><div class="science-bar-fill ' + cls + '" style="width:' + pct.toFixed(1) + '%"></div></div>'
+      + '<div class="science-bar-value">' + _scienceNumber(count) + '</div>'
+      + '</div>';
+  }).join('') + '</div>';
+}
+
+function _renderScienceDashboard(payload) {
+  const summary = payload.summary || {};
+  const cards = document.getElementById('science-cards');
+  const actionEl = document.getElementById('science-actions-list');
+  const timelineBody = document.getElementById('science-timeline-body');
+  const implBody = document.getElementById('science-implementation-body');
+  const filesEl = document.getElementById('science-top-files');
+  const analysisEl = document.getElementById('science-analysis');
+  const subtitleEl = document.getElementById('science-dashboard-subtitle');
+
+  if (subtitleEl) {
+    const msg = payload.available
+      ? ('Repository: ' + esc(payload.repo_path || '') + ' | Trials: ' + _scienceNumber(summary.science_trials))
+      : (payload.message || 'Scientist artifacts are not available yet.');
+    subtitleEl.textContent = msg;
+  }
+
+  if (cards) {
+    cards.innerHTML = ''
+      + '<div class="science-card"><div class="science-card-label">Cycle</div><div class="science-card-value">' + _scienceNumber(summary.current_cycle) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Science Trials</div><div class="science-card-value">' + _scienceNumber(summary.science_trials) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Hypotheses</div><div class="science-card-value">' + _scienceNumber(summary.hypotheses) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Trial Tokens</div><div class="science-card-value">' + _scienceNumber(summary.trial_tokens) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Supported</div><div class="science-card-value pass">' + _scienceNumber(summary.supported) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Refuted</div><div class="science-card-value fail">' + _scienceNumber(summary.refuted) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Inconclusive</div><div class="science-card-value warn">' + _scienceNumber(summary.inconclusive) + '</div></div>'
+      + '<div class="science-card"><div class="science-card-label">Rollbacks</div><div class="science-card-value warn">' + _scienceNumber(summary.rollbacks) + '</div></div>';
+  }
+
+  const verdictRows = [
+    { label: 'supported', count: Number(summary.supported || 0) },
+    { label: 'refuted', count: Number(summary.refuted || 0) },
+    { label: 'inconclusive', count: Number(summary.inconclusive || 0) },
+  ];
+  _renderScienceBars('science-verdict-chart', verdictRows, Number(summary.science_trials || 0));
+  _renderScienceBars('science-phase-chart', payload.phase_breakdown || [], Number(summary.science_trials || 0));
+
+  const actionItems = Array.isArray(payload.action_items) ? payload.action_items : [];
+  if (actionEl) {
+    actionEl.innerHTML = actionItems.length
+      ? actionItems.map((item, idx) =>
+        '<div class="science-list-item"><span class="name">' + esc((idx + 1) + '. ' + item) + '</span></div>'
+      ).join('')
+      : '<div class="science-empty">No action checklist found yet. Run analyze to generate implementation TODO items.</div>';
+  }
+
+  const timeline = Array.isArray(payload.timeline) ? payload.timeline : [];
+  if (timelineBody) {
+    timelineBody.innerHTML = timeline.length
+      ? timeline.map((row) =>
+        '<tr>'
+          + '<td>' + esc(String(row.cycle || 0)) + '</td>'
+          + '<td>' + esc(String(row.phase || '')) + '</td>'
+          + '<td>' + esc(String(row.hypothesis_id || 'n/a')) + '</td>'
+          + '<td><span class="badge badge-' + (_scienceBadgeClass(row.verdict) === 'pass' ? 'pass' : (_scienceBadgeClass(row.verdict) === 'fail' ? 'fail' : 'skip')) + '">' + esc(String(row.verdict || 'n/a')) + '</span></td>'
+          + '<td>' + esc(String(row.confidence || 'n/a')) + '</td>'
+          + '<td>' + esc(String(row.baseline_test || 'n/a') + '->' + String(row.post_test || 'n/a')) + '</td>'
+          + '<td>' + esc(_scienceNumber(row.files_changed) + '/' + _scienceSignedNumber(row.net_lines_changed)) + '</td>'
+          + '<td>' + esc(String(row.rollback_action || 'n/a')) + '</td>'
+        + '</tr>'
+      ).join('')
+      : '<tr><td colspan="8"><div class="science-empty">No science timeline data yet.</div></td></tr>';
+  }
+
+  const implementation = Array.isArray(payload.implementation) ? payload.implementation : [];
+  if (implBody) {
+    implBody.innerHTML = implementation.length
+      ? implementation.map((row) =>
+        '<tr>'
+          + '<td>' + esc(String(row.cycle || 0)) + '</td>'
+          + '<td>' + esc(String(row.phase || '')) + '</td>'
+          + '<td>' + esc(String(row.iteration || 0)) + '</td>'
+          + '<td><span class="badge badge-' + (_scienceBadgeClass(row.status) === 'pass' ? 'pass' : (_scienceBadgeClass(row.status) === 'fail' ? 'fail' : 'skip')) + '">' + esc(String(row.status || 'unknown')) + '</span></td>'
+          + '<td>' + esc(String(row.tests || 'unknown')) + '</td>'
+          + '<td>' + esc(String(row.files || 0)) + '</td>'
+          + '<td>' + esc(String(row.net_delta || '0')) + '</td>'
+          + '<td>' + esc(String(row.commit || '-')) + '</td>'
+        + '</tr>'
+      ).join('')
+      : '<tr><td colspan="8"><div class="science-empty">No implementation rows in report yet.</div></td></tr>';
+  }
+
+  const topFiles = Array.isArray(payload.top_files) ? payload.top_files : [];
+  if (filesEl) {
+    filesEl.innerHTML = topFiles.length
+      ? topFiles.map(row =>
+        '<div class="science-list-item"><span class="name">' + esc(String(row.path || '')) + '</span><span class="count">' + _scienceNumber(row.touches) + '</span></div>'
+      ).join('')
+      : '<div class="science-empty">No touched-file summary yet.</div>';
+  }
+
+  if (analysisEl) {
+    const analysisText = String(payload.analysis_excerpt || '').trim();
+    analysisEl.textContent = analysisText || 'No analyze excerpt recorded yet.';
+  }
+}
+
+async function refreshScienceDashboard() {
+  const statusEl = document.getElementById('science-dashboard-subtitle');
+  const repoPath = (pipeConfig.repo_path || config.repo_path || '').trim();
+  if (statusEl) statusEl.textContent = 'Loading Scientist dashboard...';
+  if (!repoPath) {
+    _renderScienceDashboard({
+      available: false,
+      summary: {},
+      action_items: [],
+      timeline: [],
+      phase_breakdown: [],
+      implementation: [],
+      top_files: [],
+      analysis_excerpt: '',
+      message: 'Set Repository Path in the Pipeline panel to load Scientist dashboard data.',
+      repo_path: '',
+    });
+    return;
+  }
+  try {
+    const url = '/api/pipeline/science-dashboard?repo_path=' + encodeURIComponent(repoPath);
+    const payload = await api(url);
+    if (payload.error) {
+      _renderScienceDashboard({
+        available: false,
+        summary: {},
+        action_items: [],
+        timeline: [],
+        phase_breakdown: [],
+        implementation: [],
+        top_files: [],
+        analysis_excerpt: '',
+        message: payload.error,
+        repo_path: repoPath,
+      });
+      return;
+    }
+    _renderScienceDashboard(payload || {});
+  } catch (e) {
+    _renderScienceDashboard({
+      available: false,
+      summary: {},
+      action_items: [],
+      timeline: [],
+      phase_breakdown: [],
+      implementation: [],
+      top_files: [],
+      analysis_excerpt: '',
+      message: 'Could not load dashboard data.',
+      repo_path: repoPath,
+    });
+  }
+}
+
+async function openScienceDashboardModal() {
+  _openOverlay('science-dashboard-overlay', '#science-dashboard-refresh');
+  await refreshScienceDashboard();
+}
+
 // Ã¢â€â‚¬Ã¢â€â‚¬ Browse modal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 let _browseTarget = null;   // id of the input to fill
 let _browseCurrent = '';    // current directory being shown
@@ -5192,6 +5453,103 @@ function escHtml(s) {
       <button class="btn" data-doc="tutorial" onclick="loadDoc('tutorial')">Tutorial</button>
     </div>
     <pre class="docs-content" id="docs-content">Select a guide from the header links.</pre>
+  </div>
+</div>
+
+<div id="science-dashboard-overlay" class="hidden" onclick="if(event.target===this)closeScienceDashboardModal()">
+  <div class="science-dashboard-modal" role="dialog" aria-modal="true" aria-labelledby="science-dashboard-title">
+    <div class="science-dashboard-header">
+      <div>
+        <h3 id="science-dashboard-title">Scientist Dashboard</h3>
+        <div class="science-dashboard-subtitle" id="science-dashboard-subtitle">
+          Evidence-first view of experiments, verdicts, action plan, and implementation rollout.
+        </div>
+      </div>
+      <div class="science-dashboard-actions">
+        <button class="btn" id="science-dashboard-refresh" onclick="refreshScienceDashboard()">Refresh</button>
+        <button class="btn" onclick="closeScienceDashboardModal()">Close</button>
+      </div>
+    </div>
+    <div class="science-dashboard-body">
+      <section>
+        <div class="science-cards" id="science-cards">
+          <div class="science-empty">Loading dashboard...</div>
+        </div>
+      </section>
+
+      <section class="science-grid">
+        <div class="science-panel">
+          <h4>Verdict Breakdown</h4>
+          <div id="science-verdict-chart"></div>
+        </div>
+        <div class="science-panel">
+          <h4>Phase Breakdown</h4>
+          <div id="science-phase-chart"></div>
+        </div>
+      </section>
+
+      <section class="science-grid">
+        <div class="science-panel">
+          <h4>Action Plan</h4>
+          <div class="science-list" id="science-actions-list"></div>
+        </div>
+        <div class="science-panel">
+          <h4>Most-Touched Files</h4>
+          <div class="science-list" id="science-top-files"></div>
+        </div>
+      </section>
+
+      <section class="science-panel">
+        <h4>Science Timeline</h4>
+        <div class="science-table-wrap">
+          <table class="science-table">
+            <thead>
+              <tr>
+                <th>Cycle</th>
+                <th>Phase</th>
+                <th>Hypothesis</th>
+                <th>Verdict</th>
+                <th>Confidence</th>
+                <th>Tests</th>
+                <th>Delta</th>
+                <th>Rollback</th>
+              </tr>
+            </thead>
+            <tbody id="science-timeline-body">
+              <tr><td colspan="8"><div class="science-empty">No timeline data yet.</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="science-panel">
+        <h4>Implementation Rollout</h4>
+        <div class="science-table-wrap">
+          <table class="science-table">
+            <thead>
+              <tr>
+                <th>Cycle</th>
+                <th>Phase</th>
+                <th>Iter</th>
+                <th>Status</th>
+                <th>Tests</th>
+                <th>Files</th>
+                <th>Net</th>
+                <th>Commit</th>
+              </tr>
+            </thead>
+            <tbody id="science-implementation-body">
+              <tr><td colspan="8"><div class="science-empty">No implementation rows yet.</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="science-panel">
+        <h4>Latest Analyze Excerpt</h4>
+        <pre class="science-analysis" id="science-analysis">No analyze excerpt recorded yet.</pre>
+      </section>
+    </div>
   </div>
 </div>
 

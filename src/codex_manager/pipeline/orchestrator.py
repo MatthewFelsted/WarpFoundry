@@ -3,8 +3,8 @@
 The orchestrator runs multiple *cycles*, where each cycle executes all
 enabled phases in order:
 
-    Ideation -> Prioritization -> Implementation -> Testing -> Debugging
-    -> Commit -> Progress Review -> (Theorize -> Experiment -> Skeptic -> Analyze)
+    Ideation -> Prioritization -> (Theorize -> Experiment -> Skeptic -> Analyze)
+    -> Implementation -> Testing -> Debugging -> Commit -> Progress Review
 
 Each phase can iterate multiple times within a cycle. The orchestrator
 integrates with:
@@ -114,6 +114,9 @@ class PipelineOrchestrator:
         self.log_queue: queue.Queue[dict] = queue.Queue()
         self._log_callback = log_callback
         self._science_experiment_by_hypothesis: dict[str, str] = {}
+        self._science_trials_payloads: list[dict[str, Any]] = []
+        self._science_latest_analysis_text: str = ""
+        self._science_action_items: list[str] = []
         self._brain_logbook: BrainLogbook | None = None
         self._history_logbook: HistoryLogbook | None = None
         self._resume_cycle = max(1, int(resume_cycle))
@@ -784,6 +787,12 @@ class PipelineOrchestrator:
             "commit_sha": result.commit_sha,
             "duration_seconds": result.duration_seconds,
         }
+        self._science_trials_payloads.append(payload)
+        if phase == PipelinePhase.ANALYZE:
+            self._science_latest_analysis_text = output_text
+            action_items = self._extract_science_action_items(output_text)
+            if action_items:
+                self._science_action_items = action_items
         self.tracker.append_science_jsonl("TRIALS.jsonl", payload)
         self.tracker.append_science(
             "EVIDENCE.md",
@@ -842,6 +851,254 @@ class PipelineOrchestrator:
             return False, "skeptic threshold was not met"
 
         return True, ""
+
+    @staticmethod
+    def _scientist_table_value(value: Any) -> str:
+        text = str(value if value is not None else "").strip()
+        if not text:
+            return "-"
+        text = re.sub(r"\s+", " ", text)
+        return text.replace("|", r"\|")
+
+    @staticmethod
+    def _extract_science_action_items(text: str, *, limit: int = 10) -> list[str]:
+        raw = (text or "").strip()
+        if not raw:
+            return []
+
+        lines = raw.splitlines()
+        items: list[str] = []
+        seen: set[str] = set()
+        in_action_section = False
+
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            heading_text = re.sub(r"^#{1,6}\s*", "", line).strip().lower()
+            if re.search(
+                r"\b(recommendations?|action plan|implementation handoff|checklist|next steps|todo|to-do)\b",
+                heading_text,
+            ):
+                in_action_section = True
+                continue
+
+            if in_action_section and re.match(r"^#{1,6}\s+", line):
+                in_action_section = False
+                continue
+
+            bullet_match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", raw_line)
+            if not bullet_match:
+                continue
+            if not in_action_section and items:
+                continue
+
+            candidate = re.sub(r"\s+", " ", bullet_match.group(1)).strip()
+            if len(candidate) < 8:
+                continue
+            key = candidate.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(candidate)
+            if len(items) >= limit:
+                break
+
+        return items
+
+    def _build_scientist_report(self) -> str:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        trials = list(self._science_trials_payloads)
+        hypotheses = {
+            str((trial.get("hypothesis") or {}).get("id", "")).strip()
+            for trial in trials
+            if str((trial.get("hypothesis") or {}).get("id", "")).strip()
+        }
+        verdict_counts = {"supported": 0, "refuted": 0, "inconclusive": 0}
+        rollback_count = 0
+        trial_tokens = 0
+        for trial in trials:
+            verdict = str(trial.get("verdict", "")).strip().lower()
+            if verdict in verdict_counts:
+                verdict_counts[verdict] += 1
+            if str(trial.get("rollback_action", "")).strip().lower() == "reverted":
+                rollback_count += 1
+            usage = trial.get("usage") or {}
+            try:
+                trial_tokens += int(usage.get("total_tokens", 0) or 0)
+            except Exception:
+                pass
+
+        action_items = list(self._science_action_items)
+        if not action_items and self._science_latest_analysis_text:
+            action_items = self._extract_science_action_items(self._science_latest_analysis_text)
+
+        implementation_results = [
+            result
+            for result in self.state.results
+            if result.phase in {"implementation", "debugging", "commit"}
+        ]
+        changed_file_counts: dict[str, int] = {}
+        for result in implementation_results:
+            for entry in result.changed_files:
+                path = str(entry.get("path", "")).strip()
+                if path:
+                    changed_file_counts[path] = changed_file_counts.get(path, 0) + 1
+
+        lines: list[str] = [
+            "# Scientist Mode Report",
+            "",
+            "> Auto-generated evidence and action dashboard for Scientist Mode.",
+            "",
+            "## Dashboard",
+            f"- **Updated**: {now}",
+            f"- **Current Cycle**: {self.state.current_cycle}",
+            f"- **Science Trials Recorded**: {len(trials)}",
+            f"- **Hypotheses Tracked**: {len(hypotheses)}",
+            (
+                "- **Verdicts**: "
+                f"supported={verdict_counts['supported']}, "
+                f"refuted={verdict_counts['refuted']}, "
+                f"inconclusive={verdict_counts['inconclusive']}"
+            ),
+            f"- **Trial Tokens (total)**: {trial_tokens:,}",
+            f"- **Science Rollbacks Applied**: {rollback_count}",
+            f"- **Implementation Phases Executed**: {len(implementation_results)}",
+            "",
+            "## Action Plan (Implementation TODO)",
+        ]
+
+        if action_items:
+            for item in action_items:
+                lines.append(f"- [ ] {item}")
+        elif trials:
+            lines.append(
+                "- [ ] No explicit checklist found in analyze output yet. Run analyze with a checklist section."
+            )
+        else:
+            lines.append("- [ ] Run theorize/experiment/skeptic/analyze to generate evidence-backed TODOs.")
+
+        lines.extend(
+            [
+                "",
+                "## Science Trial Timeline",
+            ]
+        )
+        if trials:
+            lines.extend(
+                [
+                    "| Cycle | Phase | Hypothesis | Verdict | Confidence | Tests (baseline->post) | Repo Delta (files/lines) | Rollback |",
+                    "|---:|---|---|---|---|---|---:|---|",
+                ]
+            )
+            for trial in trials[-25:]:
+                baseline = trial.get("baseline") or {}
+                post = trial.get("post") or {}
+                hypothesis = trial.get("hypothesis") or {}
+                baseline_test = str(baseline.get("test_outcome", "n/a")).strip() or "n/a"
+                post_test = str(post.get("test_outcome", "n/a")).strip() or "n/a"
+                files_changed = post.get("files_changed", 0)
+                net_lines = post.get("net_lines_changed", 0)
+                try:
+                    files_changed = int(files_changed)
+                except Exception:
+                    files_changed = 0
+                try:
+                    net_lines = int(net_lines)
+                except Exception:
+                    net_lines = 0
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            self._scientist_table_value(trial.get("cycle", 0)),
+                            self._scientist_table_value(trial.get("phase", "")),
+                            self._scientist_table_value(hypothesis.get("id", "") or "n/a"),
+                            self._scientist_table_value(trial.get("verdict", "")),
+                            self._scientist_table_value(trial.get("confidence", "")),
+                            self._scientist_table_value(f"{baseline_test}->{post_test}"),
+                            self._scientist_table_value(f"{files_changed}/{net_lines:+d}"),
+                            self._scientist_table_value(trial.get("rollback_action", "")),
+                        ]
+                    )
+                    + " |"
+                )
+        else:
+            lines.append("No scientist trials recorded yet.")
+
+        lines.extend(
+            [
+                "",
+                "## Implementation and Code Changes",
+            ]
+        )
+        if implementation_results:
+            lines.extend(
+                [
+                    "| Cycle | Phase | Iter | Status | Tests | Files | Net Delta | Commit |",
+                    "|---:|---|---:|---|---|---:|---:|---|",
+                ]
+            )
+            for result in implementation_results[-30:]:
+                lines.append(
+                    "| "
+                    + " | ".join(
+                        [
+                            self._scientist_table_value(result.cycle or 0),
+                            self._scientist_table_value(result.phase),
+                            self._scientist_table_value(result.iteration),
+                            self._scientist_table_value("ok" if result.success else "failed"),
+                            self._scientist_table_value(result.test_outcome),
+                            self._scientist_table_value(result.files_changed),
+                            self._scientist_table_value(f"{result.net_lines_changed:+d}"),
+                            self._scientist_table_value(result.commit_sha or "-"),
+                        ]
+                    )
+                    + " |"
+                )
+            if changed_file_counts:
+                lines.extend(
+                    [
+                        "",
+                        "### Most-Touched Files",
+                        "| File | Touches |",
+                        "|---|---:|",
+                    ]
+                )
+                for path, count in sorted(
+                    changed_file_counts.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[:15]:
+                    lines.append(f"| {self._scientist_table_value(path)} | {count} |")
+        else:
+            lines.append("No implementation/debugging/commit results recorded yet.")
+
+        if self._science_latest_analysis_text:
+            analysis = self._science_latest_analysis_text.strip()
+            if len(analysis) > 2000:
+                analysis = analysis[:2000].rstrip() + "\n...[truncated]..."
+            lines.extend(
+                [
+                    "",
+                    "## Latest Analyze Output (Excerpt)",
+                    "```text",
+                    analysis,
+                    "```",
+                ]
+            )
+
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _refresh_scientist_report(self) -> None:
+        if not bool(self.config.science_enabled):
+            return
+        try:
+            self.tracker.initialize_science()
+            report = self._build_scientist_report()
+            self.tracker.write("SCIENTIST_REPORT.md", report)
+        except Exception as exc:
+            self._log("warn", f"Could not refresh Scientist report: {exc}")
 
     @staticmethod
     def _is_auto_commit_candidate_phase(phase: PipelinePhase) -> bool:
@@ -1169,6 +1426,7 @@ class PipelineOrchestrator:
                     "info",
                     f"Scientist evidence directory: {self.tracker.science_dir()}",
                 )
+                self._refresh_scientist_report()
         except Exception as exc:
             self._log("error", f"Failed to initialize pipeline logs: {exc}")
             self.ledger.add(
@@ -1641,6 +1899,8 @@ class PipelineOrchestrator:
                                 "error_message": result.error_message[:500],
                             },
                         )
+                        if config.science_enabled:
+                            self._refresh_scientist_report()
 
                         # Brain post-evaluation
                         control_result = result
@@ -1799,6 +2059,8 @@ class PipelineOrchestrator:
                                             "brain_follow_up": True,
                                         },
                                     )
+                                    if config.science_enabled:
+                                        self._refresh_scientist_report()
                                     self._record_brain_note(
                                         "follow_up_finished",
                                         "Brain follow-up completed; resuming normal pipeline sequence.",

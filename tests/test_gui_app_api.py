@@ -265,6 +265,18 @@ def test_pipeline_phases_api_marks_self_improvement_phase(client):
     assert restart_phase["is_self_improvement"] is True
 
 
+def test_pipeline_phases_api_places_science_before_implementation(client):
+    resp = client.get("/api/pipeline/phases")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert isinstance(data, list)
+    keys = [str(item.get("key", "")) for item in data]
+    assert "theorize" in keys
+    assert "implementation" in keys
+    assert keys.index("theorize") < keys.index("implementation")
+
+
 def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
     class _ChainExec:
         is_running = True
@@ -677,6 +689,24 @@ def test_pipeline_logs_allows_history_log_file(client, monkeypatch):
     assert "history note" in data["content"]
 
 
+def test_pipeline_logs_allows_scientist_report_file(client, monkeypatch):
+    class _Tracker:
+        def read(self, filename):
+            return "science report\n" if filename == "SCIENTIST_REPORT.md" else ""
+
+    class _Exec:
+        tracker = _Tracker()
+
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _Exec())
+    resp = client.get("/api/pipeline/logs/SCIENTIST_REPORT.md")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["filename"] == "SCIENTIST_REPORT.md"
+    assert "science report" in data["content"]
+
+
 def test_pipeline_logs_reads_from_repo_path_without_active_executor(
     client, monkeypatch, tmp_path: Path
 ):
@@ -709,6 +739,111 @@ def test_pipeline_logs_rejects_invalid_filename_when_executor_missing(client, mo
     assert resp.status_code == 400
     assert data
     assert "Invalid log file" in data["error"]
+
+
+def test_pipeline_science_dashboard_returns_structured_payload(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    science_dir = logs_dir / "scientist"
+    science_dir.mkdir(parents=True, exist_ok=True)
+
+    trials = [
+        {
+            "timestamp": "2026-02-14T00:00:00+00:00",
+            "cycle": 1,
+            "phase": "experiment",
+            "verdict": "supported",
+            "confidence": "high",
+            "rollback_action": "kept",
+            "hypothesis": {"id": "EXP-001"},
+            "baseline": {"test_outcome": "skipped"},
+            "post": {
+                "test_outcome": "passed",
+                "files_changed": 2,
+                "net_lines_changed": 12,
+            },
+            "usage": {"total_tokens": 111},
+        },
+        {
+            "timestamp": "2026-02-14T00:10:00+00:00",
+            "cycle": 1,
+            "phase": "skeptic",
+            "verdict": "inconclusive",
+            "confidence": "medium",
+            "rollback_action": "reverted",
+            "hypothesis": {"id": "EXP-001"},
+            "baseline": {"test_outcome": "passed"},
+            "post": {
+                "test_outcome": "failed",
+                "files_changed": 1,
+                "net_lines_changed": -4,
+            },
+            "usage": {"total_tokens": 222},
+        },
+    ]
+    (science_dir / "TRIALS.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in trials) + "\n",
+        encoding="utf-8",
+    )
+
+    (logs_dir / "SCIENTIST_REPORT.md").write_text(
+        (
+            "# Scientist Mode Report\n\n"
+            "## Action Plan (Implementation TODO)\n"
+            "- [ ] Implement robust retries for unstable tests\n"
+            "- [ ] Add regression guard for skeptic rollback scenario\n\n"
+            "## Implementation and Code Changes\n"
+            "| Cycle | Phase | Iter | Status | Tests | Files | Net Delta | Commit |\n"
+            "|---:|---|---:|---|---|---:|---:|---|\n"
+            "| 1 | implementation | 1 | ok | passed | 2 | +12 | abc123 |\n"
+            "| 1 | debugging | 1 | failed | failed | 1 | -4 | - |\n\n"
+            "### Most-Touched Files\n"
+            "| File | Touches |\n"
+            "|---|---:|\n"
+            "| src/core.py | 2 |\n"
+            "| tests/test_core.py | 1 |\n\n"
+            "## Latest Analyze Output (Excerpt)\n"
+            "```text\n"
+            "Prioritize retry stabilization and rollback-safe validation.\n"
+            "```\n"
+        ),
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/science-dashboard",
+        query_string={"repo_path": str(repo)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is True
+    assert data["repo_path"] == str(repo.resolve())
+    assert data["summary"]["science_trials"] == 2
+    assert data["summary"]["supported"] == 1
+    assert data["summary"]["inconclusive"] == 1
+    assert data["summary"]["rollbacks"] == 1
+    assert data["summary"]["trial_tokens"] == 333
+    assert len(data["action_items"]) == 2
+    assert len(data["timeline"]) == 2
+    assert len(data["implementation"]) == 2
+    assert len(data["top_files"]) == 2
+    assert "retry stabilization" in data["analysis_excerpt"].lower()
+
+
+def test_pipeline_science_dashboard_returns_unavailable_without_repo_hint(client, monkeypatch):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    resp = client.get("/api/pipeline/science-dashboard")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is False
+    assert "Set Repository Path" in data["message"]
 
 
 def test_recipes_api_lists_default_and_known_recipes(client):

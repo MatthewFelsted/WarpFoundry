@@ -141,6 +141,7 @@ def test_initialize_science_creates_expected_files(tmp_path: Path) -> None:
     tracker.initialize_science()
 
     science_dir = tracker.science_dir()
+    assert tracker.path_for("SCIENTIST_REPORT.md").exists()
     assert (science_dir / "README.md").exists()
     assert (science_dir / "TRIALS.jsonl").exists()
     assert (science_dir / "EVIDENCE.md").exists()
@@ -178,3 +179,14 @@ def test_science_helpers_write_jsonl_and_artifacts(tmp_path: Path) -> None:
     assert artifact.exists()
     assert "Cycle-1-Experiment" in artifact.name
     assert artifact.read_text(encoding="utf-8") == "prompt text"
+
+
+def test_get_context_for_phase_includes_scientist_report_for_implementation(tmp_path: Path) -> None:
+    tracker = LogTracker(tmp_path / "repo")
+    tracker.write("WISHLIST.md", "wishlist content")
+    tracker.write("SCIENTIST_REPORT.md", "science report content")
+
+    implementation_ctx = tracker.get_context_for_phase("implementation")
+
+    assert "## Current SCIENTIST_REPORT.md" in implementation_ctx
+    assert "science report content" in implementation_ctx

@@ -27,6 +27,7 @@ Inside the target repository:
 - `.codex_manager/logs/TESTPLAN.md`: Test strategy and execution notes.
 - `.codex_manager/logs/ERRORS.md`: Pipeline failure log.
 - `.codex_manager/logs/EXPERIMENTS.md`: Experiment tracking notes.
+- `.codex_manager/logs/SCIENTIST_REPORT.md`: Scientist dashboard with evidence tables, TODO checklist, and implementation rollout status.
 - `.codex_manager/logs/PROGRESS.md`: Progress summaries across phases/cycles.
 - `.codex_manager/logs/BRAIN.md`: Brain decisions (when brain mode is enabled).
 - `.codex_manager/logs/HISTORY.md`: Historical run notes.

@@ -2,7 +2,7 @@
 
 The pipeline automates the full development lifecycle:
 
-    Ideation → Prioritization → Implementation → Testing → Debugging → Commit → Science
+    Ideation -> Prioritization -> Science -> Implementation -> Testing -> Debugging -> Commit
 
 Each phase operates on structured markdown log files (WISHLIST.md, TESTPLAN.md,
 ERRORS.md, EXPERIMENTS.md, PROGRESS.md) that serve as persistent context and

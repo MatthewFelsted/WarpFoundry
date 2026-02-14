@@ -101,7 +101,7 @@ CUA_PHASES: list[PipelinePhase] = [
     PipelinePhase.VISUAL_TEST,
 ]
 
-# Science phases are appended when enabled
+# Science phases are inserted near the start of the lifecycle when enabled
 SCIENCE_PHASES: list[PipelinePhase] = [
     PipelinePhase.THEORIZE,
     PipelinePhase.EXPERIMENT,
@@ -224,10 +224,16 @@ class PipelineConfig(BaseModel):
 
         # Build default phase list
         order = list(DEFAULT_PHASE_ORDER)
+        if self.science_enabled:
+            # Scientist mode runs before implementation so findings can inform
+            # prioritization and code changes in the same cycle.
+            try:
+                insert_at = order.index(PipelinePhase.IMPLEMENTATION)
+            except ValueError:
+                insert_at = 0
+            order[insert_at:insert_at] = list(SCIENCE_PHASES)
         if self.cua_enabled:
             order.extend(CUA_PHASES)
-        if self.science_enabled:
-            order.extend(SCIENCE_PHASES)
         if self.self_improvement_enabled:
             order.extend(SELF_IMPROVEMENT_PHASES)
 
