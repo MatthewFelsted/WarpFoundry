@@ -39,3 +39,12 @@ def test_resolve_binary_expands_environment_variables(monkeypatch, tmp_path: Pat
     resolved = resolve_binary(configured)
     assert Path(resolved).resolve() == tool.resolve()
 
+
+def test_resolve_binary_accepts_wrapped_quotes(tmp_path: Path) -> None:
+    if os.name == "nt":
+        tool = _make_executable(tmp_path, "codex tool.cmd")
+    else:
+        tool = _make_executable(tmp_path, "codex tool")
+
+    resolved = resolve_binary(f'"{tool}"')
+    assert Path(resolved).resolve() == tool.resolve()

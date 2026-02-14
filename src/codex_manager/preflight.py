@@ -344,10 +344,11 @@ def parse_agents(raw_agents: str | None) -> list[str]:
     if not raw:
         return ["codex"]
     keys: list[str] = []
-    for token in re.split(r"[\s,]+", raw):
-        if not token:
+    for token in re.split(r"[\s,;]+", raw):
+        cleaned = token.strip().strip('"').strip("'").strip()
+        if not cleaned:
             continue
-        normalized = normalize_agent(token)
+        normalized = normalize_agent(cleaned)
         if normalized not in keys:
             keys.append(normalized)
     return keys or ["codex"]

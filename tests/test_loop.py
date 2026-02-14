@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import codex_manager.loop as loop_module
 from codex_manager.loop import (
     ImprovementLoop,
     _is_low_impact,
@@ -147,3 +148,26 @@ class TestImprovementLoopInit:
         repo = self._make_repo(tmp_path)
         loop = ImprovementLoop(repo_path=repo, goal="goal", mode=" APPLY ")
         assert loop.mode == "apply"
+
+    def test_apply_mode_init_sets_git_identity_before_creating_branch(
+        self, tmp_path, monkeypatch
+    ):
+        repo = self._make_repo(tmp_path)
+        call_order: list[str] = []
+
+        monkeypatch.setattr(
+            loop_module,
+            "ensure_git_identity",
+            lambda _repo: call_order.append("ensure"),
+        )
+        monkeypatch.setattr(
+            loop_module,
+            "create_branch",
+            lambda _repo: (call_order.append("branch"), "codex-manager/test")[1],
+        )
+
+        loop = ImprovementLoop(repo_path=repo, goal="goal", mode="apply")
+        state = loop._init_state()
+
+        assert call_order == ["ensure", "branch"]
+        assert state.branch_name == "codex-manager/test"

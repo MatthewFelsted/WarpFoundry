@@ -17,6 +17,7 @@ from codex_manager.eval_tools import RepoEvaluator
 from codex_manager.git_tools import (
     commit_all,
     create_branch,
+    ensure_git_identity,
     generate_commit_message,
     is_clean,
     revert_all,
@@ -312,6 +313,7 @@ class ImprovementLoop:
 
         # In apply mode, create a branch
         if self.mode == "apply":
+            ensure_git_identity(self.repo_path)
             branch = create_branch(self.repo_path)
             state.branch_name = branch
 

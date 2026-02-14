@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 def resolve_binary(name: str) -> str:
     """Resolve a binary name to a full executable path when possible."""
     expanded = os.path.expandvars(os.path.expanduser(str(name or "").strip()))
+    if len(expanded) >= 2 and expanded[0] == expanded[-1] and expanded[0] in {"'", '"'}:
+        # Accept copy/paste paths wrapped in shell quotes.
+        expanded = expanded[1:-1].strip()
     if not expanded:
         return ""
     resolved = shutil.which(expanded)

@@ -25,6 +25,11 @@ def test_parse_agents_supports_claude_aliases() -> None:
     assert parsed == ["claude_code"]
 
 
+def test_parse_agents_supports_semicolons_and_quoted_tokens() -> None:
+    parsed = preflight.parse_agents('"codex"; "claude" ; auto')
+    assert parsed == ["codex", "claude_code"]
+
+
 def test_binary_exists_rejects_directories(tmp_path: Path) -> None:
     assert preflight.binary_exists(str(tmp_path)) is False
 

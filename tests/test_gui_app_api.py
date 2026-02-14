@@ -378,6 +378,23 @@ def test_configs_load_rejects_non_object_json(client, monkeypatch, tmp_path: Pat
     assert "must contain a JSON object" in data["error"]
 
 
+def test_configs_save_rejects_non_object_json(client, monkeypatch, tmp_path: Path):
+    cfg_dir = tmp_path / "chains"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gui_app_module, "CONFIGS_DIR", cfg_dir)
+
+    resp = client.post(
+        "/api/configs/save",
+        json={"name": "Listy", "config": ["not", "a", "dict"]},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "JSON object" in data["error"]
+    assert not (cfg_dir / "Listy.json").exists()
+
+
 def test_pipeline_logs_allows_brain_log_file(client, monkeypatch):
     class _Tracker:
         def read(self, filename):

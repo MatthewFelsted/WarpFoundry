@@ -70,7 +70,7 @@ class ClaudeCodeRunner(AgentRunner):
         self.timeout = max(0, int(timeout or 0))
         self.env_overrides = env_overrides or {}
         self.max_turns = max_turns
-        self.model = model
+        self.model = (model or "").strip()
 
     # ------------------------------------------------------------------
     # Public API
@@ -129,7 +129,15 @@ class ClaudeCodeRunner(AgentRunner):
         if self.max_turns > 0:
             cmd.extend(["--max-turns", str(self.max_turns)])
 
-        if self.model:
+        has_model_override = False
+        if extra_args:
+            for arg in extra_args:
+                normalized = (arg or "").strip().lower()
+                if normalized in {"--model", "-m"} or normalized.startswith("--model="):
+                    has_model_override = True
+                    break
+
+        if self.model and not has_model_override:
             cmd.extend(["--model", self.model])
 
         if extra_args:

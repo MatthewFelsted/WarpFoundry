@@ -11,6 +11,7 @@ import string
 import subprocess
 import threading
 import webbrowser
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from threading import Timer
@@ -157,6 +158,18 @@ def _read_text_utf8_resilient(path: Path) -> str:
         )
         path.write_text(text, encoding="utf-8")
         return text
+
+
+def _write_json_file_atomic(path: Path, payload: object) -> None:
+    """Write JSON to disk atomically to avoid partial config files."""
+    serialized = json.dumps(payload, indent=2)
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp_path.write_text(serialized, encoding="utf-8")
+        tmp_path.replace(path)
+    finally:
+        with suppress(OSError):
+            tmp_path.unlink(missing_ok=True)
 
 
 def _normalize_agent(agent: str) -> str:
@@ -871,6 +884,8 @@ def api_save_config():
     data = request.get_json(silent=True) or {}
     name = data.get("name", "untitled")
     config = data.get("config", {})
+    if not isinstance(config, dict):
+        return jsonify({"error": "Config must be a JSON object"}), 400
 
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     raw_name = str(name or "").strip()
@@ -878,7 +893,12 @@ def api_save_config():
     if raw_name and safe != raw_name:
         return jsonify({"error": "Invalid config name"}), 400
     path = CONFIGS_DIR / f"{safe}.json"
-    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    try:
+        _write_json_file_atomic(path, config)
+    except TypeError as exc:
+        return jsonify({"error": f"Config must be JSON serializable: {exc}"}), 400
+    except OSError as exc:
+        return jsonify({"error": f"Could not save config: {exc}"}), 500
     return jsonify({"status": "saved", "path": str(path)})
 
 

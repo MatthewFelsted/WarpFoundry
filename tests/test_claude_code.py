@@ -23,6 +23,23 @@ class TestClaudeCodeRunnerBuildCommand:
         cmd = runner._build_command("hello", full_auto=True, extra_args=None)
         assert "--dangerously-skip-permissions" in cmd
 
+    def test_extra_args_model_override_skips_default_model(self):
+        runner = ClaudeCodeRunner(model="claude-3-7-sonnet")
+        cmd = runner._build_command(
+            "hello",
+            full_auto=False,
+            extra_args=["--model", "claude-opus-4-1"],
+        )
+        assert cmd.count("--model") == 1
+        assert "claude-opus-4-1" in cmd
+        assert "claude-3-7-sonnet" not in cmd
+
+    def test_model_is_trimmed(self):
+        runner = ClaudeCodeRunner(model="  claude-3-7-sonnet  ")
+        cmd = runner._build_command("hello", full_auto=False, extra_args=None)
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "claude-3-7-sonnet"
+
 
 class TestClaudeCodeRunnerAggregate:
     def test_infers_error_from_result_payload(self):
