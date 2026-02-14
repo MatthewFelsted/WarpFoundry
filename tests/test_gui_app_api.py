@@ -605,6 +605,36 @@ def _check_by_key(payload: dict, category: str, key: str) -> dict:
     raise AssertionError(f"Missing diagnostics check: {category}/{key}")
 
 
+def test_validate_repo_treats_empty_or_invalid_path_as_missing(client):
+    empty_resp = client.post("/api/validate-repo", json={"path": ""})
+    empty_data = empty_resp.get_json()
+    assert empty_resp.status_code == 200
+    assert empty_data
+    assert empty_data["exists"] is False
+    assert empty_data["is_git"] is False
+    assert empty_data["path"] == ""
+
+    invalid_resp = client.post("/api/validate-repo", json={"path": None})
+    invalid_data = invalid_resp.get_json()
+    assert invalid_resp.status_code == 200
+    assert invalid_data
+    assert invalid_data["exists"] is False
+    assert invalid_data["is_git"] is False
+    assert invalid_data["path"] == ""
+
+
+def test_browse_dirs_accepts_non_string_path_payload(client, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(gui_app_module.Path, "home", staticmethod(lambda: tmp_path))
+
+    resp = client.post("/api/browse-dirs", json={"path": None})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["current"] == str(tmp_path.resolve())
+    assert isinstance(data["dirs"], list)
+
+
 def test_diagnostics_reports_actionable_failures(client, monkeypatch):
     monkeypatch.setattr(preflight_module, "binary_exists", lambda _binary: False)
     monkeypatch.setattr(preflight_module, "has_codex_auth", lambda: False)

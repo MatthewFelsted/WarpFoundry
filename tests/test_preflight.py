@@ -110,6 +110,31 @@ def test_build_preflight_report_reports_codex_failures(monkeypatch, tmp_path: Pa
     assert any(a.key == "rerun_doctor" for a in actions)
 
 
+def test_build_preflight_report_flags_file_paths_as_not_directory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    file_path = tmp_path / "not-a-repo.txt"
+    file_path.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
+    monkeypatch.setattr(preflight, "has_codex_auth", lambda: True)
+
+    report = preflight.build_preflight_report(
+        repo_path=file_path,
+        agents=["codex"],
+    )
+
+    path_check = _check(report, "repository", "path")
+    git_check = _check(report, "repository", "git_repo")
+    writable_check = _check(report, "repository", "writable")
+
+    assert path_check.status == "fail"
+    assert "not a directory" in path_check.detail.lower()
+    assert git_check.status == "warn"
+    assert "not a directory" in git_check.detail.lower()
+    assert writable_check.status == "warn"
+    assert "not a directory" in writable_check.detail.lower()
+
+
 def test_build_preflight_report_to_dict_includes_summary(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -177,6 +202,32 @@ def test_next_actions_rerun_doctor_preserves_custom_binary_flags(
     rerun = next(a for a in report.next_actions if a.key == "rerun_doctor")
     assert '--codex-bin "codex-custom"' in rerun.command
     assert '--claude-bin "claude-custom"' in rerun.command
+
+
+def test_next_actions_install_and_login_commands_use_configured_binaries(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    monkeypatch.setattr(preflight, "binary_exists", lambda _binary: False)
+    monkeypatch.setattr(preflight, "has_codex_auth", lambda: False)
+    monkeypatch.setattr(preflight, "has_claude_auth", lambda: False)
+    monkeypatch.setattr(preflight, "repo_write_error", lambda _repo: None)
+
+    report = preflight.build_preflight_report(
+        repo_path=repo,
+        agents=["codex", "claude_code"],
+        codex_binary="codex custom",
+        claude_binary="claude custom",
+    )
+
+    actions_by_key = {action.key: action for action in report.next_actions}
+    assert actions_by_key["install_codex_cli"].command == '"codex custom" --version'
+    assert actions_by_key["codex_login"].command == '"codex custom" login'
+    assert actions_by_key["install_claude_cli"].command == '"claude custom" --version'
+    assert actions_by_key["claude_login"].command == '"claude custom" login'
 
 
 def test_build_preflight_report_flags_placeholder_env_values(

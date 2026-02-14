@@ -410,18 +410,27 @@ def build_preflight_report(
         )
     else:
         repo = Path(raw_repo)
+        path_exists = repo.exists()
         exists = repo.is_dir()
-        if exists:
+        if path_exists:
             repo = repo.resolve()
             resolved_repo_path = str(repo)
+        path_detail = f"Path found: {resolved_repo_path}"
+        path_hint = ""
+        if not path_exists:
+            path_detail = f"Path not found: {resolved_repo_path}"
+            path_hint = "Double-check the repository path."
+        elif not exists:
+            path_detail = f"Path exists but is not a directory: {resolved_repo_path}"
+            path_hint = "Provide a directory path for the repository."
         checks.append(
             PreflightCheck(
                 category="repository",
                 key="path",
                 label="Repository path exists",
                 status="pass" if exists else "fail",
-                detail=f"Path {'found' if exists else 'not found'}: {resolved_repo_path}",
-                hint="Double-check the repository path." if not exists else "",
+                detail=path_detail,
+                hint=path_hint,
             )
         )
         if exists:
@@ -450,13 +459,18 @@ def build_preflight_report(
                 )
             )
         else:
+            skipped_detail = (
+                "Skipped because the repository path was not found."
+                if not path_exists
+                else "Skipped because the repository path is not a directory."
+            )
             checks.append(
                 PreflightCheck(
                     category="repository",
                     key="git_repo",
                     label="Git repository detected",
                     status="warn",
-                    detail="Skipped because the repository path was not found.",
+                    detail=skipped_detail,
                     hint="Fix the repository path first.",
                 )
             )
@@ -466,7 +480,7 @@ def build_preflight_report(
                     key="writable",
                     label="Repository is writable",
                     status="warn",
-                    detail="Skipped because the repository path was not found.",
+                    detail=skipped_detail,
                     hint="Fix the repository path first.",
                 )
             )
@@ -512,6 +526,17 @@ def _check_status(report: PreflightReport, category: str, key: str) -> str | Non
     return None
 
 
+def _command_token(value: str) -> str:
+    """Return a shell-friendly token for display commands."""
+    token = str(value or "").strip()
+    if not token:
+        return '""'
+    escaped = token.replace('"', '\\"')
+    if any(char.isspace() for char in escaped) or '"' in token:
+        return f'"{escaped}"'
+    return escaped
+
+
 def _doctor_command(report: PreflightReport) -> str:
     """Build a ready-to-run doctor command for the current report context."""
     repo = report.resolved_repo_path or report.repo_path
@@ -534,6 +559,12 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
     actions: list[PreflightAction] = []
     seen: set[str] = set()
     repo = report.resolved_repo_path or report.repo_path
+    codex_binary = str(getattr(report, "codex_binary", "codex") or "codex").strip() or "codex"
+    claude_binary = (
+        str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
+    )
+    codex_cmd = _command_token(codex_binary)
+    claude_cmd = _command_token(claude_binary)
 
     def add(
         key: str,
@@ -594,7 +625,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "install_codex_cli",
             "Install or configure Codex CLI",
             "Ensure the configured codex binary exists on PATH.",
-            command="codex --version",
+            command=f"{codex_cmd} --version",
         )
 
     codex_auth_status = _check_status(report, "codex", "auth")
@@ -603,7 +634,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "codex_login",
             "Authenticate Codex",
             "Set CODEX_API_KEY / OPENAI_API_KEY or run Codex CLI login.",
-            command="codex login",
+            command=f"{codex_cmd} login",
         )
 
     claude_binary_status = _check_status(report, "claude_code", "binary")
@@ -612,7 +643,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "install_claude_cli",
             "Install or configure Claude CLI",
             "Ensure the configured claude binary exists on PATH.",
-            command="claude --version",
+            command=f"{claude_cmd} --version",
         )
 
     claude_auth_status = _check_status(report, "claude_code", "auth")
@@ -621,7 +652,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "claude_login",
             "Authenticate Claude",
             "Set ANTHROPIC_API_KEY / CLAUDE_API_KEY or run Claude CLI login.",
-            command="claude login",
+            command=f"{claude_cmd} login",
         )
 
     unsupported_status = [

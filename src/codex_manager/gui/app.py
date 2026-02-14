@@ -647,8 +647,25 @@ def api_ollama_models():
 @app.route("/api/validate-repo", methods=["POST"])
 def api_validate_repo():
     data = request.get_json(silent=True) or {}
-    raw_path = data.get("path", "")
-    p = Path(raw_path)
+    raw_path = str(data.get("path") or "").strip()
+    if not raw_path:
+        return jsonify(
+            {
+                "exists": False,
+                "is_git": False,
+                "path": "",
+            }
+        )
+    try:
+        p = Path(raw_path)
+    except Exception:
+        return jsonify(
+            {
+                "exists": False,
+                "is_git": False,
+                "path": raw_path,
+            }
+        )
     return jsonify(
         {
             "exists": p.is_dir(),
@@ -683,7 +700,7 @@ def api_diagnostics():
 def api_browse_dirs():
     """Return child directories at a given path for the folder browser."""
     data = request.get_json(silent=True) or {}
-    raw_path = data.get("path", "").strip()
+    raw_path = str(data.get("path") or "").strip()
 
     # Default to user home if empty or invalid
     try:
