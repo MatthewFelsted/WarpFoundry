@@ -43,8 +43,13 @@ from codex_manager.eval_tools import RepoEvaluator, parse_test_command
 from codex_manager.git_tools import (
     commit_all,
     create_branch,
+    diff_numstat,
+    diff_numstat_entries,
+    diff_stat,
     generate_commit_message,
+    head_sha,
     is_clean,
+    reset_to_ref,
     revert_all,
 )
 from codex_manager.history_log import HistoryLogbook
@@ -1764,6 +1769,11 @@ class PipelineOrchestrator:
     ) -> PhaseResult:
         """Execute a single phase iteration."""
         phase_start = time.monotonic()
+        start_head_sha = ""
+        try:
+            start_head_sha = head_sha(repo)
+        except Exception:
+            start_head_sha = ""
 
         # Run the agent
         try:
@@ -1810,6 +1820,30 @@ class PipelineOrchestrator:
             f"Files: {eval_result.files_changed} | "
             f"Net d: {eval_result.net_lines_changed:+d}",
         )
+        end_head_sha = ""
+        head_advanced = False
+        if start_head_sha:
+            try:
+                end_head_sha = head_sha(repo)
+            except Exception:
+                end_head_sha = ""
+            head_advanced = bool(end_head_sha and end_head_sha != start_head_sha)
+
+        if eval_result.files_changed <= 0 and head_advanced and start_head_sha and end_head_sha:
+            revspec = f"{start_head_sha}..{end_head_sha}"
+            files_changed, ins, dels = diff_numstat(repo, revspec=revspec)
+            if files_changed > 0:
+                eval_result.files_changed = files_changed
+                eval_result.net_lines_changed = ins - dels
+                eval_result.changed_files = diff_numstat_entries(repo, revspec=revspec)
+                eval_result.diff_stat = diff_stat(repo, revspec=revspec)
+                self._log(
+                    "info",
+                    (
+                        f"  Detected agent-authored commit {end_head_sha} "
+                        f"({files_changed} files, net {eval_result.net_lines_changed:+d})."
+                    ),
+                )
 
         # Handle commit phase specially - it commits, others go through
         # the normal apply/revert flow
@@ -1833,9 +1867,28 @@ class PipelineOrchestrator:
                     source="pipeline:commit",
                     step_ref=f"{phase.value}:iter{iteration}",
                 )
-        if config.mode == "dry-run" and not is_clean(repo):
-            revert_all(repo)
-            self._log("info", "  Changes reverted (dry-run)")
+        elif config.mode == "apply" and head_advanced and end_head_sha:
+            commit_sha = end_head_sha
+            self._log("info", f"  Using agent-authored commit: {commit_sha}")
+        if config.mode == "dry-run":
+            if head_advanced and start_head_sha:
+                try:
+                    reset_to_ref(repo, start_head_sha)
+                    self._log(
+                        "info",
+                        (
+                            "  Dry-run rollback restored repository to pre-phase HEAD "
+                            f"({start_head_sha})."
+                        ),
+                    )
+                except Exception as exc:
+                    self._log("warn", f"  Could not reset dry-run commit(s): {exc}")
+                    if not is_clean(repo):
+                        revert_all(repo)
+                        self._log("info", "  Changes reverted (dry-run)")
+            elif not is_clean(repo):
+                revert_all(repo)
+                self._log("info", "  Changes reverted (dry-run)")
 
         duration = time.monotonic() - phase_start
         return PhaseResult(

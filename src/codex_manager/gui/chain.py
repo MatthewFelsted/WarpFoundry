@@ -37,6 +37,7 @@ from codex_manager.git_tools import (
     generate_commit_message,
     head_sha,
     is_clean,
+    reset_to_ref,
     revert_all,
 )
 from codex_manager.gui.models import ChainConfig, ChainState, StepResult, TaskStep
@@ -1449,11 +1450,10 @@ class ChainExecutor:
 
         step_start = time.monotonic()
         start_head_sha = ""
-        if config.mode == "apply":
-            try:
-                start_head_sha = head_sha(repo)
-            except Exception:
-                start_head_sha = ""
+        try:
+            start_head_sha = head_sha(repo)
+        except Exception:
+            start_head_sha = ""
         max_attempts = (step.max_retries + 1) if step.on_failure == "retry" else 1
 
         # Debug: log the working directory and command details
@@ -1612,27 +1612,32 @@ class ChainExecutor:
             f"Net \u0394: {eval_result.net_lines_changed:+d}",
         )
         agent_authored_commit_sha: str | None = None
-        if config.mode == "apply" and eval_result.files_changed <= 0 and start_head_sha:
+        end_head_sha = ""
+        head_advanced = False
+        if start_head_sha:
             try:
                 end_head_sha = head_sha(repo)
             except Exception:
                 end_head_sha = ""
-            if end_head_sha and end_head_sha != start_head_sha:
-                revspec = f"{start_head_sha}..{end_head_sha}"
-                files_changed, ins, dels = diff_numstat(repo, revspec=revspec)
-                if files_changed > 0:
-                    eval_result.files_changed = files_changed
-                    eval_result.net_lines_changed = ins - dels
-                    eval_result.changed_files = diff_numstat_entries(repo, revspec=revspec)
-                    eval_result.diff_stat = diff_stat(repo, revspec=revspec)
+            head_advanced = bool(end_head_sha and end_head_sha != start_head_sha)
+
+        if eval_result.files_changed <= 0 and head_advanced and start_head_sha and end_head_sha:
+            revspec = f"{start_head_sha}..{end_head_sha}"
+            files_changed, ins, dels = diff_numstat(repo, revspec=revspec)
+            if files_changed > 0:
+                eval_result.files_changed = files_changed
+                eval_result.net_lines_changed = ins - dels
+                eval_result.changed_files = diff_numstat_entries(repo, revspec=revspec)
+                eval_result.diff_stat = diff_stat(repo, revspec=revspec)
+                if config.mode == "apply":
                     agent_authored_commit_sha = end_head_sha
-                    self._log(
-                        "info",
-                        (
-                            f"Detected agent-authored commit {end_head_sha} "
-                            f"for this step ({files_changed} files, net {eval_result.net_lines_changed:+d})."
-                        ),
-                    )
+                self._log(
+                    "info",
+                    (
+                        f"Detected agent-authored commit {end_head_sha} "
+                        f"for this step ({files_changed} files, net {eval_result.net_lines_changed:+d})."
+                    ),
+                )
         if eval_result.files_changed > 0:
             changed_preview = ", ".join(
                 str(item.get("path", "(unknown)")) for item in eval_result.changed_files[:8]
@@ -1668,9 +1673,25 @@ class ChainExecutor:
         elif config.mode == "apply" and agent_authored_commit_sha:
             commit_sha = agent_authored_commit_sha
             self._log("info", f"Using agent-authored commit: {commit_sha}")
-        elif config.mode == "dry-run" and not is_clean(repo):
-            revert_all(repo)
-            self._log("info", "Changes reverted (dry-run)")
+        elif config.mode == "dry-run":
+            if head_advanced and start_head_sha:
+                try:
+                    reset_to_ref(repo, start_head_sha)
+                    self._log(
+                        "info",
+                        (
+                            "Dry-run rollback restored repository to pre-step HEAD "
+                            f"({start_head_sha})."
+                        ),
+                    )
+                except Exception as exc:
+                    self._log("warn", f"Could not reset dry-run commit(s): {exc}")
+                    if not is_clean(repo):
+                        revert_all(repo)
+                        self._log("info", "Changes reverted (dry-run)")
+            elif not is_clean(repo):
+                revert_all(repo)
+                self._log("info", "Changes reverted (dry-run)")
 
         self._append_execution_evidence(
             out_file=out_file,

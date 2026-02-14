@@ -26,6 +26,17 @@ def _init_git_repo(repo: Path) -> None:
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
 
 
+def _head_sha(repo: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 class _WriteRunner:
     name = "StubCodex"
 
@@ -39,6 +50,33 @@ class _WriteRunner:
             success=True,
             exit_code=0,
             usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+
+class _CommitRunner:
+    name = "StubCodex"
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        repo = Path(repo_path)
+        target = repo / "src" / "pipeline_agent_commit.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("def pipeline_added():\n    return 'ok'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "commit", "-m", "pipeline runner-authored commit"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return RunResult(
+            success=True,
+            exit_code=0,
+            final_message="Committed one pipeline change.",
+            usage=UsageInfo(input_tokens=3, output_tokens=4, total_tokens=7),
         )
 
 
@@ -245,6 +283,48 @@ def test_dry_run_commit_phase_reverts_changes(monkeypatch, tmp_path: Path):
 
     assert state.stop_reason == "max_cycles_reached"
     assert not (repo / "leaked.txt").exists()
+    files_changed, _, _ = diff_numstat(repo)
+    assert files_changed == 0
+
+
+def test_dry_run_rolls_back_agent_authored_commit(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    baseline_head = _head_sha(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _CommitRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Implement and commit one feature.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.results
+    result = state.results[0]
+    assert result.success is True
+    assert result.commit_sha is None
+    assert result.files_changed >= 1
+    assert any(
+        str(item.get("path", "")).endswith("src/pipeline_agent_commit.py")
+        for item in result.changed_files
+    )
+
+    assert _head_sha(repo) == baseline_head
+    assert not (repo / "src" / "pipeline_agent_commit.py").exists()
     files_changed, _, _ = diff_numstat(repo)
     assert files_changed == 0
 

@@ -9,6 +9,7 @@ from typing import ClassVar
 
 import codex_manager.gui.chain as chain_module
 from codex_manager.brain.manager import BrainDecision
+from codex_manager.git_tools import diff_numstat
 from codex_manager.gui.chain import ChainExecutor
 from codex_manager.gui.models import ChainConfig, TaskStep
 from codex_manager.schemas import EvalResult, RunResult, TestOutcome, UsageInfo
@@ -34,6 +35,17 @@ def _init_git_repo(repo: Path) -> None:
     (repo / "README.md").write_text("init\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, text=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+
+
+def _head_sha(repo: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 class _TerminateRunner:
@@ -645,6 +657,51 @@ def test_chain_counts_agent_authored_commit_deltas(monkeypatch, tmp_path: Path):
     assert result.net_lines_changed != 0
     assert result.commit_sha
     assert any(str(item.get("path", "")).endswith("src/agent_commit_feature.py") for item in result.changed_files)
+
+
+def test_chain_dry_run_rolls_back_agent_authored_commit(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    baseline_head = _head_sha(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _CommitRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Dry-run commit rollback",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Implement and commit one feature.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.results
+    result = executor.state.results[0]
+    assert result.success is True
+    assert result.commit_sha is None
+    assert result.files_changed >= 1
+    assert any(str(item.get("path", "")).endswith("src/agent_commit_feature.py") for item in result.changed_files)
+
+    assert _head_sha(repo) == baseline_head
+    assert not (repo / "src" / "agent_commit_feature.py").exists()
+    files_changed, _, _ = diff_numstat(repo)
+    assert files_changed == 0
 
 
 def test_chain_file_instructions_include_primary_handoff_file(tmp_path: Path):

@@ -192,6 +192,14 @@ def revert_all(repo: str | Path) -> None:
     logger.info("Reverted working tree to HEAD in %s", cwd)
 
 
+def reset_to_ref(repo: str | Path, ref: str) -> None:
+    """Hard-reset repository to *ref* while preserving manager artifacts."""
+    cwd = Path(repo)
+    _run_git("reset", "--hard", ref, cwd=cwd)
+    _run_git("clean", "-fd", "-e", ".codex_manager/", cwd=cwd, check=False)
+    logger.info("Reset repository to %s in %s", ref, cwd)
+
+
 def generate_commit_message(round_number: int, prompt: str, eval_summary: str) -> str:
     """Build a structured commit message for a Codex-manager round."""
     # Sanitise the prompt to one line, max 72 chars for the subject
