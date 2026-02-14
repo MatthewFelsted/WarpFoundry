@@ -194,12 +194,20 @@ def _placeholder_env_vars(var_names: tuple[str, ...]) -> list[str]:
 
 def binary_exists(binary: str) -> bool:
     """Return ``True`` when an executable exists for *binary*."""
+    binary = str(binary or "").strip()
     if not binary:
         return False
     try:
         candidate = Path(binary)
         if candidate.is_file():
-            return True
+            if os.name == "nt":
+                # Windows executes only known script/binary extensions via CreateProcess.
+                raw_pathext = os.getenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+                valid_exts = {ext.strip().lower() for ext in raw_pathext.split(";") if ext.strip()}
+                if not valid_exts:
+                    valid_exts = {".com", ".exe", ".bat", ".cmd"}
+                return candidate.suffix.lower() in valid_exts
+            return os.access(candidate, os.X_OK)
     except OSError:
         pass
     return shutil.which(binary) is not None

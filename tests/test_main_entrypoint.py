@@ -11,6 +11,12 @@ from typing import ClassVar
 import codex_manager.__main__ as main_module
 
 
+def test_main_entrypoint_source_is_ascii_safe() -> None:
+    source_text = Path(main_module.__file__).read_text(encoding="utf-8")
+    assert source_text.isascii()
+    assert not any("\u0080" <= ch <= "\u009f" for ch in source_text)
+
+
 def test_main_prints_help_when_repo_or_goal_missing(capsys) -> None:
     rc = main_module.main([])
     captured = capsys.readouterr()

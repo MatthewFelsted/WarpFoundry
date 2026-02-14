@@ -51,8 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="codex_manager",
         description="AI Manager - orchestrate OpenAI Codex CLI for iterative repo improvement.",
     )
-
-    # ── Sub-commands ──────────────────────────────────────────────
+    # -- Sub-commands ---------------------------------------------------------
     sub = p.add_subparsers(dest="command")
 
     # GUI sub-command
@@ -302,8 +301,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit JSON report instead of human-readable output.",
     )
-
-    # ── Top-level (loop) arguments ────────────────────────────────
+    # -- Top-level (loop) arguments ------------------------------------------
     p.add_argument(
         "--repo",
         type=str,
@@ -364,46 +362,38 @@ def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch to the appropriate mode."""
     parser = _build_parser()
     args = parser.parse_args(argv)
-
-    # ── Logging setup (early, for all modes) ──────────────────────
+    # -- Logging setup (early, for all modes) --------------------------------
     level = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
     logging.basicConfig(
         level=level,
         format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
-
-    # ── GUI mode ──────────────────────────────────────────────────
+    # -- GUI mode -------------------------------------------------------------
     if args.command == "gui":
         from codex_manager.gui import main as gui_main
 
         gui_main(port=args.port, open_browser=not args.no_browser)
         return 0
-
-    # ── Pipeline mode ─────────────────────────────────────────────
+    # -- Pipeline mode --------------------------------------------------------
     if args.command == "pipeline":
         return _run_pipeline(args)
-
-    # ── Strategic loop mode ──────────────────────────────────────
+    # -- Strategic loop mode --------------------------------------------------
     if args.command == "strategic":
         return _run_strategic(args)
-
-    # ── Optimize prompts ──────────────────────────────────────────
+    # -- Optimize prompts -----------------------------------------------------
     if args.command == "optimize-prompts":
         return _optimize_prompts(args)
-
-    # ── Visual test (CUA) ────────────────────────────────────────
+    # -- Visual test (CUA) ---------------------------------------------------
     if args.command == "visual-test":
         return _visual_test(args)
-
-    # ── List prompts ──────────────────────────────────────────────
+    # -- List prompts ---------------------------------------------------------
     if args.command == "list-prompts":
         return _list_prompts()
 
     if args.command == "doctor":
         return _run_doctor(args)
-
-    # ── CLI loop mode (requires --repo and --goal) ────────────────
+    # -- CLI loop mode (requires --repo and --goal) --------------------------
     if not args.repo or not args.goal:
         parser.print_help()
         print(
@@ -688,7 +678,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
-# ── Optimize prompts command ──────────────────────────────────────
+# -- Optimize prompts command -------------------------------------------------
 
 
 def _optimize_prompts(args: argparse.Namespace) -> int:
@@ -715,7 +705,7 @@ def _optimize_prompts(args: argparse.Namespace) -> int:
     return 0
 
 
-# ── Visual test command ───────────────────────────────────────────
+# -- Visual test command ------------------------------------------------------
 
 
 def _visual_test(args: argparse.Namespace) -> int:
@@ -821,7 +811,7 @@ def _visual_test(args: argparse.Namespace) -> int:
     return 0 if result.success else 1
 
 
-# ── List prompts command ──────────────────────────────────────────
+# -- List prompts command -----------------------------------------------------
 
 
 def _list_prompts() -> int:
@@ -850,3 +840,4 @@ def _list_prompts() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

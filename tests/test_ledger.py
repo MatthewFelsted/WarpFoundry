@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-import json
 from pathlib import Path
 
 from codex_manager.ledger import KnowledgeLedger

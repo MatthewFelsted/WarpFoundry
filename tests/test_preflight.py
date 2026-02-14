@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import codex_manager.preflight as preflight
@@ -26,6 +27,25 @@ def test_parse_agents_supports_claude_aliases() -> None:
 
 def test_binary_exists_rejects_directories(tmp_path: Path) -> None:
     assert preflight.binary_exists(str(tmp_path)) is False
+
+
+def test_binary_exists_requires_explicit_file_to_be_executable(tmp_path: Path) -> None:
+    if os.name == "nt":
+        runnable = tmp_path / "tool.cmd"
+        runnable.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+        assert preflight.binary_exists(str(runnable)) is True
+
+        not_runnable = tmp_path / "tool.txt"
+        not_runnable.write_text("not executable\r\n", encoding="utf-8")
+        assert preflight.binary_exists(str(not_runnable)) is False
+        return
+
+    candidate = tmp_path / "tool"
+    candidate.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+    assert preflight.binary_exists(str(candidate)) is False
+
+    candidate.chmod(candidate.stat().st_mode | 0o111)
+    assert preflight.binary_exists(str(candidate)) is True
 
 
 def test_build_preflight_report_warns_when_repo_not_provided(monkeypatch) -> None:
