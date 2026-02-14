@@ -7,6 +7,7 @@ import datetime as dt
 import logging
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -95,9 +96,8 @@ def diff_numstat_entries(repo: str | Path, revspec: str | None = None) -> list[d
     return entries
 
 
-def diff_numstat(repo: str | Path, revspec: str | None = None) -> tuple[int, int, int]:
-    """Return (files_changed, insertions, deletions) from ``git diff --numstat``."""
-    entries = diff_numstat_entries(repo, revspec=revspec)
+def summarize_numstat_entries(entries: Sequence[dict[str, Any]]) -> tuple[int, int, int]:
+    """Return (files_changed, insertions, deletions) for parsed numstat entries."""
     if not entries:
         return 0, 0, 0
     files = insertions = deletions = 0
@@ -108,6 +108,12 @@ def diff_numstat(repo: str | Path, revspec: str | None = None) -> tuple[int, int
         if isinstance(entry.get("deletions"), int):
             deletions += int(entry["deletions"])
     return files, insertions, deletions
+
+
+def diff_numstat(repo: str | Path, revspec: str | None = None) -> tuple[int, int, int]:
+    """Return (files_changed, insertions, deletions) from ``git diff --numstat``."""
+    entries = diff_numstat_entries(repo, revspec=revspec)
+    return summarize_numstat_entries(entries)
 
 
 def net_lines_changed(repo: str | Path, revspec: str | None = None) -> int:

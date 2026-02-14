@@ -114,7 +114,6 @@ def test_evaluate_includes_changed_files(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("codex_manager.eval_tools.diff_stat", lambda repo: "1 file changed")
     monkeypatch.setattr("codex_manager.eval_tools.status_porcelain", lambda repo: " M src/app.py")
-    monkeypatch.setattr("codex_manager.eval_tools.diff_numstat", lambda repo: (2, 15, 4))
     monkeypatch.setattr(
         "codex_manager.eval_tools.diff_numstat_entries",
         lambda repo: [

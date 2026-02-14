@@ -30,7 +30,6 @@ from codex_manager.eval_tools import RepoEvaluator, parse_test_command
 from codex_manager.git_tools import (
     commit_all,
     create_branch,
-    diff_numstat,
     diff_numstat_entries,
     diff_stat,
     ensure_git_identity,
@@ -39,6 +38,7 @@ from codex_manager.git_tools import (
     is_clean,
     reset_to_ref,
     revert_all,
+    summarize_numstat_entries,
 )
 from codex_manager.gui.models import ChainConfig, ChainState, StepResult, TaskStep
 from codex_manager.gui.presets import get_prompt
@@ -1739,6 +1739,7 @@ class ChainExecutor:
             f"Files: {eval_result.files_changed} | "
             f"Net \u0394: {eval_result.net_lines_changed:+d}",
         )
+        repo_dirty = bool((eval_result.status_porcelain or "").strip())
         agent_authored_commit_sha: str | None = None
         end_head_sha = ""
         head_advanced = False
@@ -1751,11 +1752,12 @@ class ChainExecutor:
 
         if eval_result.files_changed <= 0 and head_advanced and start_head_sha and end_head_sha:
             revspec = f"{start_head_sha}..{end_head_sha}"
-            files_changed, ins, dels = diff_numstat(repo, revspec=revspec)
+            changed_entries = diff_numstat_entries(repo, revspec=revspec)
+            files_changed, ins, dels = summarize_numstat_entries(changed_entries)
             if files_changed > 0:
                 eval_result.files_changed = files_changed
                 eval_result.net_lines_changed = ins - dels
-                eval_result.changed_files = diff_numstat_entries(repo, revspec=revspec)
+                eval_result.changed_files = changed_entries
                 eval_result.diff_stat = diff_stat(repo, revspec=revspec)
                 if config.mode == "apply":
                     agent_authored_commit_sha = end_head_sha
@@ -1778,7 +1780,7 @@ class ChainExecutor:
 
         # Commit or revert
         commit_sha = None
-        if config.mode == "apply" and not is_clean(repo):
+        if config.mode == "apply" and repo_dirty:
             try:
                 msg = generate_commit_message(
                     loop_num * 100 + step_idx,
@@ -1817,7 +1819,7 @@ class ChainExecutor:
                     if not is_clean(repo):
                         revert_all(repo)
                         self._log("info", "Changes reverted (dry-run)")
-            elif not is_clean(repo):
+            elif repo_dirty:
                 revert_all(repo)
                 self._log("info", "Changes reverted (dry-run)")
 

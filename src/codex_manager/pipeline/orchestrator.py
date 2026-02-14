@@ -43,7 +43,6 @@ from codex_manager.eval_tools import RepoEvaluator, parse_test_command
 from codex_manager.git_tools import (
     commit_all,
     create_branch,
-    diff_numstat,
     diff_numstat_entries,
     diff_stat,
     generate_commit_message,
@@ -51,6 +50,7 @@ from codex_manager.git_tools import (
     is_clean,
     reset_to_ref,
     revert_all,
+    summarize_numstat_entries,
 )
 from codex_manager.history_log import HistoryLogbook
 from codex_manager.ledger import KnowledgeLedger
@@ -1923,6 +1923,7 @@ class PipelineOrchestrator:
             f"Files: {eval_result.files_changed} | "
             f"Net d: {eval_result.net_lines_changed:+d}",
         )
+        repo_dirty = bool((eval_result.status_porcelain or "").strip())
         end_head_sha = ""
         head_advanced = False
         if start_head_sha:
@@ -1934,11 +1935,12 @@ class PipelineOrchestrator:
 
         if eval_result.files_changed <= 0 and head_advanced and start_head_sha and end_head_sha:
             revspec = f"{start_head_sha}..{end_head_sha}"
-            files_changed, ins, dels = diff_numstat(repo, revspec=revspec)
+            changed_entries = diff_numstat_entries(repo, revspec=revspec)
+            files_changed, ins, dels = summarize_numstat_entries(changed_entries)
             if files_changed > 0:
                 eval_result.files_changed = files_changed
                 eval_result.net_lines_changed = ins - dels
-                eval_result.changed_files = diff_numstat_entries(repo, revspec=revspec)
+                eval_result.changed_files = changed_entries
                 eval_result.diff_stat = diff_stat(repo, revspec=revspec)
                 self._log(
                     "info",
@@ -1951,7 +1953,7 @@ class PipelineOrchestrator:
         # Handle commit phase specially - it commits, others go through
         # the normal apply/revert flow
         commit_sha = None
-        if phase == PipelinePhase.COMMIT and config.mode == "apply" and not is_clean(repo):
+        if phase == PipelinePhase.COMMIT and config.mode == "apply" and repo_dirty:
             try:
                 msg = generate_commit_message(
                     iteration,
@@ -1989,7 +1991,7 @@ class PipelineOrchestrator:
                     if not is_clean(repo):
                         revert_all(repo)
                         self._log("info", "  Changes reverted (dry-run)")
-            elif not is_clean(repo):
+            elif repo_dirty:
                 revert_all(repo)
                 self._log("info", "  Changes reverted (dry-run)")
 

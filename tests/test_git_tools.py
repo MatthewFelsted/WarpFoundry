@@ -6,7 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from codex_manager.git_tools import diff_numstat_entries, reset_to_ref, revert_all
+from codex_manager.git_tools import (
+    diff_numstat_entries,
+    reset_to_ref,
+    revert_all,
+    summarize_numstat_entries,
+)
 
 
 def test_revert_all_preserves_codex_manager_artifacts(tmp_path: Path):
@@ -46,3 +51,13 @@ def test_reset_to_ref_preserves_codex_manager_artifacts(tmp_path: Path):
 
     assert first[:3] == ("reset", "--hard", "abc1234")
     assert second[:4] == ("clean", "-fd", "-e", ".codex_manager/")
+
+
+def test_summarize_numstat_entries_ignores_binary_line_counts():
+    rows = [
+        {"path": "src/app.py", "insertions": 12, "deletions": 3},
+        {"path": "assets/logo.png", "insertions": None, "deletions": None},
+        {"path": "README.md", "insertions": 5, "deletions": 2},
+    ]
+
+    assert summarize_numstat_entries(rows) == (3, 17, 5)

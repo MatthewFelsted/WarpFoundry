@@ -38,24 +38,17 @@ try:
 except ImportError:
     pass  # .env must be loaded by the caller or set in the environment
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None  # type: ignore[assignment,misc]
+OpenAI: Any | None = None
+APIConnectionError = APITimeoutError = RateLimitError = APIStatusError = Exception
+_OPENAI_IMPORT_ATTEMPTED = False
 
-try:
-    from openai import APIConnectionError, APIStatusError, APITimeoutError, RateLimitError
-except Exception:
-    APIConnectionError = APITimeoutError = RateLimitError = APIStatusError = Exception  # type: ignore[assignment,misc]
+genai: Any | None = None
+_GEMINI_SDK = False
+_GEMINI_IMPORT_ATTEMPTED = False
 
-try:
-    # Suppress deprecation warning on import; we still support this SDK for compatibility.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
-        import google.generativeai as genai  # standard Gemini SDK
-    _GEMINI_SDK = True
-except ImportError:
-    _GEMINI_SDK = False
+Anthropic: Any | None = None
+_ANTHROPIC_AVAILABLE = False
+_ANTHROPIC_IMPORT_ATTEMPTED = False
 
 # These are from the user's broader project — optional here
 try:
@@ -64,6 +57,71 @@ except Exception:
     recovery_hints = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+
+def _load_openai_sdk() -> None:
+    """Load OpenAI SDK symbols lazily to keep non-OpenAI startup fast."""
+    global OpenAI
+    global APIConnectionError
+    global APITimeoutError
+    global RateLimitError
+    global APIStatusError
+    global _OPENAI_IMPORT_ATTEMPTED
+    if _OPENAI_IMPORT_ATTEMPTED:
+        return
+    _OPENAI_IMPORT_ATTEMPTED = True
+    try:
+        import openai as _openai
+    except Exception:
+        OpenAI = None
+        APIConnectionError = APITimeoutError = RateLimitError = APIStatusError = Exception
+        return
+    OpenAI = getattr(_openai, "OpenAI", None)
+    APIConnectionError = getattr(_openai, "APIConnectionError", Exception)
+    APITimeoutError = getattr(_openai, "APITimeoutError", Exception)
+    RateLimitError = getattr(_openai, "RateLimitError", Exception)
+    APIStatusError = getattr(_openai, "APIStatusError", Exception)
+
+
+def _load_gemini_sdk() -> bool:
+    """Load Gemini SDK lazily to avoid import cost unless used."""
+    global genai
+    global _GEMINI_SDK
+    global _GEMINI_IMPORT_ATTEMPTED
+    if _GEMINI_IMPORT_ATTEMPTED:
+        return _GEMINI_SDK
+    _GEMINI_IMPORT_ATTEMPTED = True
+    try:
+        # Suppress deprecation warning on import; we still support this SDK for compatibility.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            import google.generativeai as _genai  # standard Gemini SDK
+    except Exception:
+        genai = None
+        _GEMINI_SDK = False
+        return False
+    genai = _genai
+    _GEMINI_SDK = True
+    return True
+
+
+def _load_anthropic_sdk() -> bool:
+    """Load Anthropic SDK lazily to avoid import cost unless used."""
+    global Anthropic
+    global _ANTHROPIC_AVAILABLE
+    global _ANTHROPIC_IMPORT_ATTEMPTED
+    if _ANTHROPIC_IMPORT_ATTEMPTED:
+        return _ANTHROPIC_AVAILABLE
+    _ANTHROPIC_IMPORT_ATTEMPTED = True
+    try:
+        from anthropic import Anthropic as _Anthropic  # type: ignore[import-untyped]
+    except Exception:
+        Anthropic = None
+        _ANTHROPIC_AVAILABLE = False
+        return False
+    Anthropic = _Anthropic
+    _ANTHROPIC_AVAILABLE = True
+    return True
 
 
 def strip_json_wrappers(text: str) -> str:
@@ -466,6 +524,7 @@ def _connect_ollama(
 
 
 def _get_openai_client(force_new: bool = False) -> Any:
+    _load_openai_sdk()
     if OpenAI is None:
         raise RuntimeError("openai SDK not installed. Run: pip install openai")
     with _clients_lock:
@@ -540,7 +599,7 @@ def _connect_gemini(
     max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
-    if not _GEMINI_SDK:
+    if not _load_gemini_sdk():
         raise RuntimeError(
             "google-generativeai not installed. Run: pip install google-generativeai"
         )
@@ -604,6 +663,7 @@ def _connect_xai(
         raise RuntimeError("XAI_API_KEY (or GROK_API_KEY) not set")
 
     # xAI uses an OpenAI-compatible API
+    _load_openai_sdk()
     if OpenAI is None:
         raise RuntimeError("openai SDK required for xAI. Run: pip install openai")
 
@@ -636,13 +696,6 @@ def _connect_xai(
 
 # ── Anthropic (Claude) ────────────────────────────────────────────
 
-_ANTHROPIC_AVAILABLE = True
-try:
-    from anthropic import Anthropic  # type: ignore[import-untyped]
-except Exception:
-    _ANTHROPIC_AVAILABLE = False
-
-
 def _connect_anthropic(
     model: str,
     prompt: str,
@@ -653,7 +706,7 @@ def _connect_anthropic(
     max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
-    if not _ANTHROPIC_AVAILABLE:
+    if not _load_anthropic_sdk():
         raise RuntimeError("anthropic SDK not installed. Run: pip install anthropic")
 
     variant = _cache_variant(max_output_tokens=max_output_tokens, temperature=temperature)

@@ -10,10 +10,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from codex_manager.git_tools import (
-    diff_numstat,
     diff_numstat_entries,
     diff_stat,
     status_porcelain,
+    summarize_numstat_entries,
 )
 from codex_manager.schemas import EvalResult, TestOutcome
 
@@ -99,10 +99,10 @@ class RepoEvaluator:
         """Run evaluation and return an :class:`EvalResult`."""
         repo_path = Path(repo_path).resolve()
         test_outcome, test_summary, test_exit = self._run_tests(repo_path)
-        stat = diff_stat(repo_path)
-        porcelain = status_porcelain(repo_path)
-        files_changed, ins, dels = diff_numstat(repo_path)
         changed_files = diff_numstat_entries(repo_path)
+        files_changed, ins, dels = summarize_numstat_entries(changed_files)
+        stat = diff_stat(repo_path) if files_changed > 0 else ""
+        porcelain = status_porcelain(repo_path)
 
         return EvalResult(
             test_outcome=test_outcome,
