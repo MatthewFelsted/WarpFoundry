@@ -186,6 +186,15 @@ class TestCodexRunnerBuildCommand:
         )
         assert any(arg == 'model_reasoning_effort="xhigh"' for arg in cmd)
 
+    def test_invalid_timeout_is_coerced_to_zero(self):
+        runner = CodexRunner(timeout="not-a-number")  # type: ignore[arg-type]
+        assert runner.timeout == 0
+
+    def test_blank_sandbox_and_approval_policy_use_defaults(self):
+        runner = CodexRunner(sandbox_mode="   ", approval_policy="")
+        assert runner.sandbox_mode == "workspace-write"
+        assert runner.approval_policy == "never"
+
     def test_bad_repo_path(self):
         runner = CodexRunner()
         result = runner.run("/nonexistent/path/12345", "test")

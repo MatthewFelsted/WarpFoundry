@@ -9,6 +9,15 @@ from codex_manager.schemas import CodexEvent, EventKind
 
 
 class TestClaudeCodeRunnerBuildCommand:
+    def test_invalid_timeout_and_max_turns_are_coerced(self):
+        runner = ClaudeCodeRunner(timeout="bad", max_turns="7")  # type: ignore[arg-type]
+        assert runner.timeout == 0
+        assert runner.max_turns == 7
+
+    def test_negative_max_turns_is_clamped(self):
+        runner = ClaudeCodeRunner(max_turns=-4)
+        assert runner.max_turns == 0
+
     def test_basic(self):
         runner = ClaudeCodeRunner()
         cmd = runner._build_command("hello", full_auto=False, extra_args=None)

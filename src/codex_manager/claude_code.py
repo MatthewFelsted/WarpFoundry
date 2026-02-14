@@ -67,9 +67,9 @@ class ClaudeCodeRunner(AgentRunner):
         model: str = "",
     ) -> None:
         self.claude_binary = claude_binary
-        self.timeout = max(0, int(timeout or 0))
+        self.timeout = max(0, coerce_int(timeout))
         self.env_overrides = env_overrides or {}
-        self.max_turns = max_turns
+        self.max_turns = max(0, coerce_int(max_turns))
         self.model = (model or "").strip()
 
     # ------------------------------------------------------------------

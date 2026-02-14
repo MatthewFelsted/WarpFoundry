@@ -72,32 +72,96 @@ def strip_json_wrappers(text: str) -> str:
     return stripped.strip()
 
 
+def _env_str(name: str, default: str) -> str:
+    """Read a string env var and fall back when blank/unset."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    return value or default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Read a boolean env var with tolerant true/false spellings."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
+    """Read an integer env var with fallback/clamping."""
+    raw = os.getenv(name)
+    value = default
+    if raw is not None:
+        cleaned = raw.strip()
+        try:
+            value = int(cleaned)
+        except (TypeError, ValueError):
+            try:
+                value = int(float(cleaned))
+            except (TypeError, ValueError, OverflowError):
+                value = default
+    if minimum is not None:
+        return max(minimum, value)
+    return value
+
+
+def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+    """Read a float env var with fallback/clamping."""
+    raw = os.getenv(name)
+    value = default
+    if raw is not None:
+        try:
+            value = float(raw.strip())
+        except (TypeError, ValueError, OverflowError):
+            value = default
+    if minimum is not None:
+        return max(minimum, value)
+    return value
+
+
+def _env_path(name: str, default: str | Path) -> str:
+    """Read a filesystem path env var and apply user/env expansion."""
+    value = _env_str(name, str(default))
+    expanded = os.path.expandvars(os.path.expanduser(value))
+    return expanded or str(default)
+
+
 # ── Defaults / knobs ──────────────────────────────────────────────
 
-DEFAULT_TEXT_ONLY: bool = os.getenv("AI_TEXT_ONLY", "true").lower() == "true"
-DEFAULT_PER_REQUEST_TIMEOUT_S: float = float(os.getenv("AI_PER_REQUEST_TIMEOUT_S", str(60 * 10)))
-DEFAULT_RECONNECT_WAIT_S: int = int(os.getenv("AI_RECONNECT_WAIT_S", "30"))
-CLIENT_MAX_AGE_S: int = int(os.getenv("AI_CLIENT_MAX_AGE_S", str(45 * 60)))
+DEFAULT_TEXT_ONLY: bool = _env_bool("AI_TEXT_ONLY", True)
+DEFAULT_PER_REQUEST_TIMEOUT_S: float = _env_float("AI_PER_REQUEST_TIMEOUT_S", float(60 * 10), minimum=0.1)
+DEFAULT_RECONNECT_WAIT_S: int = _env_int("AI_RECONNECT_WAIT_S", 30, minimum=0)
+CLIENT_MAX_AGE_S: int = _env_int("AI_CLIENT_MAX_AGE_S", 45 * 60, minimum=1)
 _CACHE_DIR = Path.home() / ".codex_manager"
-_CACHE_PATH = os.getenv("AI_RESULT_CACHE_PATH", str(_CACHE_DIR / "ai_cache.db"))
+_CACHE_PATH = _env_path("AI_RESULT_CACHE_PATH", _CACHE_DIR / "ai_cache.db")
 
 # Model tiers
-DEFAULT_LEAD_MODEL: str = os.getenv("AI_LEAD_MODEL", "gpt-5.2").strip() or "gpt-5.2"
-DEFAULT_CHEAP_MODEL: str = os.getenv("AI_CHEAP_MODEL", "grok-4-1-fast-reasoning").strip() or "grok-4-1-fast-reasoning"
-DEFAULT_MEDIUM_MODEL: str = os.getenv("AI_MEDIUM_MODEL", "gpt-5.2").strip() or "gpt-5.2"
-DEFAULT_FREE_MODEL: str = os.getenv("AI_FREE_MODEL", "ollama:gemma3:27b").strip() or "ollama:gemma3:27b"
+DEFAULT_LEAD_MODEL: str = _env_str("AI_LEAD_MODEL", "gpt-5.2")
+DEFAULT_CHEAP_MODEL: str = _env_str("AI_CHEAP_MODEL", "grok-4-1-fast-reasoning")
+DEFAULT_MEDIUM_MODEL: str = _env_str("AI_MEDIUM_MODEL", "gpt-5.2")
+DEFAULT_FREE_MODEL: str = _env_str("AI_FREE_MODEL", "ollama:gemma3:27b")
 
 # Retry knobs
-OPENAI_MAX_ATTEMPTS: int = int(os.getenv("AI_OPENAI_MAX_ATTEMPTS", "5"))
-GEMINI_MAX_ATTEMPTS: int = int(os.getenv("AI_GEMINI_MAX_ATTEMPTS", "3"))
-ANTHROPIC_MAX_ATTEMPTS: int = int(os.getenv("AI_ANTHROPIC_MAX_ATTEMPTS", "3"))
-XAI_MAX_ATTEMPTS: int = int(os.getenv("AI_XAI_MAX_ATTEMPTS", "3"))
-OLLAMA_MAX_ATTEMPTS: int = int(os.getenv("AI_OLLAMA_MAX_ATTEMPTS", "3"))
-RETRY_BACKOFF_BASE: float = float(os.getenv("AI_RETRY_BACKOFF_BASE", "2.0"))
-RETRY_BACKOFF_MAX_S: float = float(os.getenv("AI_RETRY_BACKOFF_MAX_S", "60.0"))
+OPENAI_MAX_ATTEMPTS: int = _env_int("AI_OPENAI_MAX_ATTEMPTS", 5, minimum=1)
+GEMINI_MAX_ATTEMPTS: int = _env_int("AI_GEMINI_MAX_ATTEMPTS", 3, minimum=1)
+ANTHROPIC_MAX_ATTEMPTS: int = _env_int("AI_ANTHROPIC_MAX_ATTEMPTS", 3, minimum=1)
+XAI_MAX_ATTEMPTS: int = _env_int("AI_XAI_MAX_ATTEMPTS", 3, minimum=1)
+OLLAMA_MAX_ATTEMPTS: int = _env_int("AI_OLLAMA_MAX_ATTEMPTS", 3, minimum=1)
+RETRY_BACKOFF_BASE: float = _env_float("AI_RETRY_BACKOFF_BASE", 2.0, minimum=1.0)
+RETRY_BACKOFF_MAX_S: float = _env_float("AI_RETRY_BACKOFF_MAX_S", 60.0, minimum=0.1)
 
-OLLAMA_AUTO_START: bool = os.getenv("OLLAMA_AUTO_START", "false").lower() == "true"
-OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_AUTO_START: bool = _env_bool("OLLAMA_AUTO_START", False)
+OLLAMA_BASE_URL: str = (
+    _env_str("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    or "http://localhost:11434"
+)
 
 NON_RETRYABLE_ERROR_PATTERNS = [
     "quota exceeded", "insufficient_quota", "model not found", "no api key", "not set",
@@ -557,7 +621,7 @@ def _connect_anthropic(
         elif "haiku" in m_lower:
             model = os.getenv("ANTHROPIC_HAIKU_MODEL", "claude-3-haiku-latest")
 
-    max_tokens = max_output_tokens or int(os.getenv("ANTHROPIC_MAX_TOKENS", "64000"))
+    max_tokens = max_output_tokens or _env_int("ANTHROPIC_MAX_TOKENS", 64000, minimum=1)
 
     last_exc: Exception | None = None
     for attempt in range(1, ANTHROPIC_MAX_ATTEMPTS + 1):

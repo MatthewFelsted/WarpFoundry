@@ -76,10 +76,10 @@ class CodexRunner(AgentRunner):
         bypass_approvals_and_sandbox: bool = False,
     ) -> None:
         self.codex_binary = codex_binary
-        self.timeout = max(0, int(timeout or 0))
+        self.timeout = max(0, coerce_int(timeout))
         self.env_overrides = env_overrides or {}
-        self.sandbox_mode = sandbox_mode
-        self.approval_policy = approval_policy
+        self.sandbox_mode = str(sandbox_mode or "workspace-write").strip() or "workspace-write"
+        self.approval_policy = str(approval_policy or "never").strip() or "never"
         normalized_effort = (reasoning_effort or "xhigh").strip().lower()
         valid_efforts = {"inherit", "low", "medium", "high", "xhigh"}
         if normalized_effort not in valid_efforts:
