@@ -45,12 +45,20 @@ def _run_git(
 # Query helpers
 # ---------------------------------------------------------------------------
 
-def diff_stat(repo: str | Path) -> str:
-    """Return ``git diff --stat`` output."""
-    return _run_git("diff", "--stat", cwd=Path(repo)).stdout.strip()
+def diff_stat(repo: str | Path, revspec: str | None = None) -> str:
+    """Return ``git diff --stat`` output.
+
+    When ``revspec`` is provided, runs ``git diff --stat <revspec>``.
+    """
+    args = ["diff", "--stat"]
+    if revspec:
+        args.append(revspec)
+    return _run_git(*args, cwd=Path(repo)).stdout.strip()
 
 
-def diff_numstat_entries(repo: str | Path) -> list[dict[str, Any]]:
+def diff_numstat_entries(
+    repo: str | Path, revspec: str | None = None
+) -> list[dict[str, Any]]:
     """Return file-level diff entries from ``git diff --numstat``.
 
     Each entry contains:
@@ -58,7 +66,10 @@ def diff_numstat_entries(repo: str | Path) -> list[dict[str, Any]]:
     - ``insertions``: integer or ``None`` for non-text/binary entries
     - ``deletions``: integer or ``None`` for non-text/binary entries
     """
-    out = _run_git("diff", "--numstat", cwd=Path(repo)).stdout.strip()
+    args = ["diff", "--numstat"]
+    if revspec:
+        args.append(revspec)
+    out = _run_git(*args, cwd=Path(repo)).stdout.strip()
     if not out:
         return []
 
@@ -86,9 +97,11 @@ def diff_numstat_entries(repo: str | Path) -> list[dict[str, Any]]:
     return entries
 
 
-def diff_numstat(repo: str | Path) -> tuple[int, int, int]:
+def diff_numstat(
+    repo: str | Path, revspec: str | None = None
+) -> tuple[int, int, int]:
     """Return (files_changed, insertions, deletions) from ``git diff --numstat``."""
-    entries = diff_numstat_entries(repo)
+    entries = diff_numstat_entries(repo, revspec=revspec)
     if not entries:
         return 0, 0, 0
     files = insertions = deletions = 0
@@ -101,9 +114,9 @@ def diff_numstat(repo: str | Path) -> tuple[int, int, int]:
     return files, insertions, deletions
 
 
-def net_lines_changed(repo: str | Path) -> int:
+def net_lines_changed(repo: str | Path, revspec: str | None = None) -> int:
     """Net lines changed (insertions - deletions)."""
-    _, ins, dels = diff_numstat(repo)
+    _, ins, dels = diff_numstat(repo, revspec=revspec)
     return ins - dels
 
 

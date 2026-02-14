@@ -178,6 +178,33 @@ class _ChangedEvaluator:
         )
 
 
+class _CommitRunner:
+    name = "StubCodex"
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        repo = Path(repo_path)
+        target = repo / "src" / "agent_commit_feature.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("def added_by_runner():\n    return 'ok'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "commit", "-m", "runner-authored feature commit"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return RunResult(
+            success=True,
+            exit_code=0,
+            final_message="Implemented a feature and committed it.",
+            usage=UsageInfo(input_tokens=5, output_tokens=9, total_tokens=14),
+        )
+
+
 def test_chain_skips_remaining_repeats_after_terminate_tag(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
@@ -578,6 +605,46 @@ def test_chain_appends_execution_evidence_for_file_changes(monkeypatch, tmp_path
     assert "Changed files:" in content
     assert "src/app.py" in content
     assert "tests/test_app.py" in content
+
+
+def test_chain_counts_agent_authored_commit_deltas(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _CommitRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Agent commit accounting",
+        repo_path=str(repo),
+        mode="apply",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Implement and commit one feature.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.results
+    result = executor.state.results[0]
+    assert result.success is True
+    assert result.files_changed >= 1
+    assert result.net_lines_changed != 0
+    assert result.commit_sha
+    assert any(str(item.get("path", "")).endswith("src/agent_commit_feature.py") for item in result.changed_files)
 
 
 def test_chain_file_instructions_include_primary_handoff_file(tmp_path: Path):

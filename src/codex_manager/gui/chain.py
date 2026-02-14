@@ -30,8 +30,12 @@ from codex_manager.eval_tools import RepoEvaluator, parse_test_command
 from codex_manager.git_tools import (
     commit_all,
     create_branch,
+    diff_numstat,
+    diff_numstat_entries,
+    diff_stat,
     ensure_git_identity,
     generate_commit_message,
+    head_sha,
     is_clean,
     revert_all,
 )
@@ -1191,7 +1195,7 @@ class ChainExecutor:
                             if config.stop_on_convergence and self._has_no_progress_streak():
                                 self._log(
                                     "info",
-                                    f"No repository changes across the latest {_NO_PROGRESS_STREAK_RESULTS} step attempts â€” stopping early.",
+                                    f"No repository changes across the latest {_NO_PROGRESS_STREAK_RESULTS} step attempts - stopping early.",
                                 )
                                 self.state.stop_reason = "no_progress_detected"
                                 loop_aborted = True
@@ -1429,6 +1433,12 @@ class ChainExecutor:
         self._log("info", f"Prompt: {prompt[:120]}...")
 
         step_start = time.monotonic()
+        start_head_sha = ""
+        if config.mode == "apply":
+            try:
+                start_head_sha = head_sha(repo)
+            except Exception:
+                start_head_sha = ""
         max_attempts = (step.max_retries + 1) if step.on_failure == "retry" else 1
 
         # Debug: log the working directory and command details
@@ -1586,6 +1596,28 @@ class ChainExecutor:
             f"Files: {eval_result.files_changed} | "
             f"Net \u0394: {eval_result.net_lines_changed:+d}",
         )
+        agent_authored_commit_sha: str | None = None
+        if config.mode == "apply" and eval_result.files_changed <= 0 and start_head_sha:
+            try:
+                end_head_sha = head_sha(repo)
+            except Exception:
+                end_head_sha = ""
+            if end_head_sha and end_head_sha != start_head_sha:
+                revspec = f"{start_head_sha}..{end_head_sha}"
+                files_changed, ins, dels = diff_numstat(repo, revspec=revspec)
+                if files_changed > 0:
+                    eval_result.files_changed = files_changed
+                    eval_result.net_lines_changed = ins - dels
+                    eval_result.changed_files = diff_numstat_entries(repo, revspec=revspec)
+                    eval_result.diff_stat = diff_stat(repo, revspec=revspec)
+                    agent_authored_commit_sha = end_head_sha
+                    self._log(
+                        "info",
+                        (
+                            f"Detected agent-authored commit {end_head_sha} "
+                            f"for this step ({files_changed} files, net {eval_result.net_lines_changed:+d})."
+                        ),
+                    )
         if eval_result.files_changed > 0:
             changed_preview = ", ".join(
                 str(item.get("path", "(unknown)")) for item in eval_result.changed_files[:8]
@@ -1618,6 +1650,9 @@ class ChainExecutor:
                         source="chain:commit",
                         step_ref=f"loop{loop_num}:step{step_idx}",
                     )
+        elif config.mode == "apply" and agent_authored_commit_sha:
+            commit_sha = agent_authored_commit_sha
+            self._log("info", f"Using agent-authored commit: {commit_sha}")
         elif config.mode == "dry-run" and not is_clean(repo):
             revert_all(repo)
             self._log("info", "Changes reverted (dry-run)")
