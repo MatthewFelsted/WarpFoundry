@@ -299,7 +299,7 @@ class ChainExecutor:
     @staticmethod
     def _looks_like_placeholder_agent_output(text: str) -> bool:
         """Detect generic status replies that are not meaningful step output."""
-        normalized = re.sub(r"\s+", " ", (text or "")).strip().lower().replace("’", "'")
+        normalized = re.sub(r"\s+", " ", (text or "")).strip().lower().replace("\u2019", "'")
         if not normalized:
             return True
 
@@ -403,6 +403,7 @@ class ChainExecutor:
             "step_index": step_idx + 1,
             "step_name": step.name or step.job_type,
             "job_type": step.job_type,
+            "output_file": str(self._step_output_relpath(step)).replace("\\", "/"),
             "test_outcome": step_result.test_outcome,
             "files_changed": step_result.files_changed,
             "net_lines_changed": step_result.net_lines_changed,
@@ -438,6 +439,7 @@ class ChainExecutor:
             loop_ref = entry.get("loop_number", "?")
             step_ref = entry.get("step_index", "?")
             step_name = str(entry.get("step_name") or "step")
+            output_file = str(entry.get("output_file") or "").strip()
             tests = str(entry.get("test_outcome") or "unknown")
             files = int(entry.get("files_changed") or 0)
             net = int(entry.get("net_lines_changed") or 0)
@@ -445,6 +447,8 @@ class ChainExecutor:
                 f"- Loop {loop_ref}, Step {step_ref} ({step_name}): "
                 f"tests={tests}, files={files}, net_lines={net:+d}"
             )
+            if output_file:
+                header += f", output_file={output_file}"
 
             excerpt = str(entry.get("output_excerpt") or "").strip()
             body = f"{header}\n  Output excerpt: {excerpt}" if excerpt else header
@@ -1495,6 +1499,7 @@ class ChainExecutor:
             commit_sha=commit_sha,
             error_message="; ".join(run_result.errors) if run_result.errors else "",
             duration_seconds=round(duration, 1),
+            output_chars=len(agent_output),
             input_tokens=run_result.usage.input_tokens,
             output_tokens=run_result.usage.output_tokens,
         )
@@ -1526,6 +1531,7 @@ class ChainExecutor:
                 "net_lines_changed": step_result.net_lines_changed,
                 "changed_files": step_result.changed_files,
                 "duration_seconds": step_result.duration_seconds,
+                "output_chars": step_result.output_chars,
                 "commit_sha": step_result.commit_sha,
                 "terminate_repeats": step_result.terminate_repeats,
                 "error_message": step_result.error_message[:500],
@@ -1971,6 +1977,22 @@ class ChainExecutor:
 
         if config.max_total_tokens > 0 and self.state.total_tokens >= config.max_total_tokens:
             return "budget_exhausted"
+
+        latest_loop = [r for r in self.state.results if r.loop_number == self.state.current_loop]
+        if config.stop_on_convergence and latest_loop:
+            no_repo_deltas = all(
+                r.files_changed <= 0 and r.net_lines_changed == 0 for r in latest_loop
+            )
+            total_output_chars = sum(
+                max(0, int(getattr(r, "output_chars", 0))) for r in latest_loop
+            )
+            if no_repo_deltas and total_output_chars < 200:
+                self._log(
+                    "info",
+                    "No meaningful progress detected in the latest loop "
+                    "(no file deltas and minimal output) - stopping early.",
+                )
+                return "no_progress_detected"
 
         # ── Improvement-threshold check (powers the "unlimited" mode) ──
         # Compare the latest full loop to the previous one.  "Improvement"

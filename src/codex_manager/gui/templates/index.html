@@ -537,6 +537,10 @@ body.mode-medium .easy-only{display:none}
     <h3>Choose a Recipe</h3>
     <p style="font-size:12px;color:var(--text2);margin-bottom:10px">One-click preset chains. Pick one, set your repo above, then Start.</p>
     <div class="recipe-grid" id="recipe-grid">
+      <div class="recipe-card" data-recipe="autopilot_default" onclick="selectRecipe('autopilot_default')" title="Easy Improvements -> New Features -> GUI/UX Polish -> Code Quality -> Bug Hunt -> Performance -> Open Ended">
+        <div class="recipe-title">Autopilot Default</div>
+        <div class="recipe-desc">7-step full sweep with scripted prompts and commits</div>
+      </div>
       <div class="recipe-card" data-recipe="strategic" onclick="selectRecipe('strategic')" title="Strategic Product Maximization x2 -> Implementation x2 -> Testing x1 -> Bug Hunting x1">
         <div class="recipe-title">Strategic Product Max</div>
         <div class="recipe-desc">Highest leverage product wins with validation</div>
@@ -1375,6 +1379,57 @@ let activityHeartbeatTimer = null;
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
 
 const RECIPES = {
+  autopilot_default: [
+    {
+      name: '01 Easy Improvements',
+      job_type: 'feature_discovery',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: 'How can this project be improved? Dream up some improvements that you can make, and then implement them.',
+    },
+    {
+      name: '02 New Features',
+      job_type: 'implementation',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: 'Analyze this codebase thoroughly. Identify the highest-impact features that are missing or would significantly enhance the user experience. Pick the top 3, rank them by effort-to-value ratio, and implement the best one end-to-end. Commit with a clear message explaining what you added and why.',
+    },
+    {
+      name: '03 GUI UX Polish',
+      job_type: 'implementation',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: "Review every aspect of this project's UI/UX with a critical eye: layout, spacing, typography, color, responsiveness, accessibility, animations, empty states, error states, and loading states. Identify the biggest visual and interaction weaknesses. Fix the top issues, making the interface feel polished and professional. Commit your changes with before/after descriptions.",
+    },
+    {
+      name: '04 Code Quality Architecture',
+      job_type: 'refactoring',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: 'Audit this codebase for code smells, anti-patterns, duplicated logic, poor naming, missing error handling, and architectural weaknesses. Prioritize the changes that most improve maintainability and reliability. Refactor the worst offenders. Commit with clear explanations of each improvement.',
+    },
+    {
+      name: '05 Bug Hunt Hardening',
+      job_type: 'bug_hunting',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: 'Stress-test this codebase by reading every code path critically. Find edge cases, unhandled errors, race conditions, security issues, and silent failures. Fix the most impactful bugs you find. Add defensive checks where needed. Commit each fix separately with a description of the bug and how you verified the fix.',
+    },
+    {
+      name: '06 Performance',
+      job_type: 'performance',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: 'Profile this codebase for performance bottlenecks: unnecessary re-renders, expensive computations, unoptimized queries, large bundle sizes, missing caching, and slow operations. Identify the biggest wins and implement them. Commit with measurable descriptions of what improved and why.',
+    },
+    {
+      name: '07 Open Ended',
+      job_type: 'strategic_product_maximization',
+      loop_count: 1,
+      prompt_mode: 'custom',
+      custom_prompt: "You have full autonomy. Study this entire codebase, understand its purpose and users, then make the single highest-leverage improvement you can find, whether that's a new feature, a UX fix, a refactor, a bug fix, or a performance win. Explain your reasoning for why this was the most valuable change, then implement it fully. Commit with a detailed message.",
+    },
+  ],
   strategic: [
     { job_type: 'strategic_product_maximization', loop_count: 2 },
     { job_type: 'implementation', loop_count: 2 },
@@ -1405,6 +1460,7 @@ const RECIPES = {
     { job_type: 'testing', loop_count: 2 },
   ],
 };
+const DEFAULT_EASY_RECIPE_ID = 'autopilot_default';
 
 const VALID_CODEX_SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
 const VALID_CODEX_APPROVAL_POLICIES = ['untrusted', 'on-failure', 'on-request', 'never'];
@@ -1927,6 +1983,10 @@ function applyMode(mode) {
     toggleBrain();
     document.getElementById('parallel-exec').checked = false;
   }
+  if (mode === 'easy' && (!config.steps || !config.steps.length)) {
+    applyDefaultEasyRecipe();
+    return;
+  }
   renderSteps();
   renderStepDetails();
 }
@@ -1940,17 +2000,18 @@ function selectRecipe(recipeId) {
   const steps = [];
   recipe.forEach((r, i) => {
     const p = presets.find(x => x.key === r.job_type);
+    const promptMode = r.prompt_mode || (r.custom_prompt ? 'custom' : 'preset');
     steps.push({
       id: Math.random().toString(36).substring(2, 10),
-      name: p ? p.name : r.job_type,
+      name: r.name || (p ? p.name : r.job_type),
       job_type: r.job_type,
-      prompt_mode: 'preset',
-      custom_prompt: '',
-      on_failure: 'skip',
-      max_retries: 1,
+      prompt_mode: promptMode,
+      custom_prompt: promptMode === 'custom' ? (r.custom_prompt || '') : '',
+      on_failure: r.on_failure || 'skip',
+      max_retries: Number.isFinite(r.max_retries) ? r.max_retries : 1,
       loop_count: r.loop_count || 1,
-      enabled: true,
-      agent: 'auto',
+      enabled: r.enabled !== false,
+      agent: r.agent || 'auto',
     });
   });
   config.steps = steps;
@@ -1970,6 +2031,11 @@ function selectRecipe(recipeId) {
   }
   renderSteps();
   renderStepDetails();
+}
+
+function applyDefaultEasyRecipe() {
+  if (!RECIPES[DEFAULT_EASY_RECIPE_ID]) return;
+  selectRecipe(DEFAULT_EASY_RECIPE_ID);
 }
 
 /* â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */

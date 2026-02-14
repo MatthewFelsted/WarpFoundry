@@ -558,7 +558,7 @@ def _extract_text(data: dict[str, Any], kind: EventKind) -> str | None:
 
 def _looks_like_status_only_text(text: str) -> bool:
     """Return True for generic CLI status text that is not useful task output."""
-    normalized = re.sub(r"\s+", " ", (text or "")).strip().lower().replace("’", "'")
+    normalized = re.sub(r"\s+", " ", (text or "")).strip().lower().replace("\u2019", "'")
     if not normalized:
         return True
 

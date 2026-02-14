@@ -30,3 +30,12 @@ env/
 ai_result_cache.db
 ai_result_cache.db.*
 *.shelve
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.nox/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/

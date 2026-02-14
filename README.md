@@ -111,9 +111,9 @@ Inside target repo:
 ## Local Validation
 
 ```bash
-python -m pytest
-ruff check src/ tests/
-ruff format --check src/ tests/
+python -m pytest -q
+python -m ruff check src tests
+python -m ruff format --check src tests
 ```
 
 ## License

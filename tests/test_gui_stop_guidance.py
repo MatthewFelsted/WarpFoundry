@@ -20,6 +20,13 @@ def test_stop_guidance_returns_mode_specific_templates() -> None:
     assert pipeline_guidance["label"] == "Maximum cycles reached"
 
 
+def test_stop_guidance_includes_no_progress_template() -> None:
+    guidance = get_stop_guidance("no_progress_detected", mode="chain")
+    assert guidance
+    assert guidance["label"] == "No progress detected"
+    assert guidance["severity"] == "info"
+
+
 def test_stop_guidance_falls_back_for_unknown_codes() -> None:
     guidance = get_stop_guidance("mystery_reason", mode="chain")
     assert guidance

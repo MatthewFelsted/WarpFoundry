@@ -210,7 +210,7 @@ class TestCodexRunnerAggregate:
             CodexEvent(
                 kind=EventKind.UNKNOWN,
                 raw={"type": "thread.started"},
-                text="Working in `C:\\repo` now. Share the task you want implemented and I’ll proceed.",
+                text="Working in `C:\\repo` now. Share the task you want implemented and I'll proceed.",
             )
         ]
         result = CodexRunner._aggregate(events, exit_code=0, stderr="", raw_lines=[])

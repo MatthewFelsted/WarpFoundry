@@ -104,6 +104,7 @@ class StepResult(BaseModel):
     commit_sha: str | None = None
     error_message: str = ""
     duration_seconds: float = 0.0
+    output_chars: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
 

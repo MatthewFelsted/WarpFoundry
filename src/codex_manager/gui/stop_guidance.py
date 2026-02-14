@@ -92,6 +92,15 @@ _SHARED_TEMPLATES: dict[str, GuidanceTemplate] = {
             "Raise loop limits or tighten goals for deeper improvements.",
         ),
     ),
+    "no_progress_detected": GuidanceTemplate(
+        label="No progress detected",
+        severity="info",
+        summary="The latest loop produced no file changes and almost no meaningful output.",
+        next_steps=(
+            "Tighten the step prompts so each step has a concrete deliverable.",
+            "Review memory/output handoff files, then rerun with fewer loops.",
+        ),
+    ),
     "branch_creation_failed": GuidanceTemplate(
         label="Branch creation failed",
         severity="error",

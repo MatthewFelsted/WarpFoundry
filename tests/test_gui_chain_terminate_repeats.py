@@ -78,7 +78,7 @@ class _PlaceholderRunner:
         return RunResult(
             success=True,
             exit_code=0,
-            final_message="Working in `C:\\repo` now. Share the task you want implemented and I’ll proceed.",
+            final_message="Working in `C:\\repo` now. Share the task you want implemented and I'll proceed.",
             usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
         )
 
@@ -361,6 +361,7 @@ def test_chain_persists_memory_and_reuses_it_in_future_prompts(monkeypatch, tmp_
         "Captured concrete findings" in str(entry.get("output_excerpt", ""))
         for entry in entries
     )
+    assert any(str(entry.get("output_file", "")).endswith("Implementation.md") for entry in entries)
 
     executor2 = ChainExecutor()
     executor2._initialize_step_memory(repo)
@@ -410,6 +411,42 @@ def test_chain_ignores_placeholder_status_output(monkeypatch, tmp_path: Path):
         assert "Share the task you want implemented" not in memory_path.read_text(
             encoding="utf-8"
         )
+
+
+def test_chain_stops_early_when_latest_loop_has_no_progress(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _PlaceholderRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="No progress guard",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=3,
+        stop_on_convergence=True,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.stop_reason == "no_progress_detected"
+    assert executor.state.total_loops_completed == 1
 
 
 def test_chain_file_instructions_include_primary_handoff_file(tmp_path: Path):
