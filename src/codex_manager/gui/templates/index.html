@@ -46,6 +46,7 @@ body{
   -webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;
 }
+body.modal-open{overflow:hidden}
 
 /* â”€â”€ Scrollbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 ::-webkit-scrollbar{width:6px;height:6px}
@@ -150,6 +151,7 @@ summary:focus-visible{
   outline:none;
   box-shadow:0 0 0 3px rgba(110,199,255,.28);
 }
+.tab-nav button:focus-visible{border-bottom-color:var(--accent);color:var(--text)}
 
 /* â”€â”€ Mode Toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .mode-toggle{display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
@@ -419,6 +421,11 @@ body.mode-medium .easy-only{display:none}
 .recipe-card{padding:14px;background:var(--surface);border:2px solid var(--border);border-radius:var(--radius);cursor:pointer;transition:all .15s;text-align:left}
 .recipe-card:hover{border-color:var(--accent);background:var(--surface2)}
 .recipe-card.selected{border-color:var(--accent);background:rgba(88,166,255,.12)}
+.recipe-card:focus-visible{
+  outline:none;
+  border-color:var(--accent2);
+  box-shadow:0 0 0 3px rgba(110,199,255,.25);
+}
 .recipe-card .recipe-title{font-weight:600;font-size:13px;margin-bottom:4px;color:var(--text)}
 .recipe-card .recipe-desc{font-size:11px;color:var(--text2);line-height:1.4}
 
@@ -461,6 +468,27 @@ body.mode-medium .easy-only{display:none}
 .adv-block{margin-top:10px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)}
 .adv-block h4{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:8px}
 .adv-block summary{cursor:pointer;font-size:12px;color:var(--text2);font-weight:600}
+
+.cua-card{
+  background:linear-gradient(135deg, rgba(15,22,34,.95), rgba(23,35,49,.92));
+  border:1px solid var(--border-soft);
+  border-radius:var(--radius);
+  padding:10px;
+}
+.cua-toggle-label{margin-bottom:6px}
+.cua-toggle-label input[type="checkbox"]{accent-color:var(--accent)}
+.cua-toggle-label strong{color:var(--accent2)}
+.cua-description{font-size:11px;color:var(--text2);margin:4px 0 0 22px}
+.cua-options{display:none;margin-top:10px;padding-left:22px}
+.cua-field{margin-bottom:6px}
+.cua-input-sm{font-size:12px}
+.cua-task-input{
+  font-size:12px;resize:vertical;width:100%;background:var(--bg);
+  border:1px solid var(--border);border-radius:var(--radius);padding:8px;color:var(--text)
+}
+.cua-run-row{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap}
+.btn-cua{font-size:11px;padding:4px 10px}
+.cua-status{font-size:11px;color:var(--text2);padding-top:5px}
 
 /* â”€â”€ Permissions Help Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #permissions-help-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2600;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -1074,34 +1102,34 @@ body.mode-medium .easy-only{display:none}
 
   <!-- CUA Visual Testing -->
   <div class="config-section">
-    <div class="form-row" style="background:linear-gradient(135deg, var(--bg), #1a1a2e);border:1px solid #3d3d7a;border-radius:var(--radius);padding:10px">
-      <label style="margin-bottom:6px">
-        <input type="checkbox" id="pipe-cua" onchange="togglePipeCUA()" style="accent-color:#7c4dff">
-        <strong style="color:#7c4dff">&#128065; Computer-Use Agent</strong> - AI visually tests the UI
+    <div class="form-row cua-card">
+      <label class="cua-toggle-label">
+        <input type="checkbox" id="pipe-cua" onchange="togglePipeCUA()">
+        <strong>&#128065; Computer-Use Agent</strong> - AI visually tests the UI
       </label>
-      <p style="font-size:11px;color:var(--text2);margin:4px 0 0 22px">
+      <p class="cua-description">
         An AI agent launches a browser, navigates your app, clicks buttons, fills forms,
         and reports visual bugs. Uses screenshot-based vision models (OpenAI CUA or Anthropic Claude).
       </p>
-      <div id="pipe-cua-options" style="display:none;margin-top:10px;padding-left:22px">
-        <div class="form-row" style="margin-bottom:6px">
+      <div id="pipe-cua-options" class="cua-options">
+        <div class="form-row cua-field">
           <label style="font-size:12px">CUA Provider</label>
-          <select id="pipe-cua-provider" style="font-size:12px">
+          <select id="pipe-cua-provider" class="cua-input-sm">
             <option value="openai">OpenAI CUA (computer-use-preview)</option>
             <option value="anthropic">Anthropic Claude (computer use tool)</option>
           </select>
         </div>
-        <div class="form-row" style="margin-bottom:6px">
+        <div class="form-row cua-field">
           <label style="font-size:12px">Target URL</label>
-          <input type="text" id="pipe-cua-url" placeholder="http://localhost:5088" style="font-size:12px">
+          <input type="text" id="pipe-cua-url" placeholder="http://localhost:5088" class="cua-input-sm">
         </div>
         <div class="form-row">
           <label style="font-size:12px">Task / Goal</label>
-          <textarea id="pipe-cua-task" rows="2" placeholder="Navigate the app, test interactive elements, report visual issues..." style="font-size:12px;resize:vertical;width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:8px;color:var(--text1)"></textarea>
+          <textarea id="pipe-cua-task" rows="2" placeholder="Navigate the app, test interactive elements, report visual issues..." class="cua-task-input"></textarea>
         </div>
-        <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-          <button class="btn btn-sm" style="font-size:11px;padding:4px 10px;background:#7c4dff;color:#fff;border:none;border-radius:var(--radius);cursor:pointer" onclick="runStandaloneCUA()">&#9654; Run CUA Now</button>
-          <span id="pipe-cua-status" style="font-size:11px;color:var(--text2);padding-top:5px"></span>
+        <div class="cua-run-row">
+          <button class="btn btn-primary btn-cua" onclick="runStandaloneCUA()">&#9654; Run CUA Now</button>
+          <span id="pipe-cua-status" class="cua-status"></span>
         </div>
       </div>
     </div>
@@ -1409,8 +1437,8 @@ body.mode-medium .easy-only{display:none}
 
 <!-- Onboarding (first visit) -->
 <div id="onboarding-overlay" class="hidden">
-  <div class="onboarding-card">
-    <h2>Welcome to Codex Manager</h2>
+  <div class="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+    <h2 id="onboarding-title">Welcome to Codex Manager</h2>
     <p>Configure and run AI-powered task chains on your repo: discovery, implementation, testing, refactoring, and more. Choose how much control you want:</p>
     <div class="mode-row"><strong>Autopilot</strong><span>Pick a recipe, set your repo path, and hit Start. Best for quick runs.</span></div>
     <div class="mode-row"><strong>Customize</strong><span>Build and reorder steps, set loop counts and stop conditions. No advanced options.</span></div>
@@ -1421,8 +1449,8 @@ body.mode-medium .easy-only{display:none}
 
 <!-- New Project modal -->
 <div id="new-project-overlay" class="hidden">
-  <div class="new-project-card">
-    <h2>New Project</h2>
+  <div class="new-project-card" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
+    <h2 id="new-project-title">New Project</h2>
     <p class="subtitle">Create a new project folder with a local Git repository.</p>
 
     <div class="form-row">
@@ -1556,6 +1584,64 @@ const PERMISSION_PROFILE_SUMMARY = {
 };
 const CODEX_MODEL_LABEL = 'GPT-5.3-Codex';
 const _permissionProfileUiState = { chain: null, pipeline: null };
+const _modalFocusReturnTargets = Object.create(null);
+const _modalOverlayIds = [
+  'docs-overlay',
+  'permissions-help-overlay',
+  'run-plan-overlay',
+  'readonly-warning-overlay',
+  'browse-overlay',
+  'new-project-overlay',
+  'onboarding-overlay',
+];
+
+function _captureModalFocus(overlayId) {
+  const active = document.activeElement;
+  if (active && typeof active.focus === 'function') {
+    _modalFocusReturnTargets[overlayId] = active;
+  }
+}
+
+function _restoreModalFocus(overlayId) {
+  const target = _modalFocusReturnTargets[overlayId];
+  delete _modalFocusReturnTargets[overlayId];
+  if (!target || !document.contains(target)) return;
+  try {
+    target.focus({ preventScroll: true });
+  } catch (_err) {
+    try { target.focus(); } catch (_err2) {}
+  }
+}
+
+function _syncModalOpenState() {
+  const anyOpen = _modalOverlayIds.some(id => {
+    const el = document.getElementById(id);
+    return !!el && !el.classList.contains('hidden');
+  });
+  document.body.classList.toggle('modal-open', anyOpen);
+}
+
+function _openOverlay(overlayId, focusSelector = '') {
+  const overlay = document.getElementById(overlayId);
+  if (!overlay) return null;
+  _captureModalFocus(overlayId);
+  overlay.classList.remove('hidden');
+  _syncModalOpenState();
+  if (focusSelector) {
+    const focusTarget = overlay.querySelector(focusSelector);
+    if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
+  }
+  return overlay;
+}
+
+function _closeOverlay(overlayId) {
+  const overlay = document.getElementById(overlayId);
+  if (!overlay) return null;
+  overlay.classList.add('hidden');
+  _syncModalOpenState();
+  _restoreModalFocus(overlayId);
+  return overlay;
+}
 
 function normalizeCodexPermissions(cfg) {
   if (!VALID_CODEX_SANDBOX_MODES.includes(cfg.codex_sandbox_mode)) {
@@ -1697,19 +1783,15 @@ function onPermissionControlChanged(target) {
 }
 
 function openPermissionsHelpModal() {
-  const overlay = document.getElementById('permissions-help-overlay');
-  overlay.classList.remove('hidden');
-  const closeBtn = overlay.querySelector('.permissions-help-header .btn');
-  if (closeBtn) closeBtn.focus();
+  _openOverlay('permissions-help-overlay', '.permissions-help-header .btn');
 }
 
 function closePermissionsHelpModal() {
-  document.getElementById('permissions-help-overlay').classList.add('hidden');
+  _closeOverlay('permissions-help-overlay');
 }
 
 function closeDocsModal() {
-  const overlay = document.getElementById('docs-overlay');
-  if (overlay) overlay.classList.add('hidden');
+  _closeOverlay('docs-overlay');
 }
 
 function _setActiveDocTab(docKey) {
@@ -1743,11 +1825,8 @@ async function loadDoc(docKey) {
 }
 
 function openDoc(docKey) {
-  const overlay = document.getElementById('docs-overlay');
+  const overlay = _openOverlay('docs-overlay', '.docs-modal-header .btn');
   if (!overlay) return;
-  overlay.classList.remove('hidden');
-  const closeBtn = overlay.querySelector('.docs-modal-header .btn');
-  if (closeBtn) closeBtn.focus();
   loadDoc(docKey || 'quickstart');
 }
 
@@ -1843,16 +1922,14 @@ function openRunPlanModal(target) {
   if (dangerAck) dangerAck.checked = false;
   updateRunPlanModalPreview();
 
-  overlay.classList.remove('hidden');
-  if (modeEl) modeEl.focus();
+  _openOverlay('run-plan-overlay', '#run-plan-mode');
   return new Promise(resolve => {
     _runPlanResolver = resolve;
   });
 }
 
 function closeRunPlanModal(payload = { action: 'cancel' }) {
-  const overlay = document.getElementById('run-plan-overlay');
-  if (overlay) overlay.classList.add('hidden');
+  _closeOverlay('run-plan-overlay');
   if (_runPlanResolver) {
     const resolve = _runPlanResolver;
     _runPlanResolver = null;
@@ -1917,9 +1994,7 @@ function openReadOnlyWarningModal(target, runMode) {
     ? 'Apply mode is selected, but write operations will be blocked until you switch to a write-enabled permission profile.'
     : 'This mode is fine for analysis-only runs. Switch to a write-enabled profile if you want Codex to edit files.';
 
-  overlay.classList.remove('hidden');
-  const cancelBtn = document.getElementById('readonly-warning-cancel');
-  if (cancelBtn) cancelBtn.focus();
+  _openOverlay('readonly-warning-overlay', '#readonly-warning-cancel');
 
   return new Promise(resolve => {
     _readOnlyWarningResolver = resolve;
@@ -1927,8 +2002,7 @@ function openReadOnlyWarningModal(target, runMode) {
 }
 
 function closeReadOnlyWarningModal(action = 'cancel') {
-  const overlay = document.getElementById('readonly-warning-overlay');
-  if (overlay) overlay.classList.add('hidden');
+  _closeOverlay('readonly-warning-overlay');
   if (_readOnlyWarningResolver) {
     const resolve = _readOnlyWarningResolver;
     _readOnlyWarningResolver = null;
@@ -2076,9 +2150,11 @@ function applyMode(mode) {
 function selectRecipe(recipeId) {
   const recipe = RECIPES[recipeId];
   if (!recipe) return;
-  document.querySelectorAll('.recipe-card').forEach(c => { c.classList.remove('selected'); });
-  const card = document.querySelector('.recipe-card[data-recipe="' + recipeId + '"]');
-  if (card) card.classList.add('selected');
+  document.querySelectorAll('.recipe-card').forEach(c => {
+    const selected = c.dataset.recipe === recipeId;
+    c.classList.toggle('selected', selected);
+    c.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
   const steps = [];
   recipe.forEach((r, i) => {
     const p = presets.find(x => x.key === r.job_type);
@@ -2120,6 +2196,50 @@ function applyDefaultEasyRecipe() {
   selectRecipe(DEFAULT_EASY_RECIPE_ID);
 }
 
+function initRecipeCardKeyboardAccess() {
+  document.querySelectorAll('.recipe-card').forEach(card => {
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    if (!card.hasAttribute('aria-pressed')) card.setAttribute('aria-pressed', 'false');
+    if (card.dataset.keyboardBound === '1') return;
+    card.dataset.keyboardBound = '1';
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      const recipeId = card.dataset.recipe || '';
+      if (recipeId) selectRecipe(recipeId);
+    });
+  });
+}
+
+function initMainTabKeyboardNav() {
+  const tabList = document.getElementById('main-tabs');
+  if (!tabList || tabList.dataset.keyboardBound === '1') return;
+  tabList.dataset.keyboardBound = '1';
+  tabList.addEventListener('keydown', (event) => {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (!keys.includes(event.key)) return;
+    const tabs = Array.from(tabList.querySelectorAll('button[data-tab]'));
+    if (!tabs.length) return;
+
+    const focusedIdx = tabs.indexOf(document.activeElement);
+    const currentIdx = focusedIdx >= 0
+      ? focusedIdx
+      : Math.max(0, tabs.findIndex(btn => btn.getAttribute('aria-selected') === 'true'));
+    let nextIdx = currentIdx;
+    if (event.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + tabs.length) % tabs.length;
+    if (event.key === 'ArrowRight') nextIdx = (currentIdx + 1) % tabs.length;
+    if (event.key === 'Home') nextIdx = 0;
+    if (event.key === 'End') nextIdx = tabs.length - 1;
+
+    const target = tabs[nextIdx];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+    switchTab(target.dataset.tab);
+  });
+}
+
 /* â”€â”€ Init â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 document.addEventListener('DOMContentLoaded', async () => {
   try {
@@ -2133,6 +2253,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   syncPipelinePermissionControlsFromConfig();
   syncChainTimeoutControlsFromConfig();
   syncPipeTimeoutControlsFromConfig();
+  initMainTabKeyboardNav();
+  initRecipeCardKeyboardAccess();
   renderActivityHeartbeats();
   if (activityHeartbeatTimer) clearInterval(activityHeartbeatTimer);
   activityHeartbeatTimer = setInterval(renderActivityHeartbeats, 1000);
@@ -2165,19 +2287,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   refreshDiagnostics('chain', { silent: true });
   refreshDiagnostics('pipeline', { silent: true });
   if (typeof localStorage !== 'undefined' && !localStorage.getItem('cm_onboarded')) {
-    document.getElementById('onboarding-overlay').classList.remove('hidden');
+    _openOverlay('onboarding-overlay', '.onboarding-card .btn-primary');
   }
+  _syncModalOpenState();
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     closeRunPlanModal({ action: 'cancel' });
     closePermissionsHelpModal();
     closeReadOnlyWarningModal('cancel');
+    closeDocsModal();
+    hideNewProjectModal();
     browseClose();
   });
 });
 
 function dismissOnboarding() {
-  document.getElementById('onboarding-overlay').classList.add('hidden');
+  _closeOverlay('onboarding-overlay');
   if (typeof localStorage !== 'undefined') localStorage.setItem('cm_onboarded', '1');
   applyMode('easy');
 }
@@ -2186,11 +2311,11 @@ function dismissOnboarding() {
 function showNewProjectModal() {
   document.getElementById('np-result').style.display = 'none';
   document.getElementById('np-create-btn').disabled = false;
-  document.getElementById('new-project-overlay').classList.remove('hidden');
+  _openOverlay('new-project-overlay', '#np-parent');
 }
 
 function hideNewProjectModal() {
-  document.getElementById('new-project-overlay').classList.add('hidden');
+  _closeOverlay('new-project-overlay');
 }
 
 async function createProject() {
@@ -3808,7 +3933,10 @@ async function clearEverything() {
   }
 
   currentMode = 'easy';
-  document.querySelectorAll('.recipe-card').forEach(card => card.classList.remove('selected'));
+  document.querySelectorAll('.recipe-card').forEach(card => {
+    card.classList.remove('selected');
+    card.setAttribute('aria-pressed', 'false');
+  });
   document.querySelectorAll('#chain-panel details, #pipeline-config details').forEach(el => { el.open = false; });
 
   applyConfig(cloneState(DEFAULT_CHAIN_CONFIG));
@@ -3820,13 +3948,13 @@ async function clearEverything() {
   closeRunPlanModal({ action: 'cancel' });
   closePermissionsHelpModal();
   closeReadOnlyWarningModal('cancel');
+  closeDocsModal();
   browseClose();
   switchTab('chain');
   loadConfigList();
   renderPipelinePhases();
 
-  const onboarding = document.getElementById('onboarding-overlay');
-  if (onboarding) onboarding.classList.remove('hidden');
+  _openOverlay('onboarding-overlay', '.onboarding-card .btn-primary');
   toast('Reset complete: settings restored. Saved configurations were not deleted.', 'success');
 }
 
@@ -4158,7 +4286,7 @@ function runStandaloneCUA() {
   const task = document.getElementById('pipe-cua-task').value;
   const statusEl = document.getElementById('pipe-cua-status');
   statusEl.textContent = 'Starting CUA session...';
-  statusEl.style.color = '#7c4dff';
+  statusEl.style.color = 'var(--accent2)';
 
   fetch('/api/cua/start', {
     method: 'POST',
@@ -4172,7 +4300,7 @@ function runStandaloneCUA() {
       statusEl.style.color = 'var(--danger)';
     } else {
       statusEl.textContent = 'CUA running (' + data.provider + ')...';
-      statusEl.style.color = '#7c4dff';
+      statusEl.style.color = 'var(--accent2)';
       pollCUAStatus();
     }
   })
@@ -4191,16 +4319,24 @@ function pollCUAStatus() {
         if (!data.running && data.result) {
           clearInterval(interval);
           const r = data.result;
+          statusEl.textContent = '';
           if (r.success) {
-            statusEl.innerHTML = '<span style="color:var(--success)">&#10003; Done: ' + r.total_steps + ' steps, ' + r.duration_seconds + 's</span>';
+            statusEl.textContent = '\u2713 Done: ' + r.total_steps + ' steps, ' + r.duration_seconds + 's';
+            statusEl.style.color = 'var(--success)';
           } else {
-            statusEl.innerHTML = '<span style="color:var(--danger)">&#10007; Failed: ' + (r.error || 'unknown error') + '</span>';
+            statusEl.textContent = '\u2717 Failed: ' + (r.error || 'unknown error');
+            statusEl.style.color = 'var(--danger)';
           }
           if (r.summary) {
-            statusEl.innerHTML += '<br><span style="font-size:10px;color:var(--text2)">' + r.summary.substring(0, 200) + '</span>';
+            const summaryEl = document.createElement('div');
+            summaryEl.style.fontSize = '10px';
+            summaryEl.style.color = 'var(--text2)';
+            summaryEl.textContent = r.summary.substring(0, 200);
+            statusEl.appendChild(summaryEl);
           }
         } else if (data.result) {
           statusEl.textContent = 'CUA running... ' + (data.result.total_steps || 0) + ' steps so far';
+          statusEl.style.color = 'var(--accent2)';
         }
       })
       .catch(() => {
@@ -4585,10 +4721,7 @@ function openBrowse(targetInputId) {
   _browseTarget = targetInputId;
   const input = document.getElementById(targetInputId);
   const startPath = input ? input.value.trim() : '';
-  const overlay = document.getElementById('browse-overlay');
-  overlay.classList.remove('hidden');
-  const primaryBtn = overlay.querySelector('.browse-modal-footer .btn-primary');
-  if (primaryBtn) primaryBtn.focus();
+  _openOverlay('browse-overlay', '.browse-modal-footer .btn-primary');
   browseTo(startPath);
 }
 
@@ -4660,7 +4793,7 @@ function browseSelect() {
 }
 
 function browseClose() {
-  document.getElementById('browse-overlay').classList.add('hidden');
+  _closeOverlay('browse-overlay');
   _browseTarget = null;
 }
 
