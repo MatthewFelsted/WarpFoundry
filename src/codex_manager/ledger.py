@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,7 @@ class KnowledgeLedger:
         self.index_path = self.ledger_dir / INDEX_FILE
         self._entries: list[LedgerEntry] = []
         self._index: LedgerIndex | None = None
+        self._lock = threading.RLock()
         self._ensure_dir()
         self._load()
 
@@ -107,8 +109,9 @@ class KnowledgeLedger:
                         by_id[e.id] = e
                     except (json.JSONDecodeError, KeyError) as ex:
                         logger.warning("Skip invalid ledger line: %s", ex)
-        self._entries = [by_id[oid] for oid in order]
-        self._rebuild_index()
+        with self._lock:
+            self._entries = [by_id[oid] for oid in order]
+            self._rebuild_index()
 
     def _next_id(self) -> str:
         """Generate next LED-XXX id."""
@@ -145,6 +148,10 @@ class KnowledgeLedger:
         )
 
     def _append_entry(self, entry: LedgerEntry) -> None:
+        """Append one entry and refresh in-memory state.
+
+        Caller must hold ``self._lock``.
+        """
         with open(self.entries_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
         self._entries.append(entry)
@@ -152,6 +159,7 @@ class KnowledgeLedger:
 
     def _write_entry_update(self, entry: LedgerEntry) -> None:
         """Append a status-update line (append-only). In-memory state updated by id."""
+        # Caller must hold ``self._lock``.
         with open(self.entries_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
         for i, e in enumerate(self._entries):
@@ -173,36 +181,38 @@ class KnowledgeLedger:
         step_ref: str = "",
     ) -> LedgerEntry:
         """Append a new entry. Returns the created entry."""
-        now = datetime.now(timezone.utc).isoformat()
-        entry = LedgerEntry(
-            id=self._next_id(),
-            category=category,
-            severity=severity,
-            status="open",
-            title=title,
-            detail=detail,
-            source=source,
-            resolution="",
-            file_path=file_path,
-            step_ref=step_ref,
-            created_at=now,
-            updated_at=now,
-        )
-        self._append_entry(entry)
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            entry = LedgerEntry(
+                id=self._next_id(),
+                category=category,
+                severity=severity,
+                status="open",
+                title=title,
+                detail=detail,
+                source=source,
+                resolution="",
+                file_path=file_path,
+                step_ref=step_ref,
+                created_at=now,
+                updated_at=now,
+            )
+            self._append_entry(entry)
         logger.debug("Ledger add: %s [%s] %s", entry.id, category, title[:50])
         return entry
 
     def resolve(self, entry_id: str, resolution: str, source: str = "") -> bool:
         """Mark entry as resolved with resolution text."""
-        for e in self._entries:
-            if e.id == entry_id:
-                e.status = "resolved"
-                e.resolution = resolution
-                e.updated_at = datetime.now(timezone.utc).isoformat()
-                if source:
-                    e.source = e.source + "; resolved by " + source
-                self._write_entry_update(e)
-                return True
+        with self._lock:
+            for e in self._entries:
+                if e.id == entry_id:
+                    e.status = "resolved"
+                    e.resolution = resolution
+                    e.updated_at = datetime.now(timezone.utc).isoformat()
+                    if source:
+                        e.source = e.source + "; resolved by " + source
+                    self._write_entry_update(e)
+                    return True
         return False
 
     def update_status(self, entry_id: str, status: str, note: str = "") -> bool:
@@ -210,21 +220,23 @@ class KnowledgeLedger:
         valid = {"open", "in_progress", "resolved", "wontfix", "deferred"}
         if status not in valid:
             return False
-        for e in self._entries:
-            if e.id == entry_id:
-                e.status = status
-                if note:
-                    e.resolution = note
-                e.updated_at = datetime.now(timezone.utc).isoformat()
-                self._write_entry_update(e)
-                return True
+        with self._lock:
+            for e in self._entries:
+                if e.id == entry_id:
+                    e.status = status
+                    if note:
+                        e.resolution = note
+                    e.updated_at = datetime.now(timezone.utc).isoformat()
+                    self._write_entry_update(e)
+                    return True
         return False
 
     def get_entry(self, entry_id: str) -> LedgerEntry | None:
         """Return the latest state of an entry (by id)."""
-        for e in reversed(self._entries):
-            if e.id == entry_id:
-                return e
+        with self._lock:
+            for e in reversed(self._entries):
+                if e.id == entry_id:
+                    return e
         return None
 
     def query(
@@ -235,38 +247,41 @@ class KnowledgeLedger:
         limit: int = 100,
     ) -> list[LedgerEntry]:
         """Filter entries. Returns most recent first (by order in file)."""
-        result: list[LedgerEntry] = []
-        seen_ids: set[str] = set()
-        for e in reversed(self._entries):
-            if e.id in seen_ids:
-                continue
-            seen_ids.add(e.id)
-            if category is not None and e.category != category:
-                continue
-            if status is not None and e.status != status:
-                continue
-            if severity is not None and e.severity != severity:
-                continue
-            result.append(e)
-            if len(result) >= limit:
-                break
-        return result
+        with self._lock:
+            result: list[LedgerEntry] = []
+            seen_ids: set[str] = set()
+            for e in reversed(self._entries):
+                if e.id in seen_ids:
+                    continue
+                seen_ids.add(e.id)
+                if category is not None and e.category != category:
+                    continue
+                if status is not None and e.status != status:
+                    continue
+                if severity is not None and e.severity != severity:
+                    continue
+                result.append(e)
+                if len(result) >= limit:
+                    break
+            return result
 
     def get_open_errors(self) -> list[LedgerEntry]:
         """Open entries that are errors or bugs."""
-        return [
-            e
-            for e in (self._index.open_entries if self._index else [])
-            if e.category in ("error", "bug")
-        ]
+        with self._lock:
+            return [
+                e
+                for e in (self._index.open_entries if self._index else [])
+                if e.category in ("error", "bug")
+            ]
 
     def get_open_suggestions(self) -> list[LedgerEntry]:
         """Open entries that are suggestions, wishlist, or feature."""
-        return [
-            e
-            for e in (self._index.open_entries if self._index else [])
-            if e.category in ("suggestion", "wishlist", "feature")
-        ]
+        with self._lock:
+            return [
+                e
+                for e in (self._index.open_entries if self._index else [])
+                if e.category in ("suggestion", "wishlist", "feature")
+            ]
 
     def get_context_for_prompt(
         self,
@@ -277,15 +292,16 @@ class KnowledgeLedger:
         """Formatted markdown for injection into prompts."""
         if statuses is None:
             statuses = ["open", "in_progress"]
-        entries: list[LedgerEntry] = []
-        for e in reversed(self._entries):
-            if e.status not in statuses:
-                continue
-            if categories is not None and e.category not in categories:
-                continue
-            entries.append(e)
-            if len(entries) >= max_items:
-                break
+        with self._lock:
+            entries: list[LedgerEntry] = []
+            for e in reversed(self._entries):
+                if e.status not in statuses:
+                    continue
+                if categories is not None and e.category not in categories:
+                    continue
+                entries.append(e)
+                if len(entries) >= max_items:
+                    break
         if not entries:
             return ""
         lines = ["## Open Items (Knowledge Ledger)", ""]
@@ -302,6 +318,7 @@ class KnowledgeLedger:
 
     def stats(self) -> LedgerIndex:
         """Summary counts."""
-        if self._index is None:
-            self._rebuild_index()
-        return self._index or LedgerIndex()
+        with self._lock:
+            if self._index is None:
+                self._rebuild_index()
+            return self._index or LedgerIndex()

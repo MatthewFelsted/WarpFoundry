@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 
@@ -199,3 +202,39 @@ def test_open_suggestions_includes_wishlist_and_feature_categories(tmp_path: Pat
     open_suggestions = ledger.get_open_suggestions()
     assert {entry.id for entry in open_suggestions} == {wishlist.id, suggestion.id}
     assert all(entry.category in {"wishlist", "suggestion", "feature"} for entry in open_suggestions)
+
+
+def test_add_is_thread_safe_under_concurrent_writes(monkeypatch, tmp_path: Path) -> None:
+    ledger = KnowledgeLedger(_make_repo(tmp_path))
+    original_append = ledger._append_entry
+
+    def slow_append(entry) -> None:
+        # Widen the race window so this test reliably catches missing locks.
+        time.sleep(0.01)
+        original_append(entry)
+
+    monkeypatch.setattr(ledger, "_append_entry", slow_append)
+
+    workers = 12
+    start_barrier = threading.Barrier(workers)
+
+    def add_entry(i: int):
+        start_barrier.wait(timeout=5)
+        return ledger.add(
+            category="error",
+            title=f"Concurrent issue {i}",
+            detail="race check",
+            severity="minor",
+            source="test",
+        )
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        created = list(pool.map(add_entry, range(workers)))
+
+    ids = [entry.id for entry in created]
+    assert len(ids) == workers
+    assert len(set(ids)) == workers
+    assert ledger.stats().total_entries == workers
+
+    reloaded = KnowledgeLedger(ledger.repo_path)
+    assert reloaded.stats().total_entries == workers
