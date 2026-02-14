@@ -262,6 +262,42 @@ class PipelineOrchestrator:
             context=context or {},
         )
 
+    def _finalize_run(
+        self,
+        *,
+        start_time: float,
+        history_level: str = "info",
+        extra_history_context: dict[str, Any] | None = None,
+    ) -> None:
+        """Finalize state/logging for any pipeline terminal path."""
+        self.state.running = False
+        self.state.current_phase = ""
+        self.state.current_iteration = 0
+        self.state.current_phase_started_at_epoch_ms = 0
+        self.state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        self.state.elapsed_seconds = time.monotonic() - start_time
+        self._log(
+            "info",
+            f"Pipeline finished - {self.state.stop_reason} "
+            f"({self.state.total_cycles_completed} cycles, "
+            f"{self.state.total_phases_completed} phases)",
+        )
+        history_context = {
+            "stop_reason": self.state.stop_reason,
+            "total_cycles_completed": self.state.total_cycles_completed,
+            "total_phases_completed": self.state.total_phases_completed,
+            "total_tokens": self.state.total_tokens,
+            "elapsed_seconds": round(self.state.elapsed_seconds, 1),
+        }
+        if extra_history_context:
+            history_context.update(extra_history_context)
+        self._record_history_note(
+            "run_finished",
+            f"Pipeline finished with stop_reason='{self.state.stop_reason}'.",
+            level=history_level,
+            context=history_context,
+        )
+
     @staticmethod
     def _is_science_phase(phase: PipelinePhase) -> bool:
         return phase in (
@@ -1016,28 +1052,11 @@ class PipelineOrchestrator:
         if issues:
             for issue in issues:
                 self._log("error", f"Preflight check failed: {issue}")
-            self.state.running = False
             self.state.stop_reason = "preflight_failed"
-            self.state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
-            self.state.elapsed_seconds = time.monotonic() - start_time
-            self._log(
-                "info",
-                f"Pipeline finished - {self.state.stop_reason} "
-                f"({self.state.total_cycles_completed} cycles, "
-                f"{self.state.total_phases_completed} phases)",
-            )
-            self._record_history_note(
-                "run_finished",
-                f"Pipeline finished with stop_reason='{self.state.stop_reason}'.",
-                level="error",
-                context={
-                    "stop_reason": self.state.stop_reason,
-                    "preflight_issues": issues,
-                    "total_cycles_completed": self.state.total_cycles_completed,
-                    "total_phases_completed": self.state.total_phases_completed,
-                    "total_tokens": self.state.total_tokens,
-                    "elapsed_seconds": round(self.state.elapsed_seconds, 1),
-                },
+            self._finalize_run(
+                start_time=start_time,
+                history_level="error",
+                extra_history_context={"preflight_issues": issues},
             )
             return
 
@@ -1098,14 +1117,32 @@ class PipelineOrchestrator:
             )
 
         # Initialize log files
-        self.tracker.initialize()
-        self._log("info", "Log files initialized")
-        if config.science_enabled:
-            self.tracker.initialize_science()
-            self._log(
-                "info",
-                f"Scientist evidence directory: {self.tracker.science_dir()}",
+        try:
+            self.tracker.initialize()
+            self._log("info", "Log files initialized")
+            if config.science_enabled:
+                self.tracker.initialize_science()
+                self._log(
+                    "info",
+                    f"Scientist evidence directory: {self.tracker.science_dir()}",
+                )
+        except Exception as exc:
+            self._log("error", f"Failed to initialize pipeline logs: {exc}")
+            self.ledger.add(
+                category="error",
+                title=f"Log initialization failed: {str(exc)[:60]}",
+                detail=str(exc),
+                severity="critical",
+                source="pipeline:startup",
+                step_ref="log_init",
             )
+            self.state.stop_reason = f"error: {exc}"
+            self._finalize_run(
+                start_time=start_time,
+                history_level="error",
+                extra_history_context={"error": str(exc)},
+            )
+            return
 
         # Create branch in apply mode
         if config.mode == "apply":
@@ -1122,28 +1159,11 @@ class PipelineOrchestrator:
                     source="pipeline:startup",
                     step_ref="branch_creation",
                 )
-                self.state.running = False
                 self.state.stop_reason = "branch_creation_failed"
-                self.state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
-                self.state.elapsed_seconds = time.monotonic() - start_time
-                self._log(
-                    "info",
-                    f"Pipeline finished - {self.state.stop_reason} "
-                    f"({self.state.total_cycles_completed} cycles, "
-                    f"{self.state.total_phases_completed} phases)",
-                )
-                self._record_history_note(
-                    "run_finished",
-                    f"Pipeline finished with stop_reason='{self.state.stop_reason}'.",
-                    level="error",
-                    context={
-                        "stop_reason": self.state.stop_reason,
-                        "error": str(exc),
-                        "total_cycles_completed": self.state.total_cycles_completed,
-                        "total_phases_completed": self.state.total_phases_completed,
-                        "total_tokens": self.state.total_tokens,
-                        "elapsed_seconds": round(self.state.elapsed_seconds, 1),
-                    },
+                self._finalize_run(
+                    start_time=start_time,
+                    history_level="error",
+                    extra_history_context={"error": str(exc)},
                 )
                 return
 
@@ -1750,30 +1770,7 @@ class PipelineOrchestrator:
             self.state.stop_reason = f"error: {exc}"
 
         finally:
-            self.state.running = False
-            self.state.current_phase = ""
-            self.state.current_iteration = 0
-            self.state.current_phase_started_at_epoch_ms = 0
-            self.state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
-            self.state.elapsed_seconds = time.monotonic() - start_time
-            self._log(
-                "info",
-                f"Pipeline finished - {self.state.stop_reason} "
-                f"({self.state.total_cycles_completed} cycles, "
-                f"{self.state.total_phases_completed} phases)",
-            )
-            self._record_history_note(
-                "run_finished",
-                f"Pipeline finished with stop_reason='{self.state.stop_reason}'.",
-                level="info",
-                context={
-                    "stop_reason": self.state.stop_reason,
-                    "total_cycles_completed": self.state.total_cycles_completed,
-                    "total_phases_completed": self.state.total_phases_completed,
-                    "total_tokens": self.state.total_tokens,
-                    "elapsed_seconds": round(self.state.elapsed_seconds, 1),
-                },
-            )
+            self._finalize_run(start_time=start_time)
 
     # ------------------------------------------------------------------
     # Prompt building

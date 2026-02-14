@@ -113,6 +113,14 @@ class _NoopEvaluator:
         )
 
 
+class _FailingHistoryLogbook:
+    def __init__(self, _repo: Path):
+        pass
+
+    def initialize(self) -> None:
+        raise OSError("history denied")
+
+
 class _ContinueBrain:
     def __init__(self, config):
         self.config = config
@@ -425,6 +433,91 @@ def test_chain_runtime_state_tracks_run_loop_limits(monkeypatch, tmp_path: Path)
 
     assert executor.state.run_max_loops == 1
     assert executor.state.run_unlimited is False
+
+
+def test_chain_branch_creation_failure_finalizes_state(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _TerminateRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    def _raise_branch(_repo: Path) -> str:
+        raise RuntimeError("branch denied")
+
+    monkeypatch.setattr(chain_module, "create_branch", _raise_branch)
+
+    config = ChainConfig(
+        name="Branch failure finalization",
+        repo_path=str(repo),
+        mode="apply",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="noop",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.running is False
+    assert executor.state.stop_reason == "branch_creation_failed"
+    assert executor.state.finished_at
+    assert executor.state.elapsed_seconds >= 0
+
+
+def test_chain_history_logbook_init_failure_is_non_fatal(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _TerminateRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "HistoryLogbook", _FailingHistoryLogbook)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    _TerminateRunner.calls = 0
+    config = ChainConfig(
+        name="History init fallback",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        stop_on_convergence=False,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="noop",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.running is False
+    assert executor.state.stop_reason == "max_loops_reached"
+    assert executor.state.total_steps_completed == 1
+    assert _TerminateRunner.calls == 1
+    assert executor.state.finished_at
 
 
 def test_chain_persists_memory_and_reuses_it_in_future_prompts(monkeypatch, tmp_path: Path):

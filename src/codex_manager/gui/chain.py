@@ -313,6 +313,41 @@ class ChainExecutor:
             context=context or {},
         )
 
+    def _finalize_run(
+        self,
+        *,
+        start_time: float,
+        history_level: str = "info",
+        extra_history_context: dict[str, Any] | None = None,
+    ) -> None:
+        """Finalize state/logging for any chain terminal path."""
+        self.state.running = False
+        self.state.current_step_name = ""
+        self.state.current_step_started_at_epoch_ms = 0
+        self.state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        self.state.elapsed_seconds = time.monotonic() - start_time
+        self._log(
+            "info",
+            f"Chain finished — {self.state.stop_reason} "
+            f"({self.state.total_loops_completed} loops, "
+            f"{self.state.total_steps_completed} steps)",
+        )
+        history_context = {
+            "stop_reason": self.state.stop_reason,
+            "total_loops_completed": self.state.total_loops_completed,
+            "total_steps_completed": self.state.total_steps_completed,
+            "total_tokens": self.state.total_tokens,
+            "elapsed_seconds": round(self.state.elapsed_seconds, 1),
+        }
+        if extra_history_context:
+            history_context.update(extra_history_context)
+        self._record_history_note(
+            "run_finished",
+            f"Chain finished with stop_reason='{self.state.stop_reason}'.",
+            level=history_level,
+            context=history_context,
+        )
+
     @staticmethod
     def _memory_log_path(repo: Path) -> Path:
         """Return the persistent chain memory log file path."""
@@ -687,11 +722,12 @@ class ChainExecutor:
     # ------------------------------------------------------------------
 
     def _run_loop(self) -> None:
+        start_time = time.monotonic()
         config = self.config
         if config is None:
             self._log("error", "Chain started without a config")
-            self.state.running = False
             self.state.stop_reason = "no_config"
+            self._finalize_run(start_time=start_time, history_level="error")
             return
 
         repo = Path(config.repo_path).resolve()
@@ -699,8 +735,13 @@ class ChainExecutor:
         self.state.run_unlimited = bool(config.unlimited)
         brain_goal = self._brain_goal(config, repo)
         self.ledger = KnowledgeLedger(repo)
-        self._history_logbook = HistoryLogbook(repo)
-        self._history_logbook.initialize()
+        self._history_logbook = None
+        try:
+            history = HistoryLogbook(repo)
+            history.initialize()
+            self._history_logbook = history
+        except Exception as exc:
+            self._log("warn", f"History logbook disabled: {exc}")
         self._record_history_note(
             "run_started",
             f"Chain run started in {config.mode} mode.",
@@ -814,11 +855,13 @@ class ChainExecutor:
                         source="chain:startup",
                         step_ref="branch_creation",
                     )
-                self.state.running = False
                 self.state.stop_reason = "branch_creation_failed"
+                self._finalize_run(
+                    start_time=start_time,
+                    history_level="error",
+                    extra_history_context={"error": str(exc)},
+                )
                 return
-
-        start_time = time.monotonic()
 
         # Unlimited mode uses a very high ceiling; the improvement-threshold
         # check (inside _check_stop_conditions) is what actually ends the run.
@@ -1296,28 +1339,7 @@ class ChainExecutor:
             self.state.stop_reason = f"error: {exc}"
 
         finally:
-            self.state.running = False
-            self.state.current_step_name = ""
-            self.state.current_step_started_at_epoch_ms = 0
-            self.state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
-            self.state.elapsed_seconds = time.monotonic() - start_time
-            self._log(
-                "info",
-                f"Chain finished — {self.state.stop_reason} "
-                f"({self.state.total_loops_completed} loops, "
-                f"{self.state.total_steps_completed} steps)",
-            )
-            self._record_history_note(
-                "run_finished",
-                f"Chain finished with stop_reason='{self.state.stop_reason}'.",
-                context={
-                    "stop_reason": self.state.stop_reason,
-                    "total_loops_completed": self.state.total_loops_completed,
-                    "total_steps_completed": self.state.total_steps_completed,
-                    "total_tokens": self.state.total_tokens,
-                    "elapsed_seconds": round(self.state.elapsed_seconds, 1),
-                },
-            )
+            self._finalize_run(start_time=start_time)
 
     # ------------------------------------------------------------------
     # Single step execution

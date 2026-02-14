@@ -984,6 +984,45 @@ def test_preflight_rejects_directory_path_as_codex_binary(monkeypatch, tmp_path:
     assert state.total_phases_completed == 0
 
 
+def test_pipeline_log_init_failure_finishes_cleanly(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+
+    def _raise_log_init() -> None:
+        raise OSError("logs readonly")
+
+    monkeypatch.setattr(orch.tracker, "initialize", _raise_log_init)
+
+    state = orch.run()
+    assert state.running is False
+    assert state.stop_reason is not None
+    assert state.stop_reason.startswith("error:")
+    assert "logs readonly" in state.stop_reason
+    assert state.finished_at
+
+
 def test_science_experiment_records_evidence_and_marks_inconclusive(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
