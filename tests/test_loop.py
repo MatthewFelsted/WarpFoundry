@@ -67,8 +67,7 @@ class TestDefaultStopPolicy:
 
     def test_stops_on_consecutive_failures(self):
         rounds = [
-            RoundRecord(round_number=i, run_result=RunResult(success=False))
-            for i in range(1, 4)
+            RoundRecord(round_number=i, run_result=RunResult(success=False)) for i in range(1, 4)
         ]
         state = self._make_state(rounds)
         assert default_stop_policy(state) == StopReason.CONSECUTIVE_FAILURES
@@ -149,9 +148,7 @@ class TestImprovementLoopInit:
         loop = ImprovementLoop(repo_path=repo, goal="goal", mode=" APPLY ")
         assert loop.mode == "apply"
 
-    def test_apply_mode_init_sets_git_identity_before_creating_branch(
-        self, tmp_path, monkeypatch
-    ):
+    def test_apply_mode_init_sets_git_identity_before_creating_branch(self, tmp_path, monkeypatch):
         repo = self._make_repo(tmp_path)
         call_order: list[str] = []
 

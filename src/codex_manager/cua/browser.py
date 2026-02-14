@@ -74,7 +74,9 @@ class BrowserEnvironment:
         self._page = await context.new_page()
         logger.info(
             "Browser started: %dx%d headless=%s",
-            self.width, self.height, self.headless,
+            self.width,
+            self.height,
+            self.headless,
         )
 
     async def stop(self) -> None:
@@ -135,8 +137,12 @@ class BrowserEnvironment:
 
             elif at == ActionType.SCROLL:
                 await page.mouse.move(action.x, action.y)
-                sx = action.scroll_x or action.raw.get("scrollX", 0) or action.raw.get("scroll_x", 0)
-                sy = action.scroll_y or action.raw.get("scrollY", 0) or action.raw.get("scroll_y", 0)
+                sx = (
+                    action.scroll_x or action.raw.get("scrollX", 0) or action.raw.get("scroll_x", 0)
+                )
+                sy = (
+                    action.scroll_y or action.raw.get("scrollY", 0) or action.raw.get("scroll_y", 0)
+                )
                 await page.evaluate(f"window.scrollBy({sx}, {sy})")
                 logger.debug("scroll (%d, %d) dx=%d dy=%d", action.x, action.y, sx, sy)
 

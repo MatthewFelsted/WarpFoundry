@@ -158,16 +158,23 @@ def test_science_helpers_write_jsonl_and_artifacts(tmp_path: Path) -> None:
 
     tracker.write_science("EVIDENCE.md", "first line")
     tracker.append_science("EVIDENCE.md", "second line")
-    assert tracker.science_path_for("EVIDENCE.md").read_text(encoding="utf-8") == "first line\nsecond line"
+    assert (
+        tracker.science_path_for("EVIDENCE.md").read_text(encoding="utf-8")
+        == "first line\nsecond line"
+    )
 
     tracker.append_science_jsonl("TRIALS.jsonl", {"phase": "experiment", "success": True})
-    lines = tracker.science_path_for("TRIALS.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    lines = (
+        tracker.science_path_for("TRIALS.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    )
     assert len(lines) == 1
     payload = json.loads(lines[0])
     assert payload["phase"] == "experiment"
     assert payload["success"] is True
 
-    artifact = tracker.save_science_artifact("prompts", "Cycle 1 / Experiment", "prompt text", suffix=".txt")
+    artifact = tracker.save_science_artifact(
+        "prompts", "Cycle 1 / Experiment", "prompt text", suffix=".txt"
+    )
     assert artifact.exists()
     assert "Cycle-1-Experiment" in artifact.name
     assert artifact.read_text(encoding="utf-8") == "prompt text"

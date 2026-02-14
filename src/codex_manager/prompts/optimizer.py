@@ -117,10 +117,16 @@ class PromptOptimizer:
                 scores_before = self._parse_scores(str(raw_eval))
             except Exception as exc:
                 logger.warning("  Evaluation failed: %s", exc)
-                self._results.append(OptimizationResult(
-                    path=path, name=name, original=content, optimized=content,
-                    skipped=True, skip_reason=f"Evaluation failed: {exc}",
-                ))
+                self._results.append(
+                    OptimizationResult(
+                        path=path,
+                        name=name,
+                        original=content,
+                        optimized=content,
+                        skipped=True,
+                        skip_reason=f"Evaluation failed: {exc}",
+                    )
+                )
                 continue
 
             overall = scores_before.get("overall", 0)
@@ -128,11 +134,17 @@ class PromptOptimizer:
 
             if overall >= self.threshold:
                 logger.info("  Above threshold (%.1f) — keeping as-is", self.threshold)
-                self._results.append(OptimizationResult(
-                    path=path, name=name, original=content, optimized=content,
-                    scores_before=scores_before, skipped=True,
-                    skip_reason=f"Score {overall:.1f} >= threshold {self.threshold:.1f}",
-                ))
+                self._results.append(
+                    OptimizationResult(
+                        path=path,
+                        name=name,
+                        original=content,
+                        optimized=content,
+                        scores_before=scores_before,
+                        skipped=True,
+                        skip_reason=f"Score {overall:.1f} >= threshold {self.threshold:.1f}",
+                    )
+                )
                 continue
 
             # Step 2: Optimize the prompt
@@ -165,20 +177,32 @@ class PromptOptimizer:
                 optimized = str(optimized).strip()
             except Exception as exc:
                 logger.warning("  Optimization failed: %s", exc)
-                self._results.append(OptimizationResult(
-                    path=path, name=name, original=content, optimized=content,
-                    scores_before=scores_before, skipped=True,
-                    skip_reason=f"Optimization failed: {exc}",
-                ))
+                self._results.append(
+                    OptimizationResult(
+                        path=path,
+                        name=name,
+                        original=content,
+                        optimized=content,
+                        scores_before=scores_before,
+                        skipped=True,
+                        skip_reason=f"Optimization failed: {exc}",
+                    )
+                )
                 continue
 
             if not optimized or len(optimized) < 20:
                 logger.warning("  Optimizer returned empty/short response")
-                self._results.append(OptimizationResult(
-                    path=path, name=name, original=content, optimized=content,
-                    scores_before=scores_before, skipped=True,
-                    skip_reason="Optimizer returned inadequate response",
-                ))
+                self._results.append(
+                    OptimizationResult(
+                        path=path,
+                        name=name,
+                        original=content,
+                        optimized=content,
+                        scores_before=scores_before,
+                        skipped=True,
+                        skip_reason="Optimizer returned inadequate response",
+                    )
+                )
                 continue
 
             # Step 3: Re-evaluate the optimized prompt
@@ -199,7 +223,8 @@ class PromptOptimizer:
             improved = new_overall > overall
             logger.info(
                 "  Optimized: %.1f → %.1f %s",
-                overall, new_overall,
+                overall,
+                new_overall,
                 "(improved)" if improved else "(no improvement — keeping original)",
             )
 

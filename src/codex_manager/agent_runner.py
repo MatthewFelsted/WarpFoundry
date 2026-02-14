@@ -63,9 +63,7 @@ def register_agent(key: str, cls: type[AgentRunner]) -> None:
 
     existing = _REGISTRY.get(normalized_key)
     if existing is not None and existing is not cls:
-        raise ValueError(
-            f"Agent '{normalized_key}' is already registered with {existing.__name__}"
-        )
+        raise ValueError(f"Agent '{normalized_key}' is already registered with {existing.__name__}")
 
     _REGISTRY[normalized_key] = cls
 

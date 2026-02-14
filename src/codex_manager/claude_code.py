@@ -165,8 +165,7 @@ class ClaudeCodeRunner(AgentRunner):
 
         if execution.timed_out:
             timeout_msg = (
-                "Claude Code process timed out after "
-                f"{inactivity_timeout}s with no output activity"
+                f"Claude Code process timed out after {inactivity_timeout}s with no output activity"
             )
             return RunResult(
                 success=False,

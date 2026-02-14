@@ -60,18 +60,18 @@ PHASE_LOG_FILES: dict[PipelinePhase, str] = {
 
 # Default iteration counts per phase
 DEFAULT_ITERATIONS: dict[PipelinePhase, int] = {
-    PipelinePhase.IDEATION: 3,        # Generate ideas 3 times
-    PipelinePhase.PRIORITIZATION: 1,   # Prioritize once
-    PipelinePhase.IMPLEMENTATION: 5,   # Implement top 5 bundles
-    PipelinePhase.TESTING: 2,          # Design + run tests twice
-    PipelinePhase.DEBUGGING: 3,        # Debug up to 3 rounds
-    PipelinePhase.COMMIT: 1,           # One commit pass
+    PipelinePhase.IDEATION: 3,  # Generate ideas 3 times
+    PipelinePhase.PRIORITIZATION: 1,  # Prioritize once
+    PipelinePhase.IMPLEMENTATION: 5,  # Implement top 5 bundles
+    PipelinePhase.TESTING: 2,  # Design + run tests twice
+    PipelinePhase.DEBUGGING: 3,  # Debug up to 3 rounds
+    PipelinePhase.COMMIT: 1,  # One commit pass
     PipelinePhase.PROGRESS_REVIEW: 1,  # Review once
-    PipelinePhase.VISUAL_TEST: 1,      # Visual test once per cycle
-    PipelinePhase.THEORIZE: 2,         # Generate hypotheses twice
-    PipelinePhase.EXPERIMENT: 3,       # Run up to 3 experiments
-    PipelinePhase.SKEPTIC: 1,          # Independent challenge/replication pass
-    PipelinePhase.ANALYZE: 1,          # Analyze once
+    PipelinePhase.VISUAL_TEST: 1,  # Visual test once per cycle
+    PipelinePhase.THEORIZE: 2,  # Generate hypotheses twice
+    PipelinePhase.EXPERIMENT: 3,  # Run up to 3 experiments
+    PipelinePhase.SKEPTIC: 1,  # Independent challenge/replication pass
+    PipelinePhase.ANALYZE: 1,  # Analyze once
 }
 
 # Default phase execution order

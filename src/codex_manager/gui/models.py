@@ -140,6 +140,7 @@ class ChainState(BaseModel):
 
 # ── Pipeline GUI config ──────────────────────────────────────────
 
+
 class PipelinePhaseGUI(BaseModel):
     """A pipeline phase as configured from the GUI."""
 

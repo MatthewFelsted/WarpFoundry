@@ -34,7 +34,9 @@ def _init_git_repo(repo: Path) -> None:
     )
     (repo / "README.md").write_text("init\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True
+    )
 
 
 def _head_sha(repo: Path) -> str:
@@ -169,8 +171,7 @@ class _FollowUpBrainNeedsInput:
             action="follow_up",
             reasoning="Need missing context before implementation.",
             follow_up_prompt=(
-                "Please provide: (1) exact requirements, "
-                "(2) target files, and (3) test command."
+                "Please provide: (1) exact requirements, (2) target files, and (3) test command."
             ),
             severity="high",
         )
@@ -560,8 +561,7 @@ def test_chain_persists_memory_and_reuses_it_in_future_prompts(monkeypatch, tmp_
     ]
     assert entries
     assert any(
-        "Captured concrete findings" in str(entry.get("output_excerpt", ""))
-        for entry in entries
+        "Captured concrete findings" in str(entry.get("output_excerpt", "")) for entry in entries
     )
     assert any(str(entry.get("output_file", "")).endswith("Implementation.md") for entry in entries)
 
@@ -610,9 +610,7 @@ def test_chain_ignores_placeholder_status_output(monkeypatch, tmp_path: Path):
 
     memory_path = repo / ".codex_manager" / "memory" / "chain_step_memory.jsonl"
     if memory_path.exists():
-        assert "Share the task you want implemented" not in memory_path.read_text(
-            encoding="utf-8"
-        )
+        assert "Share the task you want implemented" not in memory_path.read_text(encoding="utf-8")
 
 
 def test_chain_marks_implementation_noop_as_failed_validation(monkeypatch, tmp_path: Path):
@@ -889,7 +887,10 @@ def test_chain_counts_agent_authored_commit_deltas(monkeypatch, tmp_path: Path):
     assert result.files_changed >= 1
     assert result.net_lines_changed != 0
     assert result.commit_sha
-    assert any(str(item.get("path", "")).endswith("src/agent_commit_feature.py") for item in result.changed_files)
+    assert any(
+        str(item.get("path", "")).endswith("src/agent_commit_feature.py")
+        for item in result.changed_files
+    )
 
 
 def test_chain_dry_run_rolls_back_agent_authored_commit(monkeypatch, tmp_path: Path):
@@ -929,7 +930,10 @@ def test_chain_dry_run_rolls_back_agent_authored_commit(monkeypatch, tmp_path: P
     assert result.success is True
     assert result.commit_sha is None
     assert result.files_changed >= 1
-    assert any(str(item.get("path", "")).endswith("src/agent_commit_feature.py") for item in result.changed_files)
+    assert any(
+        str(item.get("path", "")).endswith("src/agent_commit_feature.py")
+        for item in result.changed_files
+    )
 
     assert _head_sha(repo) == baseline_head
     assert not (repo / "src" / "agent_commit_feature.py").exists()

@@ -336,9 +336,7 @@ def _diagnostics_action_args(action_key: str, report) -> list[str] | None:
     """Build subprocess argv for a runnable diagnostics action key."""
     repo = (str(report.resolved_repo_path or "") or str(report.repo_path or "")).strip()
     codex_binary = str(getattr(report, "codex_binary", "codex") or "codex").strip() or "codex"
-    claude_binary = (
-        str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
-    )
+    claude_binary = str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
 
     if action_key == "init_git_repo":
         if not repo:

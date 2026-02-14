@@ -230,9 +230,7 @@ def test_next_actions_install_and_login_commands_use_configured_binaries(
     assert actions_by_key["claude_login"].command == '"claude custom" login'
 
 
-def test_build_preflight_report_flags_placeholder_env_values(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_build_preflight_report_flags_placeholder_env_values(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(preflight.Path, "home", staticmethod(lambda: tmp_path))
     monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")

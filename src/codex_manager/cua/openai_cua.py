@@ -15,8 +15,11 @@ from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     # Load .env from package root or cwd so OPENAI_API_KEY is set when CUA runs
-    _pkg_root = Path(__file__).resolve().parent.parent.parent.parent  # cua/openai_cua.py -> codex_manager/
+    _pkg_root = (
+        Path(__file__).resolve().parent.parent.parent.parent
+    )  # cua/openai_cua.py -> codex_manager/
     for d in (_pkg_root, _pkg_root.parent, Path.cwd()):
         env_file = d / ".env"
         if env_file.is_file():
@@ -72,8 +75,12 @@ def parse_openai_action(action_data: Any) -> CUAAction:
         button=str(getattr(action_data, "button", raw.get("button", "left")) or "left"),
         text=str(getattr(action_data, "text", raw.get("text", "")) or ""),
         keys=list(getattr(action_data, "keys", raw.get("keys", [])) or []),
-        scroll_x=int(getattr(action_data, "scrollX", raw.get("scrollX", raw.get("scroll_x", 0))) or 0),
-        scroll_y=int(getattr(action_data, "scrollY", raw.get("scrollY", raw.get("scroll_y", 0))) or 0),
+        scroll_x=int(
+            getattr(action_data, "scrollX", raw.get("scrollX", raw.get("scroll_x", 0))) or 0
+        ),
+        scroll_y=int(
+            getattr(action_data, "scrollY", raw.get("scrollY", raw.get("scroll_y", 0))) or 0
+        ),
         raw=raw,
     )
 
@@ -159,10 +166,12 @@ class OpenAICUA:
             {"type": "input_text", "text": task},
         ]
         if screenshot_b64:
-            content.append({
-                "type": "input_image",
-                "image_url": f"data:image/png;base64,{screenshot_b64}",
-            })
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{screenshot_b64}",
+                }
+            )
 
         response = client.responses.create(
             model=self.model,

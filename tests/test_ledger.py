@@ -201,7 +201,9 @@ def test_open_suggestions_includes_wishlist_and_feature_categories(tmp_path: Pat
 
     open_suggestions = ledger.get_open_suggestions()
     assert {entry.id for entry in open_suggestions} == {wishlist.id, suggestion.id}
-    assert all(entry.category in {"wishlist", "suggestion", "feature"} for entry in open_suggestions)
+    assert all(
+        entry.category in {"wishlist", "suggestion", "feature"} for entry in open_suggestions
+    )
 
 
 def test_add_is_thread_safe_under_concurrent_writes(monkeypatch, tmp_path: Path) -> None:

@@ -451,10 +451,7 @@ def _print_doctor_report(report: PreflightReport) -> None:
 
     summary = report.summary
     print("\n  " + "-" * 58)
-    print(
-        "  Summary: "
-        f"{summary['pass']} pass, {summary['warn']} warn, {summary['fail']} fail"
-    )
+    print(f"  Summary: {summary['pass']} pass, {summary['warn']} warn, {summary['fail']} fail")
     print(f"  Ready:   {'yes' if report.ready else 'no'}")
 
     actions = list(getattr(report, "next_actions", []) or [])
@@ -498,7 +495,7 @@ def _print_cli_preflight_guard(
         print(f"  - {message}", file=sys.stderr)
     print(
         "\nRun diagnostics for full details:\n"
-        f"  python -m codex_manager doctor --repo \"{repo}\" --agents {','.join(agents)}",
+        f'  python -m codex_manager doctor --repo "{repo}" --agents {",".join(agents)}',
         file=sys.stderr,
     )
     return False
@@ -921,4 +918,3 @@ def _list_prompts() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

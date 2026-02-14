@@ -397,9 +397,7 @@ def test_run_pipeline_preflight_failure_stops_before_orchestrator(
     assert main_module._run_pipeline(args) == 1
 
 
-def test_run_pipeline_preflight_uses_selected_agent(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_run_pipeline_preflight_uses_selected_agent(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     captured_guard_args: dict[str, object] = {}

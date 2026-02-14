@@ -47,8 +47,8 @@ def _single_prompt_catalog(
     ("raw", "expected_overall"),
     [
         ('{"overall": 8.5, "scores": {"clarity": 9}}', 8.5),
-        ("```json\n{\"overall\": 7}\n```", 7),
-        ("prefix text\n{\"overall\": 6}\nsuffix", 6),
+        ('```json\n{"overall": 7}\n```', 7),
+        ('prefix text\n{"overall": 6}\nsuffix', 6),
         ("not valid json", 5.0),
     ],
 )
@@ -133,10 +133,12 @@ def test_optimize_all_skips_when_optimization_fails(monkeypatch) -> None:
 
 def test_optimize_all_skips_when_optimized_response_is_too_short(monkeypatch) -> None:
     catalog = _single_prompt_catalog()
-    responses = iter([
-        '{"overall": 4.5, "scores": {}, "suggestions": ["expand constraints"]}',
-        "short",
-    ])
+    responses = iter(
+        [
+            '{"overall": 4.5, "scores": {}, "suggestions": ["expand constraints"]}',
+            "short",
+        ]
+    )
 
     def fake_connect(*_args, **_kwargs):
         return next(responses)
@@ -153,11 +155,13 @@ def test_optimize_all_applies_improved_prompt_and_saves(monkeypatch) -> None:
     original = "Old prompt that is too vague and should be optimized by the model."
     optimized = "Optimized prompt with explicit structure, constraints, and expected output format."
     catalog = _single_prompt_catalog(original)
-    responses = iter([
-        '{"overall": 4.2, "scores": {"clarity": 4}, "suggestions": ["add structure"]}',
-        optimized,
-        '{"overall": 8.8, "scores": {"clarity": 9}}',
-    ])
+    responses = iter(
+        [
+            '{"overall": 4.2, "scores": {"clarity": 4}, "suggestions": ["add structure"]}',
+            optimized,
+            '{"overall": 8.8, "scores": {"clarity": 9}}',
+        ]
+    )
 
     def fake_connect(*_args, **_kwargs):
         return next(responses)
@@ -176,11 +180,13 @@ def test_optimize_all_dry_run_does_not_apply_or_save(monkeypatch) -> None:
     original = "Prompt before dry run optimization."
     optimized = "Prompt after optimization with enough details to pass the length threshold."
     catalog = _single_prompt_catalog(original)
-    responses = iter([
-        '{"overall": 3.9, "scores": {}, "suggestions": []}',
-        optimized,
-        '{"overall": 8.0, "scores": {}}',
-    ])
+    responses = iter(
+        [
+            '{"overall": 3.9, "scores": {}, "suggestions": []}',
+            optimized,
+            '{"overall": 8.0, "scores": {}}',
+        ]
+    )
 
     def fake_connect(*_args, **_kwargs):
         return next(responses)

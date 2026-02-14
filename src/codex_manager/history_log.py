@@ -99,8 +99,7 @@ class HistoryLogbook:
     @staticmethod
     def _markdown_header() -> str:
         return (
-            "# RUN HISTORY\n\n"
-            "> Auto-maintained execution history for chain and pipeline runs.\n\n"
+            "# RUN HISTORY\n\n> Auto-maintained execution history for chain and pipeline runs.\n\n"
         )
 
     def _rotate_if_month_changed(self) -> None:
@@ -115,7 +114,10 @@ class HistoryLogbook:
         if prev_month == now_month:
             return
 
-        if self.markdown_path.exists() and self.markdown_path.stat().st_size > len(self._markdown_header()) + 8:
+        if (
+            self.markdown_path.exists()
+            and self.markdown_path.stat().st_size > len(self._markdown_header()) + 8
+        ):
             self._rotate_file(self.markdown_path)
         if self.jsonl_path.exists() and self.jsonl_path.stat().st_size > 0:
             self._rotate_file(self.jsonl_path)

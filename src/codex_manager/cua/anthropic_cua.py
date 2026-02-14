@@ -15,6 +15,7 @@ from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     _pkg_root = Path(__file__).resolve().parent.parent.parent.parent
     for d in (_pkg_root, _pkg_root.parent, Path.cwd()):
         env_file = d / ".env"
@@ -67,8 +68,12 @@ def parse_anthropic_action(tool_input: dict[str, Any]) -> CUAAction:
         keys=[tool_input.get("text", "")] if action_type == ActionType.KEY else [],
         scroll_x=int(tool_input.get("scroll_x", 0)),
         scroll_y=int(tool_input.get("scroll_y", 0)),
-        start_x=int(tool_input.get("start_coordinate", [0, 0])[0]) if "start_coordinate" in tool_input else x,
-        start_y=int(tool_input.get("start_coordinate", [0, 0])[1]) if "start_coordinate" in tool_input else y,
+        start_x=int(tool_input.get("start_coordinate", [0, 0])[0])
+        if "start_coordinate" in tool_input
+        else x,
+        start_y=int(tool_input.get("start_coordinate", [0, 0])[1])
+        if "start_coordinate" in tool_input
+        else y,
         end_x=x,
         end_y=y,
         raw=dict(tool_input),
@@ -114,8 +119,7 @@ class AnthropicCUA:
                 from anthropic import Anthropic
             except ImportError as exc:
                 raise RuntimeError(
-                    "Anthropic SDK is required for Claude CUA. "
-                    "Install with: pip install anthropic"
+                    "Anthropic SDK is required for Claude CUA. Install with: pip install anthropic"
                 ) from exc
             api_key = os.getenv("ANTHROPIC_API_KEY")
             if not api_key:
@@ -160,14 +164,16 @@ class AnthropicCUA:
             {"type": "text", "text": task},
         ]
         if screenshot_b64:
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": screenshot_b64,
-                },
-            })
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": screenshot_b64,
+                    },
+                }
+            )
 
         response = client.beta.messages.create(
             model=self.model,
@@ -202,25 +208,27 @@ class AnthropicCUA:
         client = self._get_client()
 
         # Add the tool result
-        messages.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": screenshot_b64,
-                            },
-                        }
-                    ],
-                }
-            ],
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": screenshot_b64,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
         response = client.beta.messages.create(
             model=self.model,

@@ -47,6 +47,7 @@ LOW_IMPACT_LINE_THRESHOLD: int = 20
 # Policy helpers
 # ---------------------------------------------------------------------------
 
+
 def default_stop_policy(state: LoopState) -> StopReason | None:
     """Decide whether to stop the loop based on recent rounds.
 
@@ -100,6 +101,7 @@ def _is_low_impact(er: EvalResult, threshold: int = LOW_IMPACT_LINE_THRESHOLD) -
 # Prompt builder
 # ---------------------------------------------------------------------------
 
+
 def build_round_prompt(
     goal: str,
     round_number: int,
@@ -124,7 +126,8 @@ def build_round_prompt(
             parts.append(f"Diff stat:\n```\n{previous.eval_result.diff_stat[:500]}\n```")
         if previous.run_result.errors:
             parts.append(
-                "Errors from last run:\n" + "\n".join(f"- {e[:200]}" for e in previous.run_result.errors[:5])
+                "Errors from last run:\n"
+                + "\n".join(f"- {e[:200]}" for e in previous.run_result.errors[:5])
             )
         parts.append("")
 
@@ -138,6 +141,7 @@ def build_round_prompt(
 # ---------------------------------------------------------------------------
 # Main orchestrator
 # ---------------------------------------------------------------------------
+
 
 class ImprovementLoop:
     """Orchestrates repeated Codex runs with evaluation and stopping logic.
@@ -246,9 +250,7 @@ class ImprovementLoop:
             # --- Commit (apply mode) or revert (dry-run) ---
             commit_sha = None
             if self.mode == "apply" and not is_clean(self.repo_path):
-                msg = generate_commit_message(
-                    round_num, prompt, eval_result.test_outcome.value
-                )
+                msg = generate_commit_message(round_num, prompt, eval_result.test_outcome.value)
                 commit_sha = commit_all(self.repo_path, msg)
                 logger.info("Committed %s", commit_sha)
             elif self.mode == "dry-run" and not is_clean(self.repo_path):

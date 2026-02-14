@@ -163,12 +163,8 @@ def execute_streaming_json_command(
         if event is not None:
             _append_event(event)
 
-    stdout_thread = threading.Thread(
-        target=_pump_stream, args=("stdout", proc.stdout), daemon=True
-    )
-    stderr_thread = threading.Thread(
-        target=_pump_stream, args=("stderr", proc.stderr), daemon=True
-    )
+    stdout_thread = threading.Thread(target=_pump_stream, args=("stdout", proc.stdout), daemon=True)
+    stderr_thread = threading.Thread(target=_pump_stream, args=("stderr", proc.stderr), daemon=True)
     stdout_thread.start()
     stderr_thread.start()
 
@@ -179,7 +175,10 @@ def execute_streaming_json_command(
 
     try:
         while len(closed_streams) < 2:
-            if inactivity_timeout is not None and (time.monotonic() - last_activity) >= inactivity_timeout:
+            if (
+                inactivity_timeout is not None
+                and (time.monotonic() - last_activity) >= inactivity_timeout
+            ):
                 timed_out = True
                 break
 

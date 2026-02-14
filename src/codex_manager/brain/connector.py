@@ -33,6 +33,7 @@ from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass  # .env must be loaded by the caller or set in the environment
@@ -136,7 +137,9 @@ def _env_path(name: str, default: str | Path) -> str:
 # ── Defaults / knobs ──────────────────────────────────────────────
 
 DEFAULT_TEXT_ONLY: bool = _env_bool("AI_TEXT_ONLY", True)
-DEFAULT_PER_REQUEST_TIMEOUT_S: float = _env_float("AI_PER_REQUEST_TIMEOUT_S", float(60 * 10), minimum=0.1)
+DEFAULT_PER_REQUEST_TIMEOUT_S: float = _env_float(
+    "AI_PER_REQUEST_TIMEOUT_S", float(60 * 10), minimum=0.1
+)
 DEFAULT_RECONNECT_WAIT_S: int = _env_int("AI_RECONNECT_WAIT_S", 30, minimum=0)
 CLIENT_MAX_AGE_S: int = _env_int("AI_CLIENT_MAX_AGE_S", 45 * 60, minimum=1)
 _CACHE_DIR = Path.home() / ".codex_manager"
@@ -159,16 +162,27 @@ RETRY_BACKOFF_MAX_S: float = _env_float("AI_RETRY_BACKOFF_MAX_S", 60.0, minimum=
 
 OLLAMA_AUTO_START: bool = _env_bool("OLLAMA_AUTO_START", False)
 OLLAMA_BASE_URL: str = (
-    _env_str("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-    or "http://localhost:11434"
+    _env_str("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/") or "http://localhost:11434"
 )
 
 NON_RETRYABLE_ERROR_PATTERNS = [
-    "quota exceeded", "insufficient_quota", "model not found", "no api key", "not set",
+    "quota exceeded",
+    "insufficient_quota",
+    "model not found",
+    "no api key",
+    "not set",
 ]
 RETRYABLE_ERROR_PATTERNS = [
-    "rate limit", "429", "timeout", "timed out", "temporarily unavailable",
-    "server error", "503", "connection", "reset by peer", "service unavailable",
+    "rate limit",
+    "429",
+    "timeout",
+    "timed out",
+    "temporarily unavailable",
+    "server error",
+    "503",
+    "connection",
+    "reset by peer",
+    "service unavailable",
 ]
 
 _ollama_last_check: float = 0.0
@@ -176,6 +190,7 @@ _ollama_last_ok: bool = False
 
 
 # ── Persistent cache ──────────────────────────────────────────────
+
 
 class ResultCache:
     """Persistent cache for model responses keyed by provider/model/prompt variant."""
@@ -214,6 +229,7 @@ _cache = ResultCache()
 
 # ── Provider detection ────────────────────────────────────────────
 
+
 def provider_from_model(model: str) -> str:
     """Determine the provider from a model name string."""
     m = (model or "").lower().strip()
@@ -233,14 +249,15 @@ def provider_from_model(model: str) -> str:
 # ── Client registry ───────────────────────────────────────────────
 
 _clients: dict[str, dict[str, Any]] = {
-    p: {"client": None, "created_at": 0.0}
-    for p in ["openai", "gemini", "xai", "anthropic"]
+    p: {"client": None, "created_at": 0.0} for p in ["openai", "gemini", "xai", "anthropic"]
 }
 _clients_lock = threading.Lock()
+
 
 def _now() -> float:
     """Return monotonic time for age/expiry checks."""
     return time.monotonic()
+
 
 def _expired(ts: float) -> bool:
     """Return True when a cached client timestamp is stale."""
@@ -248,6 +265,7 @@ def _expired(ts: float) -> bool:
 
 
 # ── Retry / backoff helpers ───────────────────────────────────────
+
 
 def _sleep_with_backoff(attempt: int) -> None:
     """Sleep using exponential backoff for retry attempts."""
@@ -286,6 +304,7 @@ def _cache_variant(max_output_tokens: int | None = None, temperature: float | No
 
 # ── Reachability ──────────────────────────────────────────────────
 
+
 def is_online(host: str = "api.openai.com", port: int = 443, timeout: float = 3.0) -> bool:
     """Return True if a TCP connection to host/port succeeds within timeout."""
     try:
@@ -307,6 +326,7 @@ ALL_MODELS: list[str] = [
 
 # ── Ollama helpers ────────────────────────────────────────────────
 
+
 def list_ollama_models(timeout_s: float = 3.0) -> list[dict[str, Any]]:
     """Query the Ollama server for installed models.
 
@@ -327,15 +347,17 @@ def list_ollama_models(timeout_s: float = 3.0) -> list[dict[str, Any]]:
             # Normalise: strip ":latest" tag for display
             display = name.replace(":latest", "")
             size_bytes = m.get("size", 0)
-            size_gb = round(size_bytes / (1024 ** 3), 1) if size_bytes else 0
-            result.append({
-                "name": name,
-                "display": display,
-                "ollama_id": f"ollama:{name}",
-                "size_gb": size_gb,
-                "parameter_size": m.get("details", {}).get("parameter_size", ""),
-                "family": m.get("details", {}).get("family", ""),
-            })
+            size_gb = round(size_bytes / (1024**3), 1) if size_bytes else 0
+            result.append(
+                {
+                    "name": name,
+                    "display": display,
+                    "ollama_id": f"ollama:{name}",
+                    "size_gb": size_gb,
+                    "parameter_size": m.get("details", {}).get("parameter_size", ""),
+                    "family": m.get("details", {}).get("family", ""),
+                }
+            )
         return result
     except Exception:
         logger.debug("Failed to list Ollama models", exc_info=True)
@@ -388,9 +410,15 @@ def _maybe_start_ollama() -> None:
 
 # ── Ollama (local) ────────────────────────────────────────────────
 
+
 def _connect_ollama(
-    model: str, prompt: str, text_only: bool, timeout_s: float, *,
-    disable_cache: bool = False, max_output_tokens: int | None = None,
+    model: str,
+    prompt: str,
+    text_only: bool,
+    timeout_s: float,
+    *,
+    disable_cache: bool = False,
+    max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
     variant = _cache_variant(max_output_tokens=max_output_tokens, temperature=temperature)
@@ -409,7 +437,9 @@ def _connect_ollama(
             if temperature is not None:
                 payload.setdefault("options", {})["temperature"] = float(temperature)
             data = json.dumps(payload).encode()
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+            req = urllib.request.Request(
+                url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+            )
             with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 body = resp.read().decode("utf-8", errors="ignore")
             obj = json.loads(body)
@@ -434,6 +464,7 @@ def _connect_ollama(
 
 # ── OpenAI ────────────────────────────────────────────────────────
 
+
 def _get_openai_client(force_new: bool = False) -> Any:
     if OpenAI is None:
         raise RuntimeError("openai SDK not installed. Run: pip install openai")
@@ -449,8 +480,13 @@ def _get_openai_client(force_new: bool = False) -> Any:
 
 
 def _connect_openai(
-    model: str, prompt: str, text_only: bool, timeout_s: float, *,
-    disable_cache: bool = False, max_output_tokens: int | None = None,
+    model: str,
+    prompt: str,
+    text_only: bool,
+    timeout_s: float,
+    *,
+    disable_cache: bool = False,
+    max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
     variant = _cache_variant(max_output_tokens=max_output_tokens, temperature=temperature)
@@ -493,13 +529,21 @@ def _connect_openai(
 
 # ── Gemini (Google) ───────────────────────────────────────────────
 
+
 def _connect_gemini(
-    model: str, prompt: str, text_only: bool, timeout_s: float, *,
-    disable_cache: bool = False, max_output_tokens: int | None = None,
+    model: str,
+    prompt: str,
+    text_only: bool,
+    timeout_s: float,
+    *,
+    disable_cache: bool = False,
+    max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
     if not _GEMINI_SDK:
-        raise RuntimeError("google-generativeai not installed. Run: pip install google-generativeai")
+        raise RuntimeError(
+            "google-generativeai not installed. Run: pip install google-generativeai"
+        )
 
     variant = _cache_variant(max_output_tokens=max_output_tokens, temperature=temperature)
     if not disable_cache:
@@ -538,9 +582,15 @@ def _connect_gemini(
 
 # ── xAI (Grok) ───────────────────────────────────────────────────
 
+
 def _connect_xai(
-    model: str, prompt: str, text_only: bool, timeout_s: float, *,
-    disable_cache: bool = False, max_output_tokens: int | None = None,
+    model: str,
+    prompt: str,
+    text_only: bool,
+    timeout_s: float,
+    *,
+    disable_cache: bool = False,
+    max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
     variant = _cache_variant(max_output_tokens=max_output_tokens, temperature=temperature)
@@ -594,8 +644,13 @@ except Exception:
 
 
 def _connect_anthropic(
-    model: str, prompt: str, text_only: bool, timeout_s: float, *,
-    disable_cache: bool = False, max_output_tokens: int | None = None,
+    model: str,
+    prompt: str,
+    text_only: bool,
+    timeout_s: float,
+    *,
+    disable_cache: bool = False,
+    max_output_tokens: int | None = None,
     temperature: float | None = None,
 ) -> Any:
     if not _ANTHROPIC_AVAILABLE:
@@ -654,6 +709,7 @@ def _connect_anthropic(
 # Main dispatcher
 # ══════════════════════════════════════════════════════════════════
 
+
 def connect(
     model: str,
     prompt: str,
@@ -690,7 +746,9 @@ def connect(
         Sampling temperature (0.0-2.0).
     """
     text_only = DEFAULT_TEXT_ONLY if text_only is None else bool(text_only)
-    per_request_timeout = DEFAULT_PER_REQUEST_TIMEOUT_S if per_request_timeout is None else float(per_request_timeout)
+    per_request_timeout = (
+        DEFAULT_PER_REQUEST_TIMEOUT_S if per_request_timeout is None else float(per_request_timeout)
+    )
     m = model.lower().strip()
 
     try:
@@ -700,22 +758,59 @@ def connect(
             if not _is_ollama_running():
                 raise RuntimeError("Ollama server not running. Start with 'ollama serve'.")
             local_model = model.split(":", 1)[1] if ":" in model else model.split("/", 1)[1]
-            return _connect_ollama(local_model, prompt, text_only, per_request_timeout,
-                                   disable_cache=disable_cache, max_output_tokens=max_output_tokens, temperature=temperature)
+            return _connect_ollama(
+                local_model,
+                prompt,
+                text_only,
+                per_request_timeout,
+                disable_cache=disable_cache,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
         elif "gpt" in m or "o1" in m or "o3" in m or "o4" in m:
-            return _connect_openai(model, prompt, text_only, per_request_timeout,
-                                   disable_cache=disable_cache, max_output_tokens=max_output_tokens, temperature=temperature)
+            return _connect_openai(
+                model,
+                prompt,
+                text_only,
+                per_request_timeout,
+                disable_cache=disable_cache,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
         elif "gemini" in m:
-            return _connect_gemini(model, prompt, text_only, per_request_timeout,
-                                   disable_cache=disable_cache, max_output_tokens=max_output_tokens, temperature=temperature)
+            return _connect_gemini(
+                model,
+                prompt,
+                text_only,
+                per_request_timeout,
+                disable_cache=disable_cache,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
         elif "grok" in m:
-            return _connect_xai(model, prompt, text_only, per_request_timeout,
-                                disable_cache=disable_cache, max_output_tokens=max_output_tokens, temperature=temperature)
+            return _connect_xai(
+                model,
+                prompt,
+                text_only,
+                per_request_timeout,
+                disable_cache=disable_cache,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
         elif any(k in m for k in ("claude", "opus", "sonnet", "haiku")):
-            return _connect_anthropic(model, prompt, text_only, per_request_timeout,
-                                      disable_cache=disable_cache, max_output_tokens=max_output_tokens, temperature=temperature)
+            return _connect_anthropic(
+                model,
+                prompt,
+                text_only,
+                per_request_timeout,
+                disable_cache=disable_cache,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
         else:
-            raise ValueError(f"Unsupported model '{model}'. Supported: GPT, Gemini, Grok, Claude, ollama:<model>")
+            raise ValueError(
+                f"Unsupported model '{model}'. Supported: GPT, Gemini, Grok, Claude, ollama:<model>"
+            )
     except Exception as e:
         if recovery_hints is not None:
             try:
@@ -734,7 +829,9 @@ def prompt_all(
 ) -> list[dict[str, Any]]:
     """Prompt multiple models in parallel and collect results."""
     text_only = DEFAULT_TEXT_ONLY if text_only is None else text_only
-    per_request_timeout = DEFAULT_PER_REQUEST_TIMEOUT_S if per_request_timeout is None else float(per_request_timeout)
+    per_request_timeout = (
+        DEFAULT_PER_REQUEST_TIMEOUT_S if per_request_timeout is None else float(per_request_timeout)
+    )
     models = models or ALL_MODELS
 
     results: list[dict[str, Any]] = []

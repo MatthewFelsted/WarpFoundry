@@ -174,12 +174,10 @@ class LogTracker:
                 "> Extracted from theorize phase outputs / EXPERIMENTS.md.\n"
             ),
             "ANALYSIS.md": (
-                "# Scientist Analysis\n\n"
-                "> Analyze-phase outputs, preserved verbatim for review.\n"
+                "# Scientist Analysis\n\n> Analyze-phase outputs, preserved verbatim for review.\n"
             ),
             "EXPERIMENTS_LATEST.md": (
-                "# Latest EXPERIMENTS.md Snapshot\n\n"
-                "No scientist snapshot captured yet.\n"
+                "# Latest EXPERIMENTS.md Snapshot\n\nNo scientist snapshot captured yet.\n"
             ),
         }
 
@@ -205,7 +203,10 @@ class LogTracker:
         path = self.science_path_for(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         existing = self._read_text_utf8_resilient(path)
-        path.write_text(existing + ("\n" if existing and not existing.endswith("\n") else "") + content, encoding="utf-8")
+        path.write_text(
+            existing + ("\n" if existing and not existing.endswith("\n") else "") + content,
+            encoding="utf-8",
+        )
         return path
 
     def append_science_jsonl(self, relative_path: str, payload: dict[str, Any]) -> Path:
@@ -399,8 +400,5 @@ class LogTracker:
         """Append a phase execution result to PROGRESS.md."""
         timestamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
         status = "SUCCESS" if success else "FAILED"
-        entry = (
-            f"\n### [{status}] {phase} (iteration {iteration}) — {timestamp}\n"
-            f"{summary}\n"
-        )
+        entry = f"\n### [{status}] {phase} (iteration {iteration}) — {timestamp}\n{summary}\n"
         self.append("PROGRESS.md", entry)

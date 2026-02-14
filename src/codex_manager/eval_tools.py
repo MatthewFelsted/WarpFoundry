@@ -52,10 +52,7 @@ def parse_test_command(command: str | Sequence[str] | None) -> list[str] | None:
             if _is_windows_platform():
                 # ``posix=True`` treats backslashes as escapes and mangles
                 # unquoted Windows paths like ``tests\test_app.py``.
-                parts = [
-                    _strip_wrapping_quotes(part)
-                    for part in shlex.split(raw, posix=False)
-                ]
+                parts = [_strip_wrapping_quotes(part) for part in shlex.split(raw, posix=False)]
             else:
                 parts = shlex.split(raw, posix=True)
         except ValueError:

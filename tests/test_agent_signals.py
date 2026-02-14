@@ -24,4 +24,3 @@ def test_terminate_step_instruction_mentions_canonical_tag() -> None:
     text = terminate_step_instruction("step repeat")
     assert TERMINATE_STEP_TAG in text
     assert "skip" in text.lower()
-

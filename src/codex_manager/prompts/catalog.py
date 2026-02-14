@@ -198,42 +198,52 @@ class PromptCatalog:
 
         for phase, entry in self._data.get("pipeline", {}).items():
             if isinstance(entry, dict) and entry.get("prompt"):
-                results.append({
-                    "path": f"pipeline.{phase}",
-                    "name": entry.get("name", phase),
-                    "content": entry["prompt"].strip(),
-                })
+                results.append(
+                    {
+                        "path": f"pipeline.{phase}",
+                        "name": entry.get("name", phase),
+                        "content": entry["prompt"].strip(),
+                    }
+                )
 
         for key, entry in self._data.get("presets", {}).items():
             if isinstance(entry, dict):
                 if entry.get("prompt"):
-                    results.append({
-                        "path": f"presets.{key}.prompt",
-                        "name": f"{entry.get('name', key)} (preset)",
-                        "content": entry["prompt"].strip(),
-                    })
+                    results.append(
+                        {
+                            "path": f"presets.{key}.prompt",
+                            "name": f"{entry.get('name', key)} (preset)",
+                            "content": entry["prompt"].strip(),
+                        }
+                    )
                 if entry.get("ai_prompt"):
-                    results.append({
-                        "path": f"presets.{key}.ai_prompt",
-                        "name": f"{entry.get('name', key)} (AI decides)",
-                        "content": entry["ai_prompt"].strip(),
-                    })
+                    results.append(
+                        {
+                            "path": f"presets.{key}.ai_prompt",
+                            "name": f"{entry.get('name', key)} (AI decides)",
+                            "content": entry["ai_prompt"].strip(),
+                        }
+                    )
 
         for key, entry in self._data.get("brain", {}).items():
             if isinstance(entry, dict) and entry.get("system"):
-                results.append({
-                    "path": f"brain.{key}",
-                    "name": f"Brain: {key}",
-                    "content": entry["system"].strip(),
-                })
+                results.append(
+                    {
+                        "path": f"brain.{key}",
+                        "name": f"Brain: {key}",
+                        "content": entry["system"].strip(),
+                    }
+                )
 
         for key, entry in self._data.get("scientist", {}).items():
             if isinstance(entry, dict) and entry.get("prompt"):
-                results.append({
-                    "path": f"scientist.{key}",
-                    "name": f"Scientist: {entry.get('name', key)}",
-                    "content": entry["prompt"].strip(),
-                })
+                results.append(
+                    {
+                        "path": f"scientist.{key}",
+                        "name": f"Scientist: {entry.get('name', key)}",
+                        "content": entry["prompt"].strip(),
+                    }
+                )
 
         return results
 
@@ -252,13 +262,17 @@ class PromptCatalog:
             import yaml  # type: ignore[import-untyped]
 
             target.write_text(
-                yaml.dump(self._data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+                yaml.dump(
+                    self._data, default_flow_style=False, allow_unicode=True, sort_keys=False
+                ),
                 encoding="utf-8",
             )
         except ImportError:
             import json
 
-            target.write_text(json.dumps(self._data, indent=2, ensure_ascii=False), encoding="utf-8")
+            target.write_text(
+                json.dumps(self._data, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
 
         logger.info("Saved prompt catalog to %s", target)
         return target

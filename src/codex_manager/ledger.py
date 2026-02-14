@@ -313,7 +313,9 @@ class KnowledgeLedger:
             if e.file_path:
                 lines.append(f"  File: {e.file_path}")
             lines.append("")
-        lines.append("When you fix an issue, note the LED-ID in your commit or response so it can be marked resolved.")
+        lines.append(
+            "When you fix an issue, note the LED-ID in your commit or response so it can be marked resolved."
+        )
         return "\n".join(lines)
 
     def stats(self) -> LedgerIndex:

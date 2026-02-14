@@ -130,9 +130,25 @@ async def run_cua_session(
 
             # Dispatch to the appropriate provider loop
             if config.provider == CUAProvider.OPENAI:
-                await _openai_loop(config, browser, initial_screenshot, result, screenshots_dir, start_time, enhanced_task)
+                await _openai_loop(
+                    config,
+                    browser,
+                    initial_screenshot,
+                    result,
+                    screenshots_dir,
+                    start_time,
+                    enhanced_task,
+                )
             elif config.provider == CUAProvider.ANTHROPIC:
-                await _anthropic_loop(config, browser, initial_screenshot, result, screenshots_dir, start_time, enhanced_task)
+                await _anthropic_loop(
+                    config,
+                    browser,
+                    initial_screenshot,
+                    result,
+                    screenshots_dir,
+                    start_time,
+                    enhanced_task,
+                )
             else:
                 result.error = f"Unsupported CUA provider: {config.provider}"
 
@@ -140,7 +156,10 @@ async def run_cua_session(
             if result.summary:
                 result.observations = _parse_observations(result.summary, result.screenshots_saved)
                 if result.observations:
-                    logger.info("Parsed %d structured observations from CUA summary", len(result.observations))
+                    logger.info(
+                        "Parsed %d structured observations from CUA summary",
+                        len(result.observations),
+                    )
                     # Write to project knowledge ledger when provided (pipeline/chain)
                     if ledger is not None:
                         source = f"cua:{config.provider.value}"
@@ -164,7 +183,9 @@ async def run_cua_session(
         logger.error("CUA session failed: %s", exc)
         err_msg = str(exc)
         # Clarify OpenAI CUA 404: usually means account doesn't have access (Tier 3+ required)
-        if "404" in err_msg and ("does not exist or you do not have access" in err_msg or "model_not_found" in err_msg):
+        if "404" in err_msg and (
+            "does not exist or you do not have access" in err_msg or "model_not_found" in err_msg
+        ):
             err_msg += (
                 " The computer-use model often requires OpenAI API Tier 3+ or allowlist access. "
                 "See https://platform.openai.com/docs/models/computer-use-preview. "
@@ -178,7 +199,9 @@ async def run_cua_session(
 
     logger.info(
         "CUA session complete: %d steps, %.1fs, success=%s",
-        result.total_steps, result.duration_seconds, result.success,
+        result.total_steps,
+        result.duration_seconds,
+        result.success,
     )
     return result
 
@@ -186,6 +209,7 @@ async def run_cua_session(
 # ══════════════════════════════════════════════════════════════════
 # OpenAI CUA loop
 # ══════════════════════════════════════════════════════════════════
+
 
 async def _openai_loop(
     config: CUASessionConfig,
@@ -239,7 +263,10 @@ async def _openai_loop(
 
         logger.info(
             "Step %d: %s at (%d,%d) — %s",
-            step_num, action.action_type.value, action.x, action.y,
+            step_num,
+            action.action_type.value,
+            action.x,
+            action.y,
             reasoning[:100] if reasoning else "no reasoning",
         )
 
@@ -278,6 +305,7 @@ async def _openai_loop(
 # ══════════════════════════════════════════════════════════════════
 # Anthropic CUA loop
 # ══════════════════════════════════════════════════════════════════
+
 
 async def _anthropic_loop(
     config: CUASessionConfig,
@@ -345,7 +373,10 @@ async def _anthropic_loop(
 
         logger.info(
             "Step %d: %s at (%d,%d) — %s",
-            step_num, action.action_type.value, action.x, action.y,
+            step_num,
+            action.action_type.value,
+            action.x,
+            action.y,
             reasoning[:100] if reasoning else "no reasoning",
         )
 
@@ -391,6 +422,7 @@ async def _anthropic_loop(
 # ══════════════════════════════════════════════════════════════════
 # Synchronous wrapper (for CLI / non-async contexts)
 # ══════════════════════════════════════════════════════════════════
+
 
 def run_cua_session_sync(
     config: CUASessionConfig,

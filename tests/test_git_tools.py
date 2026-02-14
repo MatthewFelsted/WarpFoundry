@@ -22,11 +22,7 @@ def test_revert_all_preserves_codex_manager_artifacts(tmp_path: Path):
 
 
 def test_diff_numstat_entries_parses_text_and_binary_rows(tmp_path: Path):
-    sample = (
-        "12\t3\tsrc/app.py\n"
-        "-\t-\tassets/logo.png\n"
-        "0\t7\tdocs/readme.md\n"
-    )
+    sample = "12\t3\tsrc/app.py\n-\t-\tassets/logo.png\n0\t7\tdocs/readme.md\n"
     with patch(
         "codex_manager.git_tools._run_git",
         return_value=SimpleNamespace(stdout=sample),

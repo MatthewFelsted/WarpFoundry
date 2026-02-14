@@ -19,11 +19,25 @@ from codex_manager.schemas import EvalResult, RunResult, TestOutcome, UsageInfo
 def _init_git_repo(repo: Path) -> None:
     repo.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     (repo / "README.md").write_text("init\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True
+    )
 
 
 def _head_sha(repo: Path) -> str:
@@ -684,7 +698,7 @@ def test_auto_commit_per_phase_commits_after_each_eligible_phase(monkeypatch, tm
     monkeypatch.setattr(
         orchestrator_module,
         "commit_all",
-        lambda repo_path, msg: (commit_calls.append(msg) or real_commit_all(repo_path, msg)),
+        lambda repo_path, msg: commit_calls.append(msg) or real_commit_all(repo_path, msg),
     )
     monkeypatch.setattr(
         PipelineOrchestrator,
@@ -729,7 +743,7 @@ def test_auto_commit_per_cycle_commits_once_at_cycle_end(monkeypatch, tmp_path: 
     monkeypatch.setattr(
         orchestrator_module,
         "commit_all",
-        lambda repo_path, msg: (commit_calls.append(msg) or real_commit_all(repo_path, msg)),
+        lambda repo_path, msg: commit_calls.append(msg) or real_commit_all(repo_path, msg),
     )
     monkeypatch.setattr(
         PipelineOrchestrator,
@@ -775,7 +789,7 @@ def test_auto_commit_manual_skips_non_commit_phase_auto_commits(monkeypatch, tmp
     monkeypatch.setattr(
         orchestrator_module,
         "commit_all",
-        lambda repo_path, msg: (commit_calls.append(msg) or real_commit_all(repo_path, msg)),
+        lambda repo_path, msg: commit_calls.append(msg) or real_commit_all(repo_path, msg),
     )
     monkeypatch.setattr(
         PipelineOrchestrator,
@@ -1251,7 +1265,7 @@ def test_science_auto_commit_runs_only_after_supported_skeptic(monkeypatch, tmp_
     monkeypatch.setattr(
         orchestrator_module,
         "commit_all",
-        lambda repo_path, msg: (commit_calls.append(msg) or "deadbeef"),
+        lambda repo_path, msg: commit_calls.append(msg) or "deadbeef",
     )
     monkeypatch.setattr(
         PipelineOrchestrator,
@@ -1323,9 +1337,7 @@ def test_non_strict_budget_stops_after_phase_boundary(monkeypatch, tmp_path: Pat
     assert len(state.results) == 2
 
 
-def test_unlimited_cycle_logs_and_completion_messages_are_ascii_safe(
-    monkeypatch, tmp_path: Path
-):
+def test_unlimited_cycle_logs_and_completion_messages_are_ascii_safe(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
 
@@ -1360,10 +1372,7 @@ def test_unlimited_cycle_logs_and_completion_messages_are_ascii_safe(
 
     assert state.stop_reason == "budget_exhausted"
     assert ("=" * 20) + " Cycle 1 / inf " + ("=" * 20) in captured_logs
-    assert any(
-        msg.startswith("Pipeline finished - budget_exhausted")
-        for msg in captured_logs
-    )
+    assert any(msg.startswith("Pipeline finished - budget_exhausted") for msg in captured_logs)
     for msg in captured_logs:
         msg.encode("ascii")
 
@@ -1372,7 +1381,7 @@ def test_orchestrator_source_has_no_known_mojibake_sequences() -> None:
     source_text = Path(orchestrator_module.__file__).read_text(encoding="utf-8")
 
     assert "\u00e2\u20ac\u201d" not in source_text  # "â€”"
-    assert "\u00e2\u201d\x81" not in source_text    # corrupted line separator
+    assert "\u00e2\u201d\x81" not in source_text  # corrupted line separator
     assert "\u00e2\u02c6\u017e" not in source_text  # "âˆž"
-    assert "\u00ce\u201d" not in source_text        # "Î”"
+    assert "\u00ce\u201d" not in source_text  # "Î”"
     assert not any("\u0080" <= ch <= "\u009f" for ch in source_text)

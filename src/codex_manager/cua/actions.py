@@ -107,14 +107,14 @@ class CUAObservation:
     captured by the CUA during its session.
     """
 
-    element: str = ""          # what element or view is affected
-    expected: str = ""         # expected behavior / appearance
-    actual: str = ""           # what actually happened
-    severity: str = "minor"    # "critical" | "major" | "minor" | "cosmetic" | "positive"
-    step_number: int = 0       # which step discovered this
-    screenshot: str = ""       # path to the relevant screenshot (if any)
-    category: str = ""         # "layout" | "interaction" | "navigation" | "content" | "performance"
-    recommendation: str = ""   # suggested fix or improvement
+    element: str = ""  # what element or view is affected
+    expected: str = ""  # expected behavior / appearance
+    actual: str = ""  # what actually happened
+    severity: str = "minor"  # "critical" | "major" | "minor" | "cosmetic" | "positive"
+    step_number: int = 0  # which step discovered this
+    screenshot: str = ""  # path to the relevant screenshot (if any)
+    category: str = ""  # "layout" | "interaction" | "navigation" | "content" | "performance"
+    recommendation: str = ""  # suggested fix or improvement
 
 
 @dataclass
@@ -144,7 +144,13 @@ class CUASessionResult:
             obs_group = [o for o in self.observations if o.severity == sev]
             if not obs_group:
                 continue
-            icon = {"critical": "🔴", "major": "🟠", "minor": "🟡", "cosmetic": "⚪", "positive": "🟢"}.get(sev, "•")
+            icon = {
+                "critical": "🔴",
+                "major": "🟠",
+                "minor": "🟡",
+                "cosmetic": "⚪",
+                "positive": "🟢",
+            }.get(sev, "•")
             lines.append(f"\n#### {icon} {sev.title()} ({len(obs_group)})\n")
             for o in obs_group:
                 lines.append(f"- **{o.element or 'Unknown element'}**")

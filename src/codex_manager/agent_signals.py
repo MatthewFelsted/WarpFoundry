@@ -24,4 +24,3 @@ def terminate_step_instruction(scope: str) -> str:
         f"output `{TERMINATE_STEP_TAG}` on its own line. The runner will "
         "skip the remaining repeats/iterations."
     )
-

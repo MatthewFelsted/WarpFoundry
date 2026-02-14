@@ -142,15 +142,19 @@ class ScientistEngine:
                 ),
             ]
         )
-        return self._to_experiment_results(state.results)[0] if state.results else ExperimentResult(
-            hypothesis_id=hypothesis.id,
-            success=False,
-            baseline_metrics={},
-            post_metrics={},
-            conclusion="inconclusive",
-            analysis="No experiment result produced.",
-            changes_kept=False,
-            duration_seconds=0.0,
+        return (
+            self._to_experiment_results(state.results)[0]
+            if state.results
+            else ExperimentResult(
+                hypothesis_id=hypothesis.id,
+                success=False,
+                baseline_metrics={},
+                post_metrics={},
+                conclusion="inconclusive",
+                analysis="No experiment result produced.",
+                changes_kept=False,
+                duration_seconds=0.0,
+            )
         )
 
     def analyze_findings(self) -> str:

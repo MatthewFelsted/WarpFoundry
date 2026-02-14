@@ -174,7 +174,9 @@ class TestCodexRunnerIntegration:
 
         assert result.success is False
         assert result.errors
-        assert any("permission denied" in err.lower() or "sandbox" in err.lower() for err in result.errors)
+        assert any(
+            "permission denied" in err.lower() or "sandbox" in err.lower() for err in result.errors
+        )
 
     def test_nonzero_exit_without_stderr_still_has_error_text(self, tmp_path: Path):
         stub = _make_stub_cli(tmp_path, "codex_stub", CODEX_STUB_SCRIPT)

@@ -310,10 +310,7 @@ class PipelineOrchestrator:
     def _brain_goal(self, phase: str) -> str:
         """Return a repo-anchored goal string for brain prompts."""
         repo_name = self.repo_path.name or "repository"
-        return (
-            f"Pipeline phase '{phase}' for repository '{repo_name}' "
-            f"at path: {self.repo_path}"
-        )
+        return f"Pipeline phase '{phase}' for repository '{repo_name}' at path: {self.repo_path}"
 
     @staticmethod
     def _test_outcome_rank(outcome: str) -> int:
@@ -348,7 +345,8 @@ class PipelineOrchestrator:
             - cls._test_outcome_rank(baseline_eval.test_outcome.value),
             "delta_test_exit_code": int(result.test_exit_code) - int(baseline_eval.test_exit_code),
             "delta_files_changed": int(result.files_changed) - int(baseline_eval.files_changed),
-            "delta_net_lines_changed": int(result.net_lines_changed) - int(baseline_eval.net_lines_changed),
+            "delta_net_lines_changed": int(result.net_lines_changed)
+            - int(baseline_eval.net_lines_changed),
         }
 
     @classmethod
@@ -409,7 +407,11 @@ class PipelineOrchestrator:
         before_rank = cls._test_outcome_rank(before)
         after_rank = cls._test_outcome_rank(after)
         if after_rank < before_rank:
-            return "refuted", f"skeptic validation regressed tests ({before} -> {after})", confidence
+            return (
+                "refuted",
+                f"skeptic validation regressed tests ({before} -> {after})",
+                confidence,
+            )
 
         if parsed_verdict:
             if parsed_verdict == "supported":
@@ -432,12 +434,9 @@ class PipelineOrchestrator:
         if verdict != "supported":
             return False
         if phase == PipelinePhase.EXPERIMENT:
-            return (
-                tradeoff_deltas.get("delta_test_rank", 0) >= 0
-                and (
-                    tradeoff_deltas.get("delta_files_changed", 0) != 0
-                    or tradeoff_deltas.get("delta_net_lines_changed", 0) != 0
-                )
+            return tradeoff_deltas.get("delta_test_rank", 0) >= 0 and (
+                tradeoff_deltas.get("delta_files_changed", 0) != 0
+                or tradeoff_deltas.get("delta_net_lines_changed", 0) != 0
             )
         if phase == PipelinePhase.SKEPTIC:
             return tradeoff_deltas.get("delta_test_rank", 0) >= 0
@@ -623,7 +622,11 @@ class PipelineOrchestrator:
         elif phase == PipelinePhase.SKEPTIC:
             experiment_id = (
                 preferred_experiment_id
-                or (self._science_experiment_by_hypothesis.get(hypothesis_id) if hypothesis_id else "")
+                or (
+                    self._science_experiment_by_hypothesis.get(hypothesis_id)
+                    if hypothesis_id
+                    else ""
+                )
                 or self._next_science_id("SCI-EXP-UNLINKED")
             )
 
@@ -665,9 +668,7 @@ class PipelineOrchestrator:
                         )
                 else:
                     rollback_action = "skipped_baseline_dirty"
-                    result.error_message = (
-                        f"{result.error_message}; rollback skipped because baseline repo was not clean"
-                    )
+                    result.error_message = f"{result.error_message}; rollback skipped because baseline repo was not clean"
                     self._log(
                         "warn",
                         "  Science rollback skipped because baseline repo was already dirty",
@@ -684,19 +685,15 @@ class PipelineOrchestrator:
         result.science_verdict_rationale = rationale
         result.science_tradeoff_deltas = dict(tradeoff_deltas)
 
-        stem = (
-            f"cycle-{cycle:03d}-{phase.value}-iter-{iteration:02d}-"
-            f"{trial_id.lower()}"
-        )
+        stem = f"cycle-{cycle:03d}-{phase.value}-iter-{iteration:02d}-{trial_id.lower()}"
         prompt_path = self.tracker.save_science_artifact(
             "prompts",
             stem,
             prompt,
             suffix=".txt",
         )
-        output_text = (
-            result.agent_final_message.strip()
-            or (result.error_message.strip() if result.error_message else "(no output captured)")
+        output_text = result.agent_final_message.strip() or (
+            result.error_message.strip() if result.error_message else "(no output captured)"
         )
         output_path = self.tracker.save_science_artifact(
             "outputs",
@@ -720,18 +717,12 @@ class PipelineOrchestrator:
             if blocks:
                 self.tracker.append_science(
                     "HYPOTHESES.md",
-                    (
-                        f"\n## Cycle {cycle}, Iteration {iteration} - {timestamp}\n\n"
-                        f"{blocks}\n"
-                    ),
+                    (f"\n## Cycle {cycle}, Iteration {iteration} - {timestamp}\n\n{blocks}\n"),
                 )
         elif phase == PipelinePhase.ANALYZE:
             self.tracker.append_science(
                 "ANALYSIS.md",
-                (
-                    f"\n## Cycle {cycle}, Iteration {iteration} - {timestamp}\n\n"
-                    f"{output_text}\n"
-                ),
+                (f"\n## Cycle {cycle}, Iteration {iteration} - {timestamp}\n\n{output_text}\n"),
             )
 
         payload = {
@@ -937,9 +928,7 @@ class PipelineOrchestrator:
     def _collect_required_agents(self, config: PipelineConfig) -> set[str]:
         phase_order = config.get_phase_order()
         agents = {
-            (p.agent or config.agent or "codex").strip().lower()
-            for p in phase_order
-            if p.enabled
+            (p.agent or config.agent or "codex").strip().lower() for p in phase_order if p.enabled
         }
         if not agents:
             agents = {(config.agent or "codex").strip().lower()}
@@ -976,14 +965,9 @@ class PipelineOrchestrator:
                         "or log in with the Claude CLI first."
                     )
             else:
-                issues.append(
-                    f"Unknown agent '{agent}'. Supported: codex, claude_code, auto"
-                )
+                issues.append(f"Unknown agent '{agent}'. Supported: codex, claude_code, auto")
 
-        uses_cua = any(
-            p.enabled and p.phase == PipelinePhase.VISUAL_TEST
-            for p in phase_order
-        )
+        uses_cua = any(p.enabled and p.phase == PipelinePhase.VISUAL_TEST for p in phase_order)
         if uses_cua:
             provider = (config.cua_provider or "openai").strip().lower()
             if provider == "openai":
@@ -994,9 +978,7 @@ class PipelineOrchestrator:
                         "CUA visual test requires the OpenAI SDK. Install with: pip install openai"
                     )
                 if not os.getenv("OPENAI_API_KEY"):
-                    issues.append(
-                        "CUA visual test (openai provider) requires OPENAI_API_KEY."
-                    )
+                    issues.append("CUA visual test (openai provider) requires OPENAI_API_KEY.")
             elif provider == "anthropic":
                 try:
                     import anthropic  # noqa: F401
@@ -1087,11 +1069,13 @@ class PipelineOrchestrator:
         evaluator = RepoEvaluator(test_cmd=test_cmd, skip_tests=(test_cmd is None))
 
         # Initialize brain
-        brain = BrainManager(BrainConfig(
-            enabled=config.brain_enabled,
-            model=config.brain_model,
-            local_only=getattr(config, "local_only", False),
-        ))
+        brain = BrainManager(
+            BrainConfig(
+                enabled=config.brain_enabled,
+                model=config.brain_model,
+                local_only=getattr(config, "local_only", False),
+            )
+        )
         self._brain_logbook = None
         if brain.enabled:
             try:
@@ -1295,9 +1279,15 @@ class PipelineOrchestrator:
                             )
 
                         # Build the full prompt with log context
-                        context = self.tracker.get_context_for_phase(phase.value, ledger=self.ledger)
+                        context = self.tracker.get_context_for_phase(
+                            phase.value, ledger=self.ledger
+                        )
                         full_prompt = self._build_phase_prompt(
-                            base_prompt, phase, context, cycle_num, iteration,
+                            base_prompt,
+                            phase,
+                            context,
+                            cycle_num,
+                            iteration,
                         )
 
                         # Brain refinement
@@ -1305,7 +1295,15 @@ class PipelineOrchestrator:
                             original_prompt = full_prompt
                             history = self._build_history_summary()
                             ledger_ctx = self.ledger.get_context_for_prompt(
-                                categories=["error", "bug", "observation", "suggestion", "wishlist", "todo", "feature"],
+                                categories=[
+                                    "error",
+                                    "bug",
+                                    "observation",
+                                    "suggestion",
+                                    "wishlist",
+                                    "todo",
+                                    "feature",
+                                ],
                                 max_items=15,
                             )
                             full_prompt = brain.plan_step(
@@ -1352,8 +1350,14 @@ class PipelineOrchestrator:
                         runner = runners.get(agent_key, runners["codex"])
 
                         result = self._execute_phase(
-                            runner, evaluator, repo, config,
-                            phase, cycle_num, iteration, full_prompt,
+                            runner,
+                            evaluator,
+                            repo,
+                            config,
+                            phase,
+                            cycle_num,
+                            iteration,
+                            full_prompt,
                         )
 
                         if science_baseline_eval is not None:
@@ -1454,7 +1458,15 @@ class PipelineOrchestrator:
                         control_result = result
                         if brain.enabled:
                             ledger_ctx = self.ledger.get_context_for_prompt(
-                                categories=["error", "bug", "observation", "suggestion", "wishlist", "todo", "feature"],
+                                categories=[
+                                    "error",
+                                    "bug",
+                                    "observation",
+                                    "suggestion",
+                                    "wishlist",
+                                    "todo",
+                                    "feature",
+                                ],
                                 max_items=15,
                             )
                             decision = brain.evaluate_step(
@@ -1502,14 +1514,11 @@ class PipelineOrchestrator:
                                         },
                                     )
                                 else:
-                                    followup_prompt = (
-                                        (decision.follow_up_prompt or "").strip()
-                                        or (
-                                            f"Retry phase '{phase.value}' to resolve remaining issues. "
-                                            f"Prior attempt test_outcome={result.test_outcome}, "
-                                            f"files_changed={result.files_changed}, "
-                                            f"net_lines={result.net_lines_changed:+d}."
-                                        )
+                                    followup_prompt = (decision.follow_up_prompt or "").strip() or (
+                                        f"Retry phase '{phase.value}' to resolve remaining issues. "
+                                        f"Prior attempt test_outcome={result.test_outcome}, "
+                                        f"files_changed={result.files_changed}, "
+                                        f"net_lines={result.net_lines_changed:+d}."
                                     )
                                     self._log(
                                         "info",
@@ -1527,8 +1536,14 @@ class PipelineOrchestrator:
                                         },
                                     )
                                     followup_result = self._execute_phase(
-                                        runner, evaluator, repo, config,
-                                        phase, cycle_num, iteration, followup_prompt,
+                                        runner,
+                                        evaluator,
+                                        repo,
+                                        config,
+                                        phase,
+                                        cycle_num,
+                                        iteration,
+                                        followup_prompt,
                                     )
                                     self.state.results.append(followup_result)
                                     if followup_result.success:
@@ -1536,16 +1551,22 @@ class PipelineOrchestrator:
                                     else:
                                         self.state.failures += 1
                                     self.state.total_phases_completed += 1
-                                    self.state.total_tokens += followup_result.input_tokens + followup_result.output_tokens
+                                    self.state.total_tokens += (
+                                        followup_result.input_tokens + followup_result.output_tokens
+                                    )
                                     self.state.elapsed_seconds = time.monotonic() - start_time
                                     if self._check_strict_token_budget(config):
                                         cycle_aborted = True
                                         break
 
-                                    if not followup_result.success and followup_result.error_message:
+                                    if (
+                                        not followup_result.success
+                                        and followup_result.error_message
+                                    ):
                                         self.ledger.add(
                                             category="error",
-                                            title=followup_result.error_message[:80] or "Brain follow-up failed",
+                                            title=followup_result.error_message[:80]
+                                            or "Brain follow-up failed",
                                             detail=followup_result.error_message,
                                             severity="major",
                                             source=f"pipeline:{phase.value}:brain_followup",
@@ -1606,7 +1627,9 @@ class PipelineOrchestrator:
                                     )
                                     control_result = followup_result
                             elif decision.action == "escalate":
-                                self._log("error", f"Brain escalation: {decision.human_message[:300]}")
+                                self._log(
+                                    "error", f"Brain escalation: {decision.human_message[:300]}"
+                                )
                                 self._record_brain_note(
                                     "escalation",
                                     "Brain escalated and paused the pipeline.",
@@ -1646,7 +1669,9 @@ class PipelineOrchestrator:
                             cycle_aborted = True
                             break
 
-                        terminate_signal = result.terminate_repeats or control_result.terminate_repeats
+                        terminate_signal = (
+                            result.terminate_repeats or control_result.terminate_repeats
+                        )
                         if terminate_signal and iteration < phase_cfg.iterations:
                             remaining = phase_cfg.iterations - iteration
                             self._log(
@@ -1890,9 +1915,7 @@ class PipelineOrchestrator:
         # Evaluate
         eval_result = evaluator.evaluate(repo)
         outcome_level = (
-            "info"
-            if eval_result.test_outcome.value in ("passed", "skipped")
-            else "warn"
+            "info" if eval_result.test_outcome.value in ("passed", "skipped") else "warn"
         )
         self._log(
             outcome_level,
@@ -1975,9 +1998,7 @@ class PipelineOrchestrator:
         tests_validation_success = tests_outcome in ("passed", "skipped")
         requires_repo_delta = self._phase_requires_repo_delta(phase)
         has_repo_delta = (
-            eval_result.files_changed > 0
-            or eval_result.net_lines_changed != 0
-            or bool(commit_sha)
+            eval_result.files_changed > 0 or eval_result.net_lines_changed != 0 or bool(commit_sha)
         )
         repo_delta_success = (not requires_repo_delta) or has_repo_delta or terminate_repeats
         validation_success = tests_validation_success and repo_delta_success
@@ -2097,11 +2118,7 @@ class PipelineOrchestrator:
             return False
 
         provider_str = getattr(config, "cua_provider", "openai")
-        provider = (
-            CUAProvider.ANTHROPIC
-            if provider_str == "anthropic"
-            else CUAProvider.OPENAI
-        )
+        provider = CUAProvider.ANTHROPIC if provider_str == "anthropic" else CUAProvider.OPENAI
 
         target_url = getattr(config, "cua_target_url", "")
         task = getattr(config, "cua_task", "")
@@ -2154,11 +2171,14 @@ class PipelineOrchestrator:
                 findings += f"\n### Observations ({len(result.observations)})\n\n"
                 findings += result.observations_markdown()
                 findings += "\n"
-                self._log("info", f"  CUA captured {len(result.observations)} structured observations")
+                self._log(
+                    "info", f"  CUA captured {len(result.observations)} structured observations"
+                )
             if result.summary:
                 # Strip raw OBSERVATION lines from the summary for readability
                 clean_summary = "\n".join(
-                    line for line in result.summary.splitlines()
+                    line
+                    for line in result.summary.splitlines()
                     if not line.strip().upper().startswith("OBSERVATION|")
                 )
                 if clean_summary.strip():
@@ -2206,9 +2226,7 @@ class PipelineOrchestrator:
     # Stop conditions
     # ------------------------------------------------------------------
 
-    def _check_stop_conditions(
-        self, config: PipelineConfig, start_time: float
-    ) -> str | None:
+    def _check_stop_conditions(self, config: PipelineConfig, start_time: float) -> str | None:
         elapsed_min = (time.monotonic() - start_time) / 60
 
         if config.max_time_minutes > 0 and elapsed_min >= config.max_time_minutes:
@@ -2234,7 +2252,7 @@ class PipelineOrchestrator:
             if not prev_cycle or not curr_cycle:
                 phase_count = len(config.get_phase_order())
                 if len(results) >= phase_count * 2:
-                    prev_cycle = results[-(phase_count * 2):-phase_count]
+                    prev_cycle = results[-(phase_count * 2) : -phase_count]
                     curr_cycle = results[-phase_count:]
 
         if prev_cycle and curr_cycle:
@@ -2253,13 +2271,8 @@ class PipelineOrchestrator:
         # Legacy simple convergence fallback (consistent with chain.py)
         if config.stop_on_convergence and len(results) >= 4:
             last_4 = results[-4:]
-            all_pass = all(
-                r.test_outcome in ("passed", "skipped") for r in last_4
-            )
-            all_low = all(
-                abs(r.net_lines_changed) < 20 and r.files_changed <= 2
-                for r in last_4
-            )
+            all_pass = all(r.test_outcome in ("passed", "skipped") for r in last_4)
+            all_low = all(abs(r.net_lines_changed) < 20 and r.files_changed <= 2 for r in last_4)
             if all_pass and all_low:
                 return "convergence_detected"
 
@@ -2282,10 +2295,9 @@ class PipelineOrchestrator:
         return True
 
     @staticmethod
-    def _compute_improvement(
-        prev: list[PhaseResult], curr: list[PhaseResult]
-    ) -> float:
+    def _compute_improvement(prev: list[PhaseResult], curr: list[PhaseResult]) -> float:
         """Compute improvement percentage between two cycles."""
+
         def _activity(results: list[PhaseResult]) -> int:
             return sum(r.files_changed for r in results)
 
@@ -2310,5 +2322,3 @@ class PipelineOrchestrator:
 
         score = activity_ratio * 0.45 + magnitude_ratio * 0.35 + success_delta * 0.20
         return min(score, 200.0)
-
-

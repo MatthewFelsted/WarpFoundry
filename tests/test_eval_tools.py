@@ -71,9 +71,7 @@ class TestParseTestCommand:
         ]
 
     def test_parses_windows_style_quoted_executable(self):
-        assert parse_test_command(
-            '"C:\\Program Files\\Python\\python.exe" -m pytest -q'
-        ) == [
+        assert parse_test_command('"C:\\Program Files\\Python\\python.exe" -m pytest -q') == [
             r"C:\Program Files\Python\python.exe",
             "-m",
             "pytest",

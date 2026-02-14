@@ -22,6 +22,7 @@ _ATOMIC_REPLACE_RETRY_SECONDS = 0.01
 # Codex CLI run results
 # ---------------------------------------------------------------------------
 
+
 class EventKind(str, Enum):
     """Known JSONL event types emitted by ``codex exec --json``."""
 
@@ -68,8 +69,10 @@ class RunResult(BaseModel):
 # Evaluation results
 # ---------------------------------------------------------------------------
 
+
 class TestOutcome(str, Enum):
     """Outcome of test execution during repository evaluation."""
+
     __test__ = False  # Prevent pytest from collecting this enum as a test class.
 
     PASSED = "passed"
@@ -95,6 +98,7 @@ class EvalResult(BaseModel):
 # Loop / orchestration state
 # ---------------------------------------------------------------------------
 
+
 class RoundRecord(BaseModel):
     """Persisted record of a single improvement round."""
 
@@ -110,6 +114,7 @@ class RoundRecord(BaseModel):
 
 class StopReason(str, Enum):
     """Reason an improvement loop stopped."""
+
     MAX_ROUNDS = "max_rounds"
     TESTS_PASS_LOW_IMPACT = "tests_pass_low_impact"
     BUDGET_EXHAUSTED = "budget_exhausted"

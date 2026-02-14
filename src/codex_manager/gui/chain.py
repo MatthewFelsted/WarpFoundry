@@ -72,13 +72,20 @@ def _resolve_debug_log_path() -> Path | None:
     return Path(raw).expanduser()
 
 
-def _agent_log(location: str, message: str, data: dict | None = None, hypothesis_id: str = "") -> None:
+def _agent_log(
+    location: str, message: str, data: dict | None = None, hypothesis_id: str = ""
+) -> None:
     log_path = _resolve_debug_log_path()
     if log_path is None:
         return
 
     try:
-        payload = {"id": f"log_{int(time.time()*1000)}", "timestamp": int(time.time() * 1000), "location": location, "message": message}
+        payload = {
+            "id": f"log_{int(time.time() * 1000)}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+        }
         if data:
             payload["data"] = data
         if hypothesis_id:
@@ -88,6 +95,8 @@ def _agent_log(location: str, message: str, data: dict | None = None, hypothesis
             f.write(json.dumps(payload) + "\n")
     except Exception:
         pass
+
+
 # #endregion
 
 
@@ -244,9 +253,7 @@ class ChainExecutor:
             with contextlib.suppress(queue.Empty):
                 self.log_queue.get_nowait()
             self.log_queue.put_nowait(entry)
-        getattr(logger, level if level != "warn" else "warning", logger.info)(
-            "[chain] %s", message
-        )
+        getattr(logger, level if level != "warn" else "warning", logger.info)("[chain] %s", message)
         self.state.last_log_epoch_ms = log_epoch_ms
         self.state.last_log_level = level
         self.state.last_log_message = message[:500]
@@ -375,10 +382,7 @@ class ChainExecutor:
             return True
         if normalized.startswith("working directory set to `"):
             return True
-        if (
-            normalized.startswith("using `")
-            and "as the working directory" in normalized
-        ):
+        if normalized.startswith("using `") and "as the working directory" in normalized:
             return True
 
         placeholders = (
@@ -415,7 +419,9 @@ class ChainExecutor:
         cue_hits = sum(1 for cue in cues if cue in normalized)
         if cue_hits >= 2:
             return True
-        if "please provide" in normalized and any(tok in normalized for tok in ("(1)", "1)", "1.", "2)", "2.")):
+        if "please provide" in normalized and any(
+            tok in normalized for tok in ("(1)", "1)", "1.", "2)", "2.")
+        ):
             return True
         return "confirm" in normalized and "to proceed" in normalized
 
@@ -708,8 +714,7 @@ class ChainExecutor:
             )
 
         uses_codex = any(
-            step.enabled and (step.agent or "auto") != "claude_code"
-            for step in config.steps
+            step.enabled and (step.agent or "auto") != "claude_code" for step in config.steps
         )
         if uses_codex and config.codex_sandbox_mode == "read-only":
             self._log(
@@ -756,7 +761,17 @@ class ChainExecutor:
         )
         self._initialize_step_memory(repo)
         # #region agent log
-        _agent_log("chain.py:_run_loop", "run_loop started", {"repo_path": str(config.repo_path), "repo_resolved": str(repo), "steps_count": len(config.steps), "enabled_steps": [s.name or s.job_type for s in config.steps if s.enabled]}, "H1")
+        _agent_log(
+            "chain.py:_run_loop",
+            "run_loop started",
+            {
+                "repo_path": str(config.repo_path),
+                "repo_resolved": str(repo),
+                "steps_count": len(config.steps),
+                "enabled_steps": [s.name or s.job_type for s in config.steps if s.enabled],
+            },
+            "H1",
+        )
         # #endregion
 
         # Build agent runners
@@ -803,11 +818,13 @@ class ChainExecutor:
         evaluator = RepoEvaluator(test_cmd=test_cmd, skip_tests=(test_cmd is None))
 
         # Initialise the brain (thinking layer)
-        brain = BrainManager(BrainConfig(
-            enabled=config.brain_enabled,
-            model=config.brain_model,
-            local_only=getattr(config, "local_only", False),
-        ))
+        brain = BrainManager(
+            BrainConfig(
+                enabled=config.brain_enabled,
+                model=config.brain_model,
+                local_only=getattr(config, "local_only", False),
+            )
+        )
         self._brain_logbook = None
         if brain.enabled:
             try:
@@ -891,8 +908,14 @@ class ChainExecutor:
                 # ── Parallel execution mode ───────────────────────────
                 if config.parallel_execution and len(enabled_steps) > 1:
                     loop_aborted = self._run_steps_parallel(
-                        runners, evaluator, repo, config, loop_num,
-                        enabled_steps, brain, start_time,
+                        runners,
+                        evaluator,
+                        repo,
+                        config,
+                        loop_num,
+                        enabled_steps,
+                        brain,
+                        start_time,
                     )
                 else:
                     # ── Sequential execution (default) ────────────────
@@ -919,10 +942,7 @@ class ChainExecutor:
                                 loop_aborted = True
                                 break
 
-                            rep_tag = (
-                                f" (rep {step_rep}/{step_loops})"
-                                if step_loops > 1 else ""
-                            )
+                            rep_tag = f" (rep {step_rep}/{step_loops})" if step_loops > 1 else ""
                             self.state.current_step_name = f"{step_label}{rep_tag}"
                             self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
                             self._log(
@@ -932,11 +952,21 @@ class ChainExecutor:
                             )
 
                             result = self._execute_step(
-                                runner, evaluator, repo, config,
-                                loop_num, step_idx, step, brain,
+                                runner,
+                                evaluator,
+                                repo,
+                                config,
+                                loop_num,
+                                step_idx,
+                                step,
+                                brain,
                             )
                             self.state.results.append(result)
-                            if not result.success and result.error_message and getattr(self, "ledger", None):
+                            if (
+                                not result.success
+                                and result.error_message
+                                and getattr(self, "ledger", None)
+                            ):
                                 self.ledger.add(
                                     category="error",
                                     title=result.error_message[:80] or "Step failed",
@@ -946,12 +976,8 @@ class ChainExecutor:
                                     step_ref=f"loop{loop_num}:step{step_idx}:{step.job_type}",
                                 )
                             self.state.total_steps_completed += 1
-                            self.state.total_tokens += (
-                                result.input_tokens + result.output_tokens
-                            )
-                            self.state.elapsed_seconds = (
-                                time.monotonic() - start_time
-                            )
+                            self.state.total_tokens += result.input_tokens + result.output_tokens
+                            self.state.elapsed_seconds = time.monotonic() - start_time
                             if self._check_strict_token_budget(config):
                                 loop_aborted = True
                                 break
@@ -961,7 +987,15 @@ class ChainExecutor:
                                 ledger_ctx = ""
                                 if getattr(self, "ledger", None):
                                     ledger_ctx = self.ledger.get_context_for_prompt(
-                                        categories=["error", "bug", "observation", "suggestion", "wishlist", "todo", "feature"],
+                                        categories=[
+                                            "error",
+                                            "bug",
+                                            "observation",
+                                            "suggestion",
+                                            "wishlist",
+                                            "todo",
+                                            "feature",
+                                        ],
                                         max_items=15,
                                     )
                                 decision = brain.evaluate_step(
@@ -970,10 +1004,7 @@ class ChainExecutor:
                                     test_outcome=result.test_outcome,
                                     files_changed=result.files_changed,
                                     net_lines=result.net_lines_changed,
-                                    errors=(
-                                        [result.error_message]
-                                        if result.error_message else []
-                                    ),
+                                    errors=([result.error_message] if result.error_message else []),
                                     goal=brain_goal,
                                     ledger_context=ledger_ctx,
                                 )
@@ -1000,9 +1031,7 @@ class ChainExecutor:
                                         f"Brain: {decision.reasoning[:200]}",
                                     )
 
-                                if (
-                                    decision.action in ("follow_up", "retry")
-                                ):
+                                if decision.action in ("follow_up", "retry"):
                                     if result.terminate_repeats:
                                         self._log(
                                             "info",
@@ -1020,13 +1049,12 @@ class ChainExecutor:
                                         )
                                     else:
                                         followup_prompt = (
-                                            (decision.follow_up_prompt or "").strip()
-                                            or (
-                                                f"Retry step '{step_label}' to resolve remaining issues. "
-                                                f"Prior attempt test_outcome={result.test_outcome}, "
-                                                f"files_changed={result.files_changed}, "
-                                                f"net_lines={result.net_lines_changed:+d}."
-                                            )
+                                            decision.follow_up_prompt or ""
+                                        ).strip() or (
+                                            f"Retry step '{step_label}' to resolve remaining issues. "
+                                            f"Prior attempt test_outcome={result.test_outcome}, "
+                                            f"files_changed={result.files_changed}, "
+                                            f"net_lines={result.net_lines_changed:+d}."
                                         )
                                         if self._looks_like_human_input_request(followup_prompt):
                                             self._log(
@@ -1063,11 +1091,21 @@ class ChainExecutor:
                                                 "prompt_preview": followup_prompt[:400],
                                             },
                                         )
-                                        self.state.current_step_name = f"{step_label} (brain follow-up)"
-                                        self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
+                                        self.state.current_step_name = (
+                                            f"{step_label} (brain follow-up)"
+                                        )
+                                        self.state.current_step_started_at_epoch_ms = int(
+                                            time.time() * 1000
+                                        )
                                         followup = self._execute_step(
-                                            runner, evaluator, repo, config,
-                                            loop_num, step_idx, step, brain,
+                                            runner,
+                                            evaluator,
+                                            repo,
+                                            config,
+                                            loop_num,
+                                            step_idx,
+                                            step,
+                                            brain,
                                             override_prompt=followup_prompt,
                                         )
                                         self.state.results.append(followup)
@@ -1075,9 +1113,7 @@ class ChainExecutor:
                                         self.state.total_tokens += (
                                             followup.input_tokens + followup.output_tokens
                                         )
-                                        self.state.elapsed_seconds = (
-                                            time.monotonic() - start_time
-                                        )
+                                        self.state.elapsed_seconds = time.monotonic() - start_time
                                         if self._check_strict_token_budget(config):
                                             loop_aborted = True
                                             break
@@ -1100,8 +1136,7 @@ class ChainExecutor:
                                 elif decision.action == "escalate":
                                     self._log(
                                         "error",
-                                        f"Brain escalation: "
-                                        f"{decision.human_message[:300]}",
+                                        f"Brain escalation: {decision.human_message[:300]}",
                                     )
                                     self._record_brain_note(
                                         "escalation",
@@ -1138,14 +1173,8 @@ class ChainExecutor:
                                     loop_aborted = True
                                     break
 
-                            if (
-                                not result.success
-                                and step.on_failure == "abort"
-                            ):
-                                if (
-                                    brain.enabled
-                                    and brain.config.auto_fix_errors
-                                ):
+                            if not result.success and step.on_failure == "abort":
+                                if brain.enabled and brain.config.auto_fix_errors:
                                     err_decision = brain.handle_error(
                                         result.error_message,
                                         step_label,
@@ -1165,8 +1194,7 @@ class ChainExecutor:
                                     if err_decision.action == "escalate":
                                         self._log(
                                             "error",
-                                            f"Brain cannot fix: "
-                                            f"{err_decision.human_message[:300]}",
+                                            f"Brain cannot fix: {err_decision.human_message[:300]}",
                                         )
                                         self._record_brain_note(
                                             "error_escalation",
@@ -1179,14 +1207,13 @@ class ChainExecutor:
                                                 "human_message": err_decision.human_message[:400],
                                             },
                                         )
-                                        self.state.stop_reason = (
-                                            "brain_escalation"
-                                        )
+                                        self.state.stop_reason = "brain_escalation"
                                         self.pause()
                                         loop_aborted = True
                                         break
                                     elif err_decision.action in (
-                                        "follow_up", "retry",
+                                        "follow_up",
+                                        "retry",
                                     ):
                                         self._log(
                                             "info",
@@ -1202,16 +1229,25 @@ class ChainExecutor:
                                                 "action": err_decision.action,
                                             },
                                         )
-                                        self.state.current_step_name = f"{step_label} (brain recovery)"
-                                        self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
+                                        self.state.current_step_name = (
+                                            f"{step_label} (brain recovery)"
+                                        )
+                                        self.state.current_step_started_at_epoch_ms = int(
+                                            time.time() * 1000
+                                        )
                                         fix_prompt = (
                                             err_decision.follow_up_prompt
-                                            or f"Fix this error: "
-                                               f"{result.error_message[:500]}"
+                                            or f"Fix this error: {result.error_message[:500]}"
                                         )
                                         fix_result = self._execute_step(
-                                            runner, evaluator, repo, config,
-                                            loop_num, step_idx, step, brain,
+                                            runner,
+                                            evaluator,
+                                            repo,
+                                            config,
+                                            loop_num,
+                                            step_idx,
+                                            step,
+                                            brain,
                                             override_prompt=fix_prompt,
                                         )
                                         self.state.results.append(fix_result)
@@ -1219,9 +1255,7 @@ class ChainExecutor:
                                         self.state.total_tokens += (
                                             fix_result.input_tokens + fix_result.output_tokens
                                         )
-                                        self.state.elapsed_seconds = (
-                                            time.monotonic() - start_time
-                                        )
+                                        self.state.elapsed_seconds = time.monotonic() - start_time
                                         if self._check_strict_token_budget(config):
                                             loop_aborted = True
                                             break
@@ -1257,8 +1291,7 @@ class ChainExecutor:
                                         )
                                 self._log(
                                     "error",
-                                    "Step failed — aborting chain "
-                                    "(on_failure=abort)",
+                                    "Step failed — aborting chain (on_failure=abort)",
                                 )
                                 self.state.stop_reason = "step_failed_abort"
                                 loop_aborted = True
@@ -1324,7 +1357,12 @@ class ChainExecutor:
 
         except Exception as exc:
             # #region agent log
-            _agent_log("chain.py:_run_loop", "loop exception", {"error": str(exc), "error_type": type(exc).__name__}, "H5")
+            _agent_log(
+                "chain.py:_run_loop",
+                "loop exception",
+                {"error": str(exc), "error_type": type(exc).__name__},
+                "H5",
+            )
             # #endregion
             self._log("error", f"Unexpected error: {exc}")
             if getattr(self, "ledger", None):
@@ -1406,7 +1444,17 @@ class ChainExecutor:
         override_prompt: str | None = None,
     ) -> StepResult:
         # #region agent log
-        _agent_log("chain.py:_execute_step", "execute_step entry", {"step_idx": step_idx, "step_name": step.name or step.job_type, "repo": str(repo), "loop_num": loop_num}, "H1")
+        _agent_log(
+            "chain.py:_execute_step",
+            "execute_step entry",
+            {
+                "step_idx": step_idx,
+                "step_name": step.name or step.job_type,
+                "repo": str(repo),
+                "loop_num": loop_num,
+            },
+            "H1",
+        )
         # #endregion
 
         # ── CUA visual test step ─────────────────────────────────
@@ -1456,7 +1504,15 @@ class ChainExecutor:
             ledger_ctx = ""
             if getattr(self, "ledger", None):
                 ledger_ctx = self.ledger.get_context_for_prompt(
-                    categories=["error", "bug", "observation", "suggestion", "wishlist", "todo", "feature"],
+                    categories=[
+                        "error",
+                        "bug",
+                        "observation",
+                        "suggestion",
+                        "wishlist",
+                        "todo",
+                        "feature",
+                    ],
                     max_items=15,
                 )
             brain_goal = self._brain_goal(config, repo)
@@ -1528,7 +1584,19 @@ class ChainExecutor:
                 f"errors={run_result.errors[:2] if run_result.errors else '[]'}",
             )
             # #region agent log
-            _agent_log("chain.py:_execute_step", "after runner.run", {"success": run_result.success, "file_changes_count": len(run_result.file_changes), "final_message_len": len(run_result.final_message), "events_count": len(run_result.events), "errors": run_result.errors[:3] if run_result.errors else [], "step_idx": step_idx}, "H2,H3,H4")
+            _agent_log(
+                "chain.py:_execute_step",
+                "after runner.run",
+                {
+                    "success": run_result.success,
+                    "file_changes_count": len(run_result.file_changes),
+                    "final_message_len": len(run_result.final_message),
+                    "events_count": len(run_result.events),
+                    "errors": run_result.errors[:3] if run_result.errors else [],
+                    "step_idx": step_idx,
+                },
+                "H2,H3,H4",
+            )
             # #endregion
             # Debug: log event types seen
             evt_summary = {}
@@ -1541,7 +1609,9 @@ class ChainExecutor:
                 break
             # Log agent failure details so the user can see what went wrong
             err_detail = "; ".join(run_result.errors) if run_result.errors else "unknown error"
-            duration_tag = f" ({run_result.duration_seconds:.1f}s)" if run_result.duration_seconds else ""
+            duration_tag = (
+                f" ({run_result.duration_seconds:.1f}s)" if run_result.duration_seconds else ""
+            )
             self._log(
                 "error",
                 f"Agent failed (exit {run_result.exit_code}){duration_tag}: {err_detail[:300]}",
@@ -1582,7 +1652,18 @@ class ChainExecutor:
         out_file = self._step_output_path(repo, step)
         out_file.parent.mkdir(parents=True, exist_ok=True)
         # #region agent log
-        _agent_log("chain.py:_execute_step", "save decision", {"agent_output_len": len(agent_output), "file_changes_count": len(run_result.file_changes), "will_save": bool(agent_output and not run_result.file_changes), "out_file": str(out_file), "step_idx": step_idx}, "H3,H4")
+        _agent_log(
+            "chain.py:_execute_step",
+            "save decision",
+            {
+                "agent_output_len": len(agent_output),
+                "file_changes_count": len(run_result.file_changes),
+                "will_save": bool(agent_output and not run_result.file_changes),
+                "out_file": str(out_file),
+                "step_idx": step_idx,
+            },
+            "H3,H4",
+        )
         # #endregion
         if agent_output and not run_result.file_changes:
             self._log("info", f"[DEBUG] Saving output to: {out_file}")
@@ -1592,12 +1673,22 @@ class ChainExecutor:
                     f.write(header + agent_output + "\n")
                 self._log("info", f"Agent output saved to {out_file} ({len(agent_output)} chars)")
                 # #region agent log
-                _agent_log("chain.py:_execute_step", "saved to file", {"out_file": str(out_file), "chars": len(agent_output)}, "H5")
+                _agent_log(
+                    "chain.py:_execute_step",
+                    "saved to file",
+                    {"out_file": str(out_file), "chars": len(agent_output)},
+                    "H5",
+                )
                 # #endregion
             except Exception as exc:
                 self._log("error", f"Could not save agent output to {out_file}: {exc}")
                 # #region agent log
-                _agent_log("chain.py:_execute_step", "save failed", {"out_file": str(out_file), "error": str(exc)}, "H5")
+                _agent_log(
+                    "chain.py:_execute_step",
+                    "save failed",
+                    {"out_file": str(out_file), "error": str(exc)},
+                    "H5",
+                )
                 # #endregion
         elif agent_output and run_result.file_changes:
             # Preserve step output even when the agent also changed code files.
@@ -1633,15 +1724,14 @@ class ChainExecutor:
             # Debug: dump first few events raw
             for i, ev in enumerate(run_result.events[:5]):
                 import json as _json
+
                 raw_str = _json.dumps(ev.raw)[:200]
                 self._log("info", f"[DEBUG] Event[{i}]: kind={ev.kind.value} raw={raw_str}")
 
         # Evaluate
         eval_result = evaluator.evaluate(repo)
         outcome_level = (
-            "info"
-            if eval_result.test_outcome.value in ("passed", "skipped")
-            else "warn"
+            "info" if eval_result.test_outcome.value in ("passed", "skipped") else "warn"
         )
         self._log(
             outcome_level,
@@ -1748,9 +1838,7 @@ class ChainExecutor:
         tests_validation_success = tests_outcome in ("passed", "skipped")
         requires_repo_delta = self._step_requires_repo_delta(step)
         has_repo_delta = (
-            eval_result.files_changed > 0
-            or eval_result.net_lines_changed != 0
-            or bool(commit_sha)
+            eval_result.files_changed > 0 or eval_result.net_lines_changed != 0 or bool(commit_sha)
         )
         repo_delta_success = (not requires_repo_delta) or has_repo_delta or terminate_repeats
         validation_success = tests_validation_success and repo_delta_success
@@ -1919,7 +2007,9 @@ class ChainExecutor:
         if available_files:
             lines.append("")
             lines.append("## Available Input Files")
-            lines.append("The following files contain output from previous steps. Read them if relevant:")
+            lines.append(
+                "The following files contain output from previous steps. Read them if relevant:"
+            )
             for f in available_files:
                 lines.append(f"- `{f}`")
 
@@ -1965,18 +2055,20 @@ class ChainExecutor:
 
         # Determine provider: step override > chain config > default
         provider_str = step.cua_provider or config.cua_provider or "anthropic"
-        provider = (
-            CUAProvider.ANTHROPIC if provider_str == "anthropic" else CUAProvider.OPENAI
-        )
+        provider = CUAProvider.ANTHROPIC if provider_str == "anthropic" else CUAProvider.OPENAI
 
         # Determine target URL: step override > chain config
         target_url = step.cua_target_url or config.cua_target_url or ""
 
         # Build the task prompt
-        task = config.cua_task or step.custom_prompt or (
-            "Visually inspect the application UI. Navigate through the main views, "
-            "test interactive elements (buttons, forms, dropdowns), and report any "
-            "visual bugs, broken layouts, or usability issues you find."
+        task = (
+            config.cua_task
+            or step.custom_prompt
+            or (
+                "Visually inspect the application UI. Navigate through the main views, "
+                "test interactive elements (buttons, forms, dropdowns), and report any "
+                "visual bugs, broken layouts, or usability issues you find."
+            )
         )
 
         cua_config = CUASessionConfig(
@@ -2007,8 +2099,13 @@ class ChainExecutor:
             if result.observations:
                 self._log("info", f"CUA found {len(result.observations)} observations:")
                 for obs in result.observations[:10]:
-                    icon = {"critical": "🔴", "major": "🟠", "minor": "🟡",
-                            "cosmetic": "⚪", "positive": "🟢"}.get(obs.severity, "•")
+                    icon = {
+                        "critical": "🔴",
+                        "major": "🟠",
+                        "minor": "🟡",
+                        "cosmetic": "⚪",
+                        "positive": "🟢",
+                    }.get(obs.severity, "•")
                     self._log("info", f"  {icon} [{obs.severity}] {obs.element}: {obs.actual[:80]}")
 
             if result.summary:
@@ -2099,8 +2196,7 @@ class ChainExecutor:
         """
         self._log(
             "info",
-            f"Running {len(enabled_steps)} steps in parallel "
-            f"(Codex + Claude Code)",
+            f"Running {len(enabled_steps)} steps in parallel (Codex + Claude Code)",
         )
         self.state.current_step_name = f"Parallel batch ({len(enabled_steps)} steps)"
         self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
@@ -2120,8 +2216,14 @@ class ChainExecutor:
                 )
                 fut = pool.submit(
                     self._execute_step,
-                    runner, evaluator, repo, config, loop_num, step_idx,
-                    step, brain,
+                    runner,
+                    evaluator,
+                    repo,
+                    config,
+                    loop_num,
+                    step_idx,
+                    step,
+                    brain,
                 )
                 futures_map[fut] = (step_idx, step)
 
@@ -2202,9 +2304,7 @@ class ChainExecutor:
             ai_decides = step.prompt_mode == "ai_decides"
             base = get_prompt(step.job_type, ai_decides=ai_decides)
             if not base:
-                base = step.custom_prompt or (
-                    f"Improve this repository. Focus on: {step.name}"
-                )
+                base = step.custom_prompt or (f"Improve this repository. Focus on: {step.name}")
 
         if not (base or "").strip():
             step_label = step.name or step.job_type or f"step-{step_idx + 1}"
@@ -2280,9 +2380,7 @@ class ChainExecutor:
             )
         return True
 
-    def _check_stop_conditions(
-        self, config: ChainConfig, start_time: float
-    ) -> str | None:
+    def _check_stop_conditions(self, config: ChainConfig, start_time: float) -> str | None:
         elapsed_min = (time.monotonic() - start_time) / 60
 
         if config.max_time_minutes > 0 and elapsed_min >= config.max_time_minutes:
@@ -2337,13 +2435,8 @@ class ChainExecutor:
         # Legacy simple convergence (still useful as a fallback)
         if config.stop_on_convergence and len(results) >= 4:
             last_4 = results[-4:]
-            all_pass = all(
-                r.test_outcome in ("passed", "skipped") for r in last_4
-            )
-            all_low = all(
-                abs(r.net_lines_changed) < 20 and r.files_changed <= 2
-                for r in last_4
-            )
+            all_pass = all(r.test_outcome in ("passed", "skipped") for r in last_4)
+            all_low = all(abs(r.net_lines_changed) < 20 and r.files_changed <= 2 for r in last_4)
             if all_pass and all_low:
                 return "convergence_detected"
 
@@ -2354,9 +2447,7 @@ class ChainExecutor:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _compute_improvement(
-        prev: list[StepResult], curr: list[StepResult]
-    ) -> float:
+    def _compute_improvement(prev: list[StepResult], curr: list[StepResult]) -> float:
         """Return a 0-100 improvement percentage for *curr* vs *prev*.
 
         The metric blends three signals:
@@ -2367,6 +2458,7 @@ class ChainExecutor:
         A score of 0% means "this loop did nothing new compared to the
         last one".  100% is a strong improvement.
         """
+
         def _activity(results: list[StepResult]) -> int:
             return sum(r.files_changed for r in results)
 
@@ -2397,7 +2489,7 @@ class ChainExecutor:
         success_delta = max(0, curr_sr - prev_sr + 50)  # 50 = no change
 
         # Weighted blend (activity matters most, then magnitude, then success)
-        score = (activity_ratio * 0.45 + magnitude_ratio * 0.35 + success_delta * 0.20)
+        score = activity_ratio * 0.45 + magnitude_ratio * 0.35 + success_delta * 0.20
 
         # Normalise: 100 means "same as before", below 100 = declining
         # We report how much of the previous loop's impact was retained

@@ -108,8 +108,7 @@ _RECIPE_DATA: dict[str, dict[str, object]] = {
         "name": "Strategic Product Max",
         "description": "Highest leverage product wins with validation",
         "sequence": (
-            "Strategic Product Maximization x2 -> Implementation x2 -> Testing x1 -> "
-            "Bug Hunting x1"
+            "Strategic Product Maximization x2 -> Implementation x2 -> Testing x1 -> Bug Hunting x1"
         ),
         "steps": [
             {"job_type": "strategic_product_maximization", "loop_count": 2},

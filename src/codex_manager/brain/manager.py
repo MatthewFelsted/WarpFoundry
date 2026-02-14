@@ -48,7 +48,11 @@ class BrainConfig:
 
     def __post_init__(self) -> None:
         """When local_only is set, override the model to use Ollama."""
-        if self.local_only and not self.model.startswith("ollama:") and not self.model.startswith("ollama/"):
+        if (
+            self.local_only
+            and not self.model.startswith("ollama:")
+            and not self.model.startswith("ollama/")
+        ):
             self.model = get_default_ollama_model()
             logger.info("Local-only mode: brain model overridden to %s", self.model)
 
@@ -124,7 +128,9 @@ class BrainManager:
         try:
             result = self._call(system + "\n\n" + user_msg)
             if result and len(result.strip()) > 20:
-                logger.info("[brain] Refined prompt (%d chars → %d chars)", len(base_prompt), len(result))
+                logger.info(
+                    "[brain] Refined prompt (%d chars → %d chars)", len(base_prompt), len(result)
+                )
                 return result.strip()
         except Exception as exc:
             logger.warning("[brain] Failed to refine prompt: %s", exc)
@@ -214,7 +220,9 @@ class BrainManager:
         """
         if not self.enabled:
             return BrainDecision(
-                action="skip" if self._consecutive_failures < self.config.escalation_threshold else "escalate",
+                action="skip"
+                if self._consecutive_failures < self.config.escalation_threshold
+                else "escalate",
                 reasoning="Brain disabled; skipping error",
                 severity="medium",
             )

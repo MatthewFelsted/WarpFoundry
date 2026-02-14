@@ -98,10 +98,7 @@ class BrainLogbook:
 
     @staticmethod
     def _markdown_header() -> str:
-        return (
-            "# BRAIN LOG\n\n"
-            "> Auto-maintained brain observations and control decisions.\n\n"
-        )
+        return "# BRAIN LOG\n\n> Auto-maintained brain observations and control decisions.\n\n"
 
     def _rotate_if_needed(self, path: Path) -> None:
         if not path.exists():

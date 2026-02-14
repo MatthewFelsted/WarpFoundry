@@ -544,11 +544,9 @@ def _doctor_command(report: PreflightReport) -> str:
     if repo:
         parts.append(f'--repo "{repo}"')
     if report.requested_agents:
-        parts.append(f'--agents {",".join(report.requested_agents)}')
+        parts.append(f"--agents {','.join(report.requested_agents)}")
     codex_binary = str(getattr(report, "codex_binary", "codex") or "codex").strip() or "codex"
-    claude_binary = (
-        str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
-    )
+    claude_binary = str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
     parts.append(f'--codex-bin "{codex_binary}"')
     parts.append(f'--claude-bin "{claude_binary}"')
     return " ".join(parts)
@@ -560,9 +558,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
     seen: set[str] = set()
     repo = report.resolved_repo_path or report.repo_path
     codex_binary = str(getattr(report, "codex_binary", "codex") or "codex").strip() or "codex"
-    claude_binary = (
-        str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
-    )
+    claude_binary = str(getattr(report, "claude_binary", "claude") or "claude").strip() or "claude"
     codex_cmd = _command_token(codex_binary)
     claude_cmd = _command_token(claude_binary)
 
@@ -658,7 +654,9 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
     unsupported_status = [
         check
         for check in report.checks
-        if check.category == "agents" and check.key.endswith("_supported") and check.status == "warn"
+        if check.category == "agents"
+        and check.key.endswith("_supported")
+        and check.status == "warn"
     ]
     if unsupported_status:
         add(
@@ -682,8 +680,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "Run a safe first strategic loop",
             "Validate your setup in dry-run mode before apply mode.",
             command=(
-                f'python -m codex_manager strategic --repo "{repo}" '
-                "--mode dry-run --rounds 1"
+                f'python -m codex_manager strategic --repo "{repo}" --mode dry-run --rounds 1'
             ),
             severity="recommended",
         )

@@ -35,8 +35,7 @@ def _run_git(
     )
     if check and result.returncode != 0:
         raise GitError(
-            f"`git {' '.join(args)}` failed (rc={result.returncode}): "
-            f"{result.stderr.strip()}"
+            f"`git {' '.join(args)}` failed (rc={result.returncode}): {result.stderr.strip()}"
         )
     return result
 
@@ -44,6 +43,7 @@ def _run_git(
 # ---------------------------------------------------------------------------
 # Query helpers
 # ---------------------------------------------------------------------------
+
 
 def diff_stat(repo: str | Path, revspec: str | None = None) -> str:
     """Return ``git diff --stat`` output.
@@ -56,9 +56,7 @@ def diff_stat(repo: str | Path, revspec: str | None = None) -> str:
     return _run_git(*args, cwd=Path(repo)).stdout.strip()
 
 
-def diff_numstat_entries(
-    repo: str | Path, revspec: str | None = None
-) -> list[dict[str, Any]]:
+def diff_numstat_entries(repo: str | Path, revspec: str | None = None) -> list[dict[str, Any]]:
     """Return file-level diff entries from ``git diff --numstat``.
 
     Each entry contains:
@@ -97,9 +95,7 @@ def diff_numstat_entries(
     return entries
 
 
-def diff_numstat(
-    repo: str | Path, revspec: str | None = None
-) -> tuple[int, int, int]:
+def diff_numstat(repo: str | Path, revspec: str | None = None) -> tuple[int, int, int]:
     """Return (files_changed, insertions, deletions) from ``git diff --numstat``."""
     entries = diff_numstat_entries(repo, revspec=revspec)
     if not entries:
@@ -143,6 +139,7 @@ def is_clean(repo: str | Path) -> bool:
 # ---------------------------------------------------------------------------
 # Mutation helpers
 # ---------------------------------------------------------------------------
+
 
 def ensure_git_identity(repo: str | Path) -> None:
     """Ensure the repo has a git identity configured for commits.
@@ -206,7 +203,4 @@ def generate_commit_message(round_number: int, prompt: str, eval_summary: str) -
     subject = re.sub(r"\s+", " ", prompt).strip()
     if len(subject) > 60:
         subject = subject[:57] + "..."
-    return (
-        f"[codex-manager] round {round_number}: {subject}\n\n"
-        f"Eval: {eval_summary}\n"
-    )
+    return f"[codex-manager] round {round_number}: {subject}\n\nEval: {eval_summary}\n"
