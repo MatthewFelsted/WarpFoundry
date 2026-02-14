@@ -63,6 +63,20 @@ class TestLoopState:
     def test_load_missing(self, tmp_path: Path):
         assert LoopState.load(tmp_path) is None
 
+    def test_load_invalid_json_returns_none(self, tmp_path: Path):
+        state_file = tmp_path / ".codex_manager" / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text("{not json", encoding="utf-8")
+
+        assert LoopState.load(tmp_path) is None
+
+    def test_load_empty_state_returns_none(self, tmp_path: Path):
+        state_file = tmp_path / ".codex_manager" / "state.json"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text("", encoding="utf-8")
+
+        assert LoopState.load(tmp_path) is None
+
     def test_round_record_defaults(self):
         r = RoundRecord(round_number=1)
         assert r.round_number == 1

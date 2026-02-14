@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from codex_manager.loop import (
+    ImprovementLoop,
     _is_low_impact,
     build_round_prompt,
     default_budget_policy,
@@ -120,3 +123,27 @@ class TestDefaultBudgetPolicy:
             total_output_tokens=600_000,
         )
         assert default_budget_policy(state) == StopReason.BUDGET_EXHAUSTED
+
+
+class TestImprovementLoopInit:
+    @staticmethod
+    def _make_repo(tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        return repo
+
+    def test_rejects_unknown_mode(self, tmp_path):
+        repo = self._make_repo(tmp_path)
+        with pytest.raises(ValueError, match="mode must be 'dry-run' or 'apply'"):
+            ImprovementLoop(repo_path=repo, goal="goal", mode="invalid")
+
+    def test_rejects_non_positive_rounds(self, tmp_path):
+        repo = self._make_repo(tmp_path)
+        with pytest.raises(ValueError, match="max_rounds must be >= 1"):
+            ImprovementLoop(repo_path=repo, goal="goal", max_rounds=0)
+
+    def test_normalizes_mode_input(self, tmp_path):
+        repo = self._make_repo(tmp_path)
+        loop = ImprovementLoop(repo_path=repo, goal="goal", mode=" APPLY ")
+        assert loop.mode == "apply"

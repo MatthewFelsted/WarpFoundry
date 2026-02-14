@@ -32,6 +32,29 @@ class TestRepoEvaluator:
         evaluator = RepoEvaluator()
         assert evaluator.test_cmd == ["python", "-m", "pytest", "-q"]
 
+    def test_run_tests_skips_when_test_cmd_empty(self, tmp_path):
+        evaluator = RepoEvaluator(test_cmd=["echo", "ok"])
+        evaluator.test_cmd = []
+
+        outcome, summary, exit_code = evaluator._run_tests(tmp_path)
+        assert outcome == TestOutcome.SKIPPED
+        assert "empty test command" in summary
+        assert exit_code == 0
+
+    def test_run_tests_returns_error_on_invalid_configuration(self, monkeypatch, tmp_path):
+        evaluator = RepoEvaluator(test_cmd=["echo", "ok"])
+        evaluator.timeout = -1
+
+        def _raise_value_error(*args, **kwargs):
+            raise ValueError("timeout out of range")
+
+        monkeypatch.setattr("subprocess.run", _raise_value_error)
+
+        outcome, summary, exit_code = evaluator._run_tests(tmp_path)
+        assert outcome == TestOutcome.ERROR
+        assert "Invalid test command configuration" in summary
+        assert exit_code == -1
+
 
 class TestParseTestCommand:
     def test_empty_returns_none(self):

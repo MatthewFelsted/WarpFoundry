@@ -126,6 +126,8 @@ class RepoEvaluator:
         """Execute the test command and return (outcome, summary, exit_code)."""
         if self.skip_tests:
             return TestOutcome.SKIPPED, "Tests skipped (no test command configured)", 0
+        if not self.test_cmd:
+            return TestOutcome.SKIPPED, "Tests skipped (empty test command)", 0
 
         logger.info("Running tests: %s (cwd=%s)", " ".join(self.test_cmd), cwd)
         try:
@@ -140,6 +142,8 @@ class RepoEvaluator:
             return TestOutcome.ERROR, f"Test command not found: {exc}", -1
         except subprocess.TimeoutExpired:
             return TestOutcome.ERROR, f"Test command timed out after {self.timeout}s", -1
+        except ValueError as exc:
+            return TestOutcome.ERROR, f"Invalid test command configuration: {exc}", -1
 
         combined = (proc.stdout + "\n" + proc.stderr).strip()
         summary = _summarise_output(combined)

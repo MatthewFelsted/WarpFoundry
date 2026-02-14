@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import math
 import threading
 import uuid
 from pathlib import Path
@@ -193,16 +194,22 @@ class HistoryLogbook:
 
     def _append_jsonl(self, payload: dict[str, Any]) -> None:
         with self.jsonl_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            f.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n")
 
     def _sanitize(self, value: Any, depth: int = 0) -> Any:
         if depth > 5:
             return "[truncated-depth]"
         if value is None:
             return None
-        if isinstance(value, (str, int, float, bool)):
-            if isinstance(value, str):
-                return _truncate(value, 2000)
+        if isinstance(value, str):
+            return _truncate(value, 2000)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                return None
             return value
         if isinstance(value, list):
             return [self._sanitize(v, depth + 1) for v in value[:80]]

@@ -178,9 +178,20 @@ class ImprovementLoop:
             raise FileNotFoundError(f"Repository path does not exist: {self.repo_path}")
         if not (self.repo_path / ".git").exists():
             raise ValueError(f"Not a git repository (no .git found): {self.repo_path}")
+
+        normalized_mode = (mode or "").strip().lower()
+        if normalized_mode not in {"dry-run", "apply"}:
+            raise ValueError("mode must be 'dry-run' or 'apply'")
+        try:
+            parsed_max_rounds = int(max_rounds)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_rounds must be a positive integer") from exc
+        if parsed_max_rounds < 1:
+            raise ValueError("max_rounds must be >= 1")
+
         self.goal = goal
-        self.mode = mode
-        self.max_rounds = max_rounds
+        self.mode = normalized_mode
+        self.max_rounds = parsed_max_rounds
 
         self.runner = runner or CodexRunner()
         self.evaluator = evaluator or RepoEvaluator()

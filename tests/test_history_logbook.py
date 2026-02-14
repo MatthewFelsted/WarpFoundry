@@ -76,3 +76,28 @@ def test_history_logbook_rotates_when_size_limit_exceeded(tmp_path: Path):
     assert active_md.exists()
     assert active_jsonl.exists()
     assert "rotation trigger" in active_md.read_text(encoding="utf-8")
+
+
+def test_history_logbook_sanitizes_non_finite_floats(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+
+    logbook = HistoryLogbook(repo)
+    logbook.initialize()
+    logbook.record(
+        scope="pipeline",
+        event="metrics_snapshot",
+        summary="captured metrics",
+        context={
+            "nan_value": float("nan"),
+            "inf_value": float("inf"),
+            "finite_value": 1.25,
+        },
+    )
+
+    jsonl_path = repo / ".codex_manager" / "logs" / "HISTORY.jsonl"
+    lines = [ln for ln in jsonl_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    payload = json.loads(lines[-1])
+    assert payload["context"]["nan_value"] is None
+    assert payload["context"]["inf_value"] is None
+    assert payload["context"]["finite_value"] == 1.25

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
+import os
+from contextlib import suppress
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Codex CLI run results
@@ -135,12 +140,27 @@ class LoopState(BaseModel):
         """Persist state to disk."""
         path = self.state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        payload = self.model_dump_json(indent=2)
+        tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(path)
+        finally:
+            with suppress(FileNotFoundError):
+                tmp_path.unlink()
 
     @classmethod
     def load(cls, repo_path: str | Path) -> LoopState | None:
         """Load persisted state from disk, or return ``None`` when absent."""
         path = Path(repo_path) / ".codex_manager" / "state.json"
         if path.exists():
-            return cls.model_validate_json(path.read_text(encoding="utf-8"))
+            try:
+                raw = path.read_text(encoding="utf-8")
+                if not raw.strip():
+                    logger.warning("State file is empty; ignoring: %s", path)
+                    return None
+                return cls.model_validate_json(raw)
+            except (OSError, ValidationError) as exc:
+                logger.warning("Could not load state file %s: %s", path, exc)
+                return None
         return None
