@@ -4222,9 +4222,16 @@ async function viewLogFile(filename) {
   if (label) label.textContent = filename;
   const el = document.getElementById('log-file-content');
   el.textContent = 'Loading...';
+  const repoPath = (pipeConfig.repo_path || config.repo_path || '').trim();
+  if (!repoPath) {
+    el.textContent = 'Set Repository Path in the Pipeline panel to read log files.';
+    return;
+  }
   try {
-    const r = await api('/api/pipeline/logs/' + filename);
-    el.textContent = r.content || '(empty - will be populated when the pipeline runs)';
+    const url = '/api/pipeline/logs/' + encodeURIComponent(filename)
+      + '?repo_path=' + encodeURIComponent(repoPath);
+    const r = await api(url);
+    el.textContent = r.content || '(empty - this phase may not have written to this file yet)';
   } catch(e) {
     el.textContent = 'Could not load file.';
   }

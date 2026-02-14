@@ -62,6 +62,17 @@ _DOCS_CATALOG: dict[str, tuple[str, str]] = {
     "cli_reference": ("CLI Reference", "CLI_REFERENCE.md"),
     "troubleshooting": ("Troubleshooting", "TROUBLESHOOTING.md"),
 }
+_PIPELINE_LOG_FILES = frozenset(
+    {
+        "WISHLIST.md",
+        "TESTPLAN.md",
+        "ERRORS.md",
+        "EXPERIMENTS.md",
+        "PROGRESS.md",
+        "BRAIN.md",
+        "HISTORY.md",
+    }
+)
 
 
 def _step_output_filename(name: str, job_type: str) -> str:
@@ -318,6 +329,28 @@ def _resolve_chain_output_repo(repo_hint: str = "") -> Path | None:
 def _chain_output_dir(repo: Path) -> Path:
     """Return the chain output directory under ``.codex_manager``."""
     return repo / ".codex_manager" / "outputs"
+
+
+def _resolve_pipeline_logs_repo(repo_hint: str = "") -> Path | None:
+    """Resolve a repo path for pipeline-log APIs from query or executor state."""
+    raw = (repo_hint or "").strip()
+    if raw:
+        p = Path(raw)
+        return p.resolve() if p.is_dir() else None
+
+    global _pipeline_executor
+    if _pipeline_executor is not None:
+        executor_repo_raw = str(getattr(_pipeline_executor, "repo_path", "")).strip()
+        if executor_repo_raw:
+            p = Path(executor_repo_raw)
+            if p.is_dir():
+                return p.resolve()
+    return None
+
+
+def _pipeline_logs_dir(repo: Path) -> Path:
+    """Return the pipeline logs directory under ``.codex_manager``."""
+    return repo / ".codex_manager" / "logs"
 
 
 def _docs_dir() -> Path | None:
@@ -1060,27 +1093,56 @@ def api_pipeline_stream():
 def api_pipeline_log(filename: str):
     """Read a pipeline log file (WISHLIST.md, TESTPLAN.md, etc.)."""
     global _pipeline_executor
-    if _pipeline_executor is None:
-        return jsonify({"content": "", "exists": False})
-
-    allowed = {
-        "WISHLIST.md",
-        "TESTPLAN.md",
-        "ERRORS.md",
-        "EXPERIMENTS.md",
-        "PROGRESS.md",
-        "BRAIN.md",
-        "HISTORY.md",
-    }
-    if filename not in allowed:
+    if filename not in _PIPELINE_LOG_FILES:
         return jsonify({"error": "Invalid log file"}), 400
 
-    content = _pipeline_executor.tracker.read(filename)
+    repo = _resolve_pipeline_logs_repo(request.args.get("repo_path", ""))
+    if repo is None:
+        if _pipeline_executor is not None and hasattr(_pipeline_executor, "tracker"):
+            content = _pipeline_executor.tracker.read(filename)
+            return jsonify(
+                {
+                    "content": content,
+                    "exists": bool(content),
+                    "filename": filename,
+                    "repo_path": "",
+                    "logs_dir": "",
+                }
+            )
+        return jsonify(
+            {
+                "content": "",
+                "exists": False,
+                "filename": filename,
+                "repo_path": "",
+                "logs_dir": "",
+            }
+        )
+
+    content = ""
+    log_path = _pipeline_logs_dir(repo) / filename
+    if _pipeline_executor is not None:
+        executor_repo_raw = str(getattr(_pipeline_executor, "repo_path", "")).strip()
+        if executor_repo_raw:
+            executor_repo = Path(executor_repo_raw)
+            if executor_repo.is_dir() and executor_repo.resolve() == repo:
+                content = _pipeline_executor.tracker.read(filename)
+                log_path = _pipeline_executor.tracker.path_for(filename)
+
+    if not content:
+        from codex_manager.pipeline.tracker import LogTracker
+
+        tracker = LogTracker(repo)
+        content = tracker.read(filename)
+        log_path = tracker.path_for(filename)
+
     return jsonify(
         {
             "content": content,
-            "exists": bool(content),
+            "exists": log_path.is_file(),
             "filename": filename,
+            "repo_path": str(repo),
+            "logs_dir": str(log_path.parent),
         }
     )
 

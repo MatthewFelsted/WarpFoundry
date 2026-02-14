@@ -38,9 +38,10 @@ Inside the target repository:
 - Start with errors first (`ERRORS.md`) before reviewing feature outputs.
 - Compare dry-run outputs against apply-mode intent before committing changes.
 - Keep step names explicit so output filenames are easy to track.
+- In the Pipeline tab, set **Repository Path** before opening log tabs so logs can be read even when no pipeline is currently running.
 
 ## Common confusion points
 
 - "No outputs listed": confirm repo path is set and at least one step has finished.
-- "Missing logs": pipeline logs appear only after relevant phases run.
+- "Missing logs": pipeline logs appear only after relevant phases run; empty files mean that phase has not written entries yet.
 - "Unexpected filename": output filenames are generated from step names and may be slugified.

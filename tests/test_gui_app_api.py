@@ -411,6 +411,40 @@ def test_pipeline_logs_allows_history_log_file(client, monkeypatch):
     assert "history note" in data["content"]
 
 
+def test_pipeline_logs_reads_from_repo_path_without_active_executor(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "WISHLIST.md").write_text("wishlist entry\n", encoding="utf-8")
+
+    resp = client.get(
+        "/api/pipeline/logs/WISHLIST.md",
+        query_string={"repo_path": str(repo)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["exists"] is True
+    assert data["filename"] == "WISHLIST.md"
+    assert data["repo_path"] == str(repo.resolve())
+    assert "wishlist entry" in data["content"]
+
+
+def test_pipeline_logs_rejects_invalid_filename_when_executor_missing(client, monkeypatch):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    resp = client.get("/api/pipeline/logs/not_allowed.md")
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Invalid log file" in data["error"]
+
+
 def test_chain_status_includes_actionable_stop_guidance(client, monkeypatch):
     class _Exec:
         @staticmethod
