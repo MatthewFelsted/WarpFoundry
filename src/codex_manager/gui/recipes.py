@@ -215,7 +215,7 @@ _RECIPE_DATA: dict[str, dict[str, object]] = {
         "steps": [
             {
                 "name": "01 Dream Up Features",
-                "job_type": "implementation",
+                "job_type": "feature_discovery",
                 "loop_count": 1,
                 "prompt_mode": "custom",
                 "custom_prompt": (
@@ -229,7 +229,10 @@ _RECIPE_DATA: dict[str, dict[str, object]] = {
                     "3. Prioritize by impact-to-effort and execution order.\n"
                     "4. Avoid vague items; each item must be actionable in one focused implementation pass.\n\n"
                     "If a useful feature list already exists, improve quality and fill strategic gaps "
-                    "instead of rewriting everything."
+                    "instead of rewriting everything.\n\n"
+                    "Important output rule:\n"
+                    "- Write/update `.codex_manager/owner/FEATURE_DREAMS.md` directly in the repository.\n"
+                    "- Do not return only analysis text without updating that file."
                 ),
             },
             {
@@ -241,6 +244,8 @@ _RECIPE_DATA: dict[str, dict[str, object]] = {
                     "Read `.codex_manager/owner/FEATURE_DREAMS.md` and implement the first unchecked "
                     "feature item (`- [ ] ...`) end-to-end. After implementation, mark it done as "
                     "`- [x] ...` and add a short completion note.\n\n"
+                    "If `.codex_manager/owner/FEATURE_DREAMS.md` does not exist, first create it with "
+                    "at least 5 concrete feature items for this repository, then implement the first item.\n\n"
                     "Repeat this process for each repetition. Continue until there are no unchecked "
                     "feature items left.\n\n"
                     "If there are no unchecked items remaining, output exactly `[TERMINATE_STEP]` "

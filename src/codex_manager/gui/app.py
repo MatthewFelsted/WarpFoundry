@@ -712,6 +712,15 @@ def _extract_code_fence_text(lines: list[str]) -> str:
     return "\n".join(line.rstrip() for line in lines).strip()
 
 
+def _extract_first_code_fence(text: str) -> str:
+    """Return content of the first fenced code block, or the raw text when none exists."""
+    raw = str(text or "")
+    match = re.search(r"```(?:[\w.+-]+)?\s*(.*?)```", raw, flags=re.DOTALL)
+    if not match:
+        return raw.strip()
+    return str(match.group(1) or "").strip()
+
+
 _RISKY_MARKETING_PHRASES = (
     "guaranteed",
     "risk-free",
@@ -959,6 +968,59 @@ def _suggest_todo_wishlist_markdown(
     except Exception as exc:
         logger.warning("AI suggestion failed for todo/wishlist", exc_info=True)
         fallback = _default_todo_wishlist_markdown(repo.name)
+        return fallback, f"AI suggestion failed ({exc}); used a starter template."
+
+
+def _suggest_feature_dreams_markdown(
+    *,
+    repo: Path,
+    model: str,
+    owner_context: str,
+    existing_markdown: str,
+) -> tuple[str, str]:
+    prompt = (
+        "You are helping an owner dream up high-value product features for a software repository.\n"
+        "Return only markdown.\n\n"
+        "Requirements:\n"
+        "- Keep content feature-only (no bug-only chores unless tied to a user-visible feature).\n"
+        "- Use sections: `P0 - Highest Value / Lowest Effort`, `P1 - Product Leverage`, `P2 - Advanced Features`.\n"
+        "- Each item must be a markdown checkbox (`- [ ]`) and include effort tags `[S]`, `[M]`, or `[L]`.\n"
+        "- Provide 8-20 concrete, implementation-ready feature items.\n"
+        "- Prioritize incremental deliverables and avoid duplicates from the existing file.\n"
+        "- Keep execution order top to bottom.\n\n"
+        f"Repository: {repo.name}\n"
+        f"Owner context: {owner_context or '(none)'}\n\n"
+        "Existing feature dreams (for dedupe context):\n"
+        f"{existing_markdown[:4000]}"
+    )
+    try:
+        from codex_manager.brain.connector import connect
+    except Exception as exc:
+        logger.warning("Could not import AI connector for feature dreams suggestion: %s", exc)
+        return (
+            _default_feature_dreams_markdown(repo.name),
+            "AI suggestion unavailable; used a deterministic starter template.",
+        )
+
+    try:
+        raw = connect(
+            model=str(model or "gpt-5.2").strip() or "gpt-5.2",
+            prompt=prompt,
+            text_only=True,
+            operation="feature_dreams_suggest",
+            stage="owner:feature_dreams",
+            max_output_tokens=2200,
+            temperature=0.35,
+        )
+        suggested = _extract_first_code_fence(str(raw or "")).strip()
+        if not suggested:
+            suggested = str(raw or "").strip()
+        if not suggested:
+            raise RuntimeError("empty suggestion")
+        return suggested, ""
+    except Exception as exc:
+        logger.warning("AI suggestion failed for feature dreams", exc_info=True)
+        fallback = _default_feature_dreams_markdown(repo.name)
         return fallback, f"AI suggestion failed ({exc}); used a starter template."
 
 
@@ -2601,6 +2663,92 @@ def api_owner_todo_wishlist_suggest():
 
 
 # â”€â”€ Directory browser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+# -- Owner feature dreams workspace -------------------------------------------
+
+
+@app.route("/api/owner/feature-dreams")
+def api_owner_feature_dreams():
+    """Read the owner feature-dreams markdown for a repository."""
+    repo_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    path = _feature_dreams_path(repo)
+    content = _read_feature_dreams(repo)
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "path": str(path),
+            "exists": path.is_file(),
+            "has_open_items": _feature_dreams_has_open_items(content),
+            "content": content,
+        }
+    )
+
+
+@app.route("/api/owner/feature-dreams/save", methods=["POST"])
+def api_owner_feature_dreams_save():
+    """Save owner-provided feature-dreams markdown content."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    content = str(data.get("content") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+    path = _write_feature_dreams(repo, content)
+    saved = _read_text_utf8_resilient(path)
+    return jsonify(
+        {
+            "status": "saved",
+            "repo_path": str(repo),
+            "path": str(path),
+            "has_open_items": _feature_dreams_has_open_items(saved),
+            "content": saved,
+        }
+    )
+
+
+@app.route("/api/owner/feature-dreams/suggest", methods=["POST"])
+def api_owner_feature_dreams_suggest():
+    """Generate a suggested feature-dreams markdown list using an AI model."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    owner_context = str(data.get("owner_context") or "").strip()
+    existing_markdown = str(data.get("existing_markdown") or "").strip()
+    model = str(data.get("model") or "gpt-5.2").strip() or "gpt-5.2"
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    if not existing_markdown:
+        existing_markdown = _read_feature_dreams(repo)
+    suggested, warning = _suggest_feature_dreams_markdown(
+        repo=repo,
+        model=model,
+        owner_context=owner_context,
+        existing_markdown=existing_markdown,
+    )
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "model": model,
+            "content": suggested,
+            "has_open_items": _feature_dreams_has_open_items(suggested),
+            "warning": warning,
+        }
+    )
+
+
+# -- Directory browser --------------------------------------------------------
 
 
 @app.route("/api/browse-dirs", methods=["POST"])

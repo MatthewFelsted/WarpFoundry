@@ -67,7 +67,14 @@ def test_feature_dream_autopilot_recipe_exists_and_loops_until_done() -> None:
     assert isinstance(steps, list)
     assert len(steps) == 2
     assert steps[0]["name"] == "01 Dream Up Features"
+    assert steps[0]["job_type"] == "feature_discovery"
     assert ".codex_manager/owner/FEATURE_DREAMS.md" in str(steps[0]["custom_prompt"])
+    assert "Write/update `.codex_manager/owner/FEATURE_DREAMS.md` directly" in str(
+        steps[0]["custom_prompt"]
+    )
     assert steps[1]["name"] == "02 Implement Dreamed Features"
     assert steps[1]["loop_count"] == 30
+    assert "If `.codex_manager/owner/FEATURE_DREAMS.md` does not exist" in str(
+        steps[1]["custom_prompt"]
+    )
     assert "[TERMINATE_STEP]" in str(steps[1]["custom_prompt"])
