@@ -523,6 +523,18 @@ body.mode-medium .easy-only{display:none}
 .new-project-card details .form-row{margin-top:10px}
 .new-project-card .creation-result{margin-top:12px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--success);display:none}
 
+/* GitHub auth modal */
+#github-auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
+#github-auth-overlay.hidden{display:none}
+.github-auth-card{max-width:620px;width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.github-auth-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.github-auth-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.github-auth-card .status{font-size:12px;color:var(--text2);margin-top:8px;min-height:1.2em}
+.github-auth-card .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+.github-auth-card details{margin-top:8px;border:1px solid var(--border);border-radius:var(--radius);padding:10px}
+.github-auth-card details summary{cursor:pointer;font-size:12px;color:var(--text2);font-weight:600}
+.github-auth-card .meta{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5}
+
 #todo-wishlist-overlay,#feature-dreams-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
 #todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden{display:none}
 .todo-wishlist-card,.feature-dreams-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -796,6 +808,7 @@ body.mode-medium .easy-only{display:none}
       <button type="button" data-mode="medium" onclick="applyMode('medium')" title="Customize: build and tweak steps">Customize</button>
       <button type="button" data-mode="expert" onclick="applyMode('expert')" title="Expert: full control">Expert</button>
     </div>
+    <button class="btn" type="button" onclick="showGithubAuthModal()">GitHub Auth</button>
     <button class="btn btn-primary" onclick="showNewProjectModal()" style="white-space:nowrap">+ New Project</button>
     <select id="config-select" title="Saved configs">
       <option value="">Load config...</option>
@@ -1984,6 +1997,49 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- GitHub Auth modal -->
+<div id="github-auth-overlay" class="hidden" onclick="if(event.target===this)hideGithubAuthModal()">
+  <div class="github-auth-card" role="dialog" aria-modal="true" aria-labelledby="github-auth-title">
+    <h2 id="github-auth-title">GitHub Auth Setup</h2>
+    <p class="subtitle">Store a GitHub PAT and optional SSH key in secure local storage, then verify access.</p>
+
+    <div class="form-row">
+      <label>Preferred Git Transport</label>
+      <select id="github-auth-method" onchange="syncGithubAuthForm()">
+        <option value="https">HTTPS (PAT)</option>
+        <option value="ssh">SSH key</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <label>GitHub Personal Access Token (PAT)</label>
+      <input type="password" id="github-auth-pat" placeholder="ghp_xxxxx or github_pat_xxxxx" autocomplete="off">
+      <div class="field-help">Leave blank to keep existing token unchanged.</div>
+      <label style="margin-top:6px"><input type="checkbox" id="github-auth-clear-pat"> Remove saved PAT</label>
+    </div>
+
+    <details id="github-auth-ssh-details">
+      <summary>Optional SSH Private Key</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label>Private Key</label>
+        <textarea id="github-auth-ssh-key" rows="8" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
+        <div class="field-help">Leave blank to keep existing key unchanged.</div>
+        <label style="margin-top:6px"><input type="checkbox" id="github-auth-clear-ssh"> Remove saved SSH key</label>
+      </div>
+    </details>
+
+    <div class="meta" id="github-auth-meta">Loading current GitHub auth settings...</div>
+    <div class="status" id="github-auth-status"></div>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideGithubAuthModal()">Close</button>
+      <button class="btn" type="button" onclick="loadGithubAuthSettings()">Reload</button>
+      <button class="btn" type="button" onclick="testGithubAuthConnection()">Test Connection</button>
+      <button class="btn btn-primary" type="button" onclick="saveGithubAuthSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Project modal -->
 <div id="new-project-overlay" class="hidden">
   <div class="new-project-card" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
@@ -2183,6 +2239,7 @@ let watchdogAlertsTimer = null;
 let watchdogAlertsMutedUntil = 0;
 let watchdogAlertDigest = '';
 let watchdogMigrationSuggestions = [];
+let githubAuthState = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
@@ -2222,6 +2279,7 @@ const _modalOverlayIds = [
   'readonly-warning-overlay',
   'browse-overlay',
   'new-project-overlay',
+  'github-auth-overlay',
   'todo-wishlist-overlay',
   'feature-dreams-overlay',
   'onboarding-overlay',
@@ -2532,6 +2590,147 @@ async function saveGovernancePolicy() {
     const message = (err && err.message) ? err.message : String(err);
     _setGovernancePolicyStatus('Could not save policy: ' + message, 'error');
     toast('Could not save governance policy: ' + message, 'error');
+  }
+}
+
+function _setGithubAuthStatus(text, tone = 'muted') {
+  const el = document.getElementById('github-auth-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') el.style.color = 'var(--success)';
+  else if (tone === 'warn') el.style.color = 'var(--warning)';
+  else if (tone === 'error') el.style.color = 'var(--danger)';
+  else el.style.color = 'var(--text2)';
+}
+
+function _githubAuthMetaText(state) {
+  const payload = state || {};
+  const storage = payload.secure_storage_available
+    ? ('Secure storage: available (' + String(payload.storage_backend || 'keyring') + ')')
+    : ('Secure storage: unavailable'
+      + (payload.storage_error ? (' - ' + String(payload.storage_error)) : ''));
+  const saved = 'Saved credentials: PAT='
+    + (payload.has_pat ? 'yes' : 'no')
+    + ', SSH key='
+    + (payload.has_ssh_key ? 'yes' : 'no');
+  const updated = payload.updated_at
+    ? ('Last updated: ' + String(payload.updated_at))
+    : 'Last updated: never';
+  const tested = payload.last_test_at
+    ? ('Last test: ' + String(payload.last_test_at) + ' ('
+      + (payload.last_test_ok ? 'ok' : 'failed') + ')')
+    : 'Last test: none';
+  return [storage, saved, updated, tested].join('\n');
+}
+
+function syncGithubAuthForm() {
+  const methodEl = document.getElementById('github-auth-method');
+  const detailsEl = document.getElementById('github-auth-ssh-details');
+  if (!methodEl || !detailsEl) return;
+  const usingSsh = String(methodEl.value || '').toLowerCase() === 'ssh';
+  if (usingSsh) detailsEl.open = true;
+}
+
+async function loadGithubAuthSettings(opts = {}) {
+  try {
+    const resp = await api('/api/github/auth');
+    if (resp.error) throw new Error(resp.error);
+    githubAuthState = resp || {};
+    const methodEl = document.getElementById('github-auth-method');
+    const patEl = document.getElementById('github-auth-pat');
+    const sshEl = document.getElementById('github-auth-ssh-key');
+    const clearPat = document.getElementById('github-auth-clear-pat');
+    const clearSsh = document.getElementById('github-auth-clear-ssh');
+    const metaEl = document.getElementById('github-auth-meta');
+    if (methodEl) {
+      methodEl.value = String(githubAuthState.preferred_auth || 'https');
+    }
+    if (patEl) patEl.value = '';
+    if (sshEl) sshEl.value = '';
+    if (clearPat) clearPat.checked = false;
+    if (clearSsh) clearSsh.checked = false;
+    if (metaEl) metaEl.textContent = _githubAuthMetaText(githubAuthState);
+    syncGithubAuthForm();
+    if (!opts.silent) _setGithubAuthStatus('GitHub auth settings loaded.', 'ok');
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setGithubAuthStatus('Could not load GitHub auth settings: ' + message, 'error');
+    if (!opts.silent) toast('Could not load GitHub auth settings: ' + message, 'error');
+  }
+}
+
+function showGithubAuthModal() {
+  _openOverlay('github-auth-overlay', '#github-auth-method');
+  _setGithubAuthStatus('');
+  loadGithubAuthSettings({ silent: true });
+}
+
+function hideGithubAuthModal() {
+  _closeOverlay('github-auth-overlay');
+}
+
+async function saveGithubAuthSettings() {
+  const methodEl = document.getElementById('github-auth-method');
+  const patEl = document.getElementById('github-auth-pat');
+  const sshEl = document.getElementById('github-auth-ssh-key');
+  const clearPat = document.getElementById('github-auth-clear-pat');
+  const clearSsh = document.getElementById('github-auth-clear-ssh');
+  const payload = {
+    preferred_auth: String(methodEl ? methodEl.value : 'https') || 'https',
+    pat: String(patEl ? patEl.value : ''),
+    ssh_private_key: String(sshEl ? sshEl.value : ''),
+    clear_pat: !!(clearPat && clearPat.checked),
+    clear_ssh_key: !!(clearSsh && clearSsh.checked),
+  };
+  if (String(payload.pat || '').trim()) payload.clear_pat = false;
+  if (String(payload.ssh_private_key || '').trim()) payload.clear_ssh_key = false;
+
+  try {
+    const resp = await postJson('/api/github/auth', payload);
+    if (resp.error) throw new Error(resp.error);
+    if (patEl) patEl.value = '';
+    if (sshEl) sshEl.value = '';
+    if (clearPat) clearPat.checked = false;
+    if (clearSsh) clearSsh.checked = false;
+    githubAuthState = (resp && resp.settings) ? resp.settings : null;
+    const metaEl = document.getElementById('github-auth-meta');
+    if (metaEl && githubAuthState) metaEl.textContent = _githubAuthMetaText(githubAuthState);
+    _setGithubAuthStatus('GitHub auth settings saved.', 'ok');
+    toast('GitHub auth settings saved.', 'success');
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setGithubAuthStatus('Could not save GitHub auth settings: ' + message, 'error');
+    toast('Could not save GitHub auth settings: ' + message, 'error');
+  }
+}
+
+async function testGithubAuthConnection() {
+  const methodEl = document.getElementById('github-auth-method');
+  const patEl = document.getElementById('github-auth-pat');
+  const sshEl = document.getElementById('github-auth-ssh-key');
+  const payload = {
+    auth_method: String(methodEl ? methodEl.value : 'https') || 'https',
+    use_saved: true,
+  };
+  if (patEl && String(patEl.value || '').trim()) payload.pat = String(patEl.value || '');
+  if (sshEl && String(sshEl.value || '').trim()) payload.ssh_private_key = String(sshEl.value || '');
+
+  _setGithubAuthStatus('Testing GitHub connection...', 'muted');
+  try {
+    const resp = await postJson('/api/github/auth/test', payload);
+    const message = String((resp && (resp.message || resp.error)) || 'No response details.');
+    if (resp && resp.ok) {
+      _setGithubAuthStatus(message, 'ok');
+      toast('GitHub connection test passed.', 'success');
+    } else {
+      _setGithubAuthStatus(message, 'error');
+      toast('GitHub connection test failed: ' + message, 'error');
+    }
+    await loadGithubAuthSettings({ silent: true });
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setGithubAuthStatus('GitHub connection test failed: ' + message, 'error');
+    toast('GitHub connection test failed: ' + message, 'error');
   }
 }
 
@@ -3161,6 +3360,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   fetchOllamaModels();
   refreshChainOutputs(false);
   loadGovernancePolicy({ silent: true });
+  loadGithubAuthSettings({ silent: true });
   loadOwnerDecisionBoard();
   ['codex-bin', 'claude-bin'].forEach(id => {
     const el = document.getElementById(id);
@@ -3197,6 +3397,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     hideTodoWishlistModal();
     hideFeatureDreamsModal();
     hideNewProjectModal();
+    hideGithubAuthModal();
     browseClose();
   });
 });

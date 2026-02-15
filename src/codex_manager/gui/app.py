@@ -18,7 +18,9 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Timer
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -54,6 +56,18 @@ from codex_manager.preflight import (
 from codex_manager.preflight import (
     repo_write_error as shared_repo_write_error,
 )
+
+try:
+    import keyring
+    from keyring.errors import KeyringError, PasswordDeleteError
+except Exception:  # pragma: no cover - optional dependency/runtime availability
+    keyring = None  # type: ignore[assignment]
+
+    class KeyringError(RuntimeError):
+        """Fallback keyring error type when keyring import is unavailable."""
+
+    class PasswordDeleteError(KeyringError):
+        """Fallback keyring delete error when keyring import is unavailable."""
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +122,18 @@ _SERVER_PORT = 5088
 _SERVER_OPEN_BROWSER = True
 _MODEL_WATCHDOG_ROOT = Path.home() / ".codex_manager" / "watchdog"
 _GOVERNANCE_POLICY_PATH = Path.home() / ".codex_manager" / "governance" / "source_policy.json"
+_GITHUB_AUTH_META_PATH = Path.home() / ".codex_manager" / "github" / "auth_meta.json"
 _GOVERNANCE_ENV_KEYS: dict[str, str] = {
     "research_allowed_domains": "CODEX_MANAGER_RESEARCH_ALLOWED_DOMAINS",
     "research_blocked_domains": "CODEX_MANAGER_RESEARCH_BLOCKED_DOMAINS",
     "deep_research_allowed_domains": "DEEP_RESEARCH_ALLOWED_SOURCE_DOMAINS",
     "deep_research_blocked_domains": "DEEP_RESEARCH_BLOCKED_SOURCE_DOMAINS",
 }
+_GITHUB_SECRET_SERVICE = "codex_manager.github_auth"
+_GITHUB_PAT_SECRET_KEY = "pat"
+_GITHUB_SSH_SECRET_KEY = "ssh_private_key"
+_GITHUB_AUTH_METHODS = frozenset({"https", "ssh"})
+_GITHUB_TEST_TIMEOUT_SECONDS = 20
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
@@ -1764,6 +1784,363 @@ with suppress(Exception):
     _initialize_governance_policy()
 
 
+def _utc_now_iso_z() -> str:
+    """Return current UTC timestamp in compact ISO-8601 (with trailing Z)."""
+    return datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_github_auth_method(value: object) -> str:
+    method = str(value or "https").strip().lower()
+    return method if method in _GITHUB_AUTH_METHODS else "https"
+
+
+def _github_keyring_status() -> tuple[bool, str, str]:
+    """Return whether secure keyring storage is usable and backend details."""
+    if keyring is None:
+        return False, "", "Secure storage unavailable: install the 'keyring' package."
+    try:
+        backend = keyring.get_keyring()
+    except Exception as exc:
+        return False, "", f"Secure storage unavailable: could not load keyring backend ({exc})."
+
+    backend_name = f"{backend.__class__.__module__}.{backend.__class__.__name__}"
+    module_name = str(backend.__class__.__module__ or "").lower()
+    class_name = str(backend.__class__.__name__ or "").lower()
+    if "fail" in module_name or "fail" in class_name:
+        return (
+            False,
+            backend_name,
+            "Secure storage unavailable: no OS keyring backend is configured.",
+        )
+    return True, backend_name, ""
+
+
+def _github_secret_get(secret_key: str) -> str:
+    """Read one GitHub credential from secure storage."""
+    ok, _backend, error = _github_keyring_status()
+    if not ok:
+        raise RuntimeError(error or "Secure storage unavailable.")
+    assert keyring is not None  # for type-checkers
+    try:
+        return str(keyring.get_password(_GITHUB_SECRET_SERVICE, secret_key) or "")
+    except KeyringError as exc:
+        raise RuntimeError(f"Could not read secure credential '{secret_key}': {exc}") from exc
+
+
+def _github_secret_set(secret_key: str, value: str) -> None:
+    """Persist one GitHub credential in secure storage."""
+    ok, _backend, error = _github_keyring_status()
+    if not ok:
+        raise RuntimeError(error or "Secure storage unavailable.")
+    assert keyring is not None  # for type-checkers
+    try:
+        keyring.set_password(_GITHUB_SECRET_SERVICE, secret_key, value)
+    except KeyringError as exc:
+        raise RuntimeError(f"Could not store secure credential '{secret_key}': {exc}") from exc
+
+
+def _github_secret_delete(secret_key: str) -> None:
+    """Delete one GitHub credential from secure storage if present."""
+    ok, _backend, error = _github_keyring_status()
+    if not ok:
+        raise RuntimeError(error or "Secure storage unavailable.")
+    assert keyring is not None  # for type-checkers
+    try:
+        keyring.delete_password(_GITHUB_SECRET_SERVICE, secret_key)
+    except PasswordDeleteError:
+        return
+    except KeyringError as exc:
+        raise RuntimeError(f"Could not delete secure credential '{secret_key}': {exc}") from exc
+
+
+def _github_auth_meta_defaults() -> dict[str, object]:
+    return {
+        "version": 1,
+        "preferred_auth": "https",
+        "updated_at": "",
+        "last_test_at": "",
+        "last_test_ok": None,
+    }
+
+
+def _read_github_auth_meta() -> dict[str, object]:
+    defaults = _github_auth_meta_defaults()
+    if not _GITHUB_AUTH_META_PATH.is_file():
+        return defaults
+    try:
+        raw = json.loads(_read_text_utf8_resilient(_GITHUB_AUTH_META_PATH))
+    except Exception:
+        logger.warning("Could not parse GitHub auth metadata file: %s", _GITHUB_AUTH_META_PATH)
+        return defaults
+    if not isinstance(raw, dict):
+        return defaults
+    defaults["preferred_auth"] = _normalize_github_auth_method(raw.get("preferred_auth"))
+    defaults["updated_at"] = str(raw.get("updated_at") or "")
+    defaults["last_test_at"] = str(raw.get("last_test_at") or "")
+    last_test_ok = raw.get("last_test_ok")
+    defaults["last_test_ok"] = last_test_ok if isinstance(last_test_ok, bool) else None
+    return defaults
+
+
+def _write_github_auth_meta(payload: dict[str, object]) -> None:
+    out = _github_auth_meta_defaults()
+    out["preferred_auth"] = _normalize_github_auth_method(payload.get("preferred_auth"))
+    out["updated_at"] = str(payload.get("updated_at") or "")
+    out["last_test_at"] = str(payload.get("last_test_at") or "")
+    last_test_ok = payload.get("last_test_ok")
+    out["last_test_ok"] = last_test_ok if isinstance(last_test_ok, bool) else None
+    _write_json_file_atomic(_GITHUB_AUTH_META_PATH, out)
+
+
+def _github_auth_state() -> dict[str, object]:
+    """Return non-secret GitHub auth settings and secure-storage availability."""
+    meta = _read_github_auth_meta()
+    storage_ok, storage_backend, storage_error = _github_keyring_status()
+
+    has_pat = False
+    has_ssh_key = False
+    if storage_ok:
+        try:
+            has_pat = bool(_github_secret_get(_GITHUB_PAT_SECRET_KEY).strip())
+            has_ssh_key = bool(_github_secret_get(_GITHUB_SSH_SECRET_KEY).strip())
+        except RuntimeError as exc:
+            storage_ok = False
+            storage_error = str(exc)
+
+    return {
+        "preferred_auth": _normalize_github_auth_method(meta.get("preferred_auth")),
+        "has_pat": has_pat,
+        "has_ssh_key": has_ssh_key,
+        "secure_storage_available": storage_ok,
+        "storage_backend": storage_backend,
+        "storage_error": storage_error,
+        "updated_at": str(meta.get("updated_at") or ""),
+        "last_test_at": str(meta.get("last_test_at") or ""),
+        "last_test_ok": meta.get("last_test_ok"),
+    }
+
+
+def _save_github_auth_settings(
+    data: dict[str, object],
+) -> tuple[dict[str, object] | None, str | None, int]:
+    """Persist non-secret GitHub auth settings and optional secure credentials."""
+    meta = _read_github_auth_meta()
+    preferred_auth = _normalize_github_auth_method(data.get("preferred_auth") or meta["preferred_auth"])
+
+    clear_pat = _safe_bool(data.get("clear_pat"), default=False)
+    clear_ssh_key = _safe_bool(data.get("clear_ssh_key"), default=False)
+
+    pat_raw = str(data.get("pat") or "")
+    pat = pat_raw.strip()
+    pat_provided = bool(pat)
+
+    ssh_raw = str(data.get("ssh_private_key") or "").replace("\r\n", "\n")
+    ssh_private_key = ssh_raw.strip()
+    ssh_provided = bool(ssh_private_key)
+
+    requested_secret_mutation = pat_provided or ssh_provided or clear_pat or clear_ssh_key
+    storage_ok, _storage_backend, storage_error = _github_keyring_status()
+    if requested_secret_mutation and not storage_ok:
+        return None, storage_error or "Secure storage is unavailable.", 503
+
+    try:
+        if pat_provided:
+            _github_secret_set(_GITHUB_PAT_SECRET_KEY, pat)
+        elif clear_pat:
+            _github_secret_delete(_GITHUB_PAT_SECRET_KEY)
+
+        if ssh_provided:
+            _github_secret_set(_GITHUB_SSH_SECRET_KEY, ssh_private_key)
+        elif clear_ssh_key:
+            _github_secret_delete(_GITHUB_SSH_SECRET_KEY)
+    except RuntimeError as exc:
+        return None, str(exc), 500
+
+    if requested_secret_mutation or preferred_auth != meta.get("preferred_auth"):
+        meta["updated_at"] = _utc_now_iso_z()
+    meta["preferred_auth"] = preferred_auth
+    _write_github_auth_meta(meta)
+    return _github_auth_state(), None, 200
+
+
+def _github_test_pat(token: str) -> dict[str, object]:
+    """Validate a GitHub PAT by querying the authenticated user endpoint."""
+    request_obj = Request(
+        "https://api.github.com/user",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "codex-manager-github-auth-test",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request_obj, timeout=_GITHUB_TEST_TIMEOUT_SECONDS) as response:
+            payload = response.read().decode("utf-8", errors="replace")
+        parsed = json.loads(payload) if payload else {}
+        login = str(parsed.get("login") or "").strip() if isinstance(parsed, dict) else ""
+        message = "GitHub PAT authenticated successfully."
+        if login:
+            message += f" Signed in as '{login}'."
+        return {"ok": True, "message": message, "login": login}
+    except HTTPError as exc:
+        detail = ""
+        with suppress(Exception):
+            body = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(body) if body else {}
+            if isinstance(parsed, dict):
+                detail = str(parsed.get("message") or "").strip()
+        if exc.code == 401:
+            message = "GitHub rejected this PAT (401 Unauthorized)."
+        elif exc.code == 403:
+            message = "GitHub denied this PAT (403 Forbidden)."
+        else:
+            message = f"GitHub returned HTTP {exc.code}."
+        if detail:
+            message += f" {detail[:200]}"
+        return {"ok": False, "message": message}
+    except URLError as exc:
+        reason = str(getattr(exc, "reason", exc) or "").strip()
+        suffix = f": {reason}" if reason else "."
+        return {"ok": False, "message": f"Could not reach api.github.com{suffix}"}
+    except Exception as exc:
+        return {"ok": False, "message": f"PAT test failed: {exc}"}
+
+
+def _github_test_ssh_key(private_key: str) -> dict[str, object]:
+    """Validate an SSH private key by attempting non-interactive GitHub auth."""
+    key_text = str(private_key or "").replace("\r\n", "\n").strip()
+    if not key_text:
+        return {"ok": False, "message": "SSH private key is empty."}
+
+    key_fd, key_tmp_name = tempfile.mkstemp(prefix="cm-gh-key-", suffix=".pem")
+    known_fd, known_tmp_name = tempfile.mkstemp(prefix="cm-gh-known-hosts-", suffix=".txt")
+    key_path = Path(key_tmp_name)
+    known_hosts_path = Path(known_tmp_name)
+    os.close(known_fd)
+    try:
+        with os.fdopen(key_fd, "w", encoding="utf-8") as f:
+            f.write(key_text)
+            if not key_text.endswith("\n"):
+                f.write("\n")
+        with suppress(OSError):
+            os.chmod(key_path, 0o600)
+
+        args = [
+            "ssh",
+            "-T",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            f"UserKnownHostsFile={known_hosts_path}",
+            "-i",
+            str(key_path),
+            "git@github.com",
+        ]
+        proc = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=_GITHUB_TEST_TIMEOUT_SECONDS,
+            check=False,
+        )
+        combined = _truncate_command_output(
+            "\n".join(part for part in [proc.stdout, proc.stderr] if part).strip()
+        )
+        lowered = combined.lower()
+        if "successfully authenticated" in lowered or "does not provide shell access" in lowered:
+            return {
+                "ok": True,
+                "message": "GitHub SSH authentication succeeded.",
+                "output": combined,
+            }
+        if "permission denied" in lowered:
+            return {
+                "ok": False,
+                "message": "GitHub rejected this SSH key (permission denied).",
+                "output": combined,
+                "exit_code": proc.returncode,
+            }
+        return {
+            "ok": proc.returncode == 0,
+            "message": (
+                "GitHub SSH authentication succeeded."
+                if proc.returncode == 0
+                else "GitHub SSH authentication failed."
+            ),
+            "output": combined,
+            "exit_code": proc.returncode,
+        }
+    except FileNotFoundError:
+        return {"ok": False, "message": "SSH client not found on PATH."}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "message": "SSH test timed out while contacting GitHub."}
+    except Exception as exc:
+        return {"ok": False, "message": f"SSH test failed: {exc}"}
+    finally:
+        with suppress(OSError):
+            key_path.unlink(missing_ok=True)
+        with suppress(OSError):
+            known_hosts_path.unlink(missing_ok=True)
+
+
+def _run_github_auth_test(data: dict[str, object]) -> tuple[dict[str, object], int]:
+    """Resolve credentials (inline or saved) and run GitHub connectivity test."""
+    meta = _read_github_auth_meta()
+    auth_method = _normalize_github_auth_method(
+        data.get("auth_method") or data.get("preferred_auth") or meta.get("preferred_auth")
+    )
+    use_saved = _safe_bool(data.get("use_saved"), default=True)
+
+    if auth_method == "https":
+        token = str(data.get("pat") or "").strip()
+        if not token and use_saved:
+            try:
+                token = _github_secret_get(_GITHUB_PAT_SECRET_KEY).strip()
+            except RuntimeError as exc:
+                return {"ok": False, "auth_method": auth_method, "message": str(exc)}, 503
+        if not token:
+            return (
+                {
+                    "ok": False,
+                    "auth_method": auth_method,
+                    "message": "Provide a GitHub PAT or save one first.",
+                },
+                400,
+            )
+        result = _github_test_pat(token)
+    else:
+        ssh_key = str(data.get("ssh_private_key") or "").replace("\r\n", "\n").strip()
+        if not ssh_key and use_saved:
+            try:
+                ssh_key = _github_secret_get(_GITHUB_SSH_SECRET_KEY).strip()
+            except RuntimeError as exc:
+                return {"ok": False, "auth_method": auth_method, "message": str(exc)}, 503
+        if not ssh_key:
+            return (
+                {
+                    "ok": False,
+                    "auth_method": auth_method,
+                    "message": "Provide an SSH private key or save one first.",
+                },
+                400,
+            )
+        result = _github_test_ssh_key(ssh_key)
+
+    meta["last_test_at"] = _utc_now_iso_z()
+    meta["last_test_ok"] = bool(result.get("ok"))
+    _write_github_auth_meta(meta)
+
+    payload = {"auth_method": auth_method}
+    payload.update(result)
+    return payload, 200
+
+
 _FOUNDATION_ASSISTANT_MODEL: dict[str, str] = {
     "codex": "gpt-5.2",
     "openai": "gpt-5.2",
@@ -2617,6 +2994,34 @@ def api_governance_source_policy_save():
         return jsonify({"error": "JSON object body is required."}), 400
     policy = _save_governance_policy(data)
     return jsonify({"status": "saved", "policy": policy})
+
+
+@app.route("/api/github/auth")
+def api_github_auth():
+    """Return GitHub auth settings metadata (never includes secret values)."""
+    return jsonify(_github_auth_state())
+
+
+@app.route("/api/github/auth", methods=["POST"])
+def api_github_auth_save():
+    """Persist GitHub auth settings and optional secure credentials."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required."}), 400
+    settings, error, status = _save_github_auth_settings(data)
+    if error:
+        return jsonify({"error": error}), status
+    return jsonify({"status": "saved", "settings": settings})
+
+
+@app.route("/api/github/auth/test", methods=["POST"])
+def api_github_auth_test():
+    """Test GitHub connectivity using saved or inline PAT/SSH credentials."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required."}), 400
+    payload, status = _run_github_auth_test(data)
+    return jsonify(payload), status
 
 
 # â”€â”€ Presets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

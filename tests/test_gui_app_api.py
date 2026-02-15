@@ -628,6 +628,132 @@ def test_governance_source_policy_endpoint_roundtrip(client, monkeypatch, tmp_pa
     assert load_data["deep_research_blocked_domains"] == "x.com"
 
 
+def test_github_auth_settings_roundtrip_with_secure_storage(client, monkeypatch, tmp_path: Path):
+    meta_path = tmp_path / "github_auth.json"
+    secrets: dict[str, str] = {}
+
+    monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", meta_path)
+    monkeypatch.setattr(gui_app_module, "_github_keyring_status", lambda: (True, "tests.fake", ""))
+    monkeypatch.setattr(gui_app_module, "_github_secret_get", lambda key: secrets.get(key, ""))
+    monkeypatch.setattr(gui_app_module, "_github_secret_set", lambda key, value: secrets.__setitem__(key, value))
+
+    def _delete_secret(key: str) -> None:
+        secrets.pop(key, None)
+
+    monkeypatch.setattr(gui_app_module, "_github_secret_delete", _delete_secret)
+
+    save_resp = client.post(
+        "/api/github/auth",
+        json={
+            "preferred_auth": "ssh",
+            "pat": "ghp_test_123",
+            "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----",
+        },
+    )
+    save_data = save_resp.get_json()
+    assert save_resp.status_code == 200
+    assert save_data
+    assert save_data["status"] == "saved"
+    assert meta_path.is_file()
+    assert secrets[gui_app_module._GITHUB_PAT_SECRET_KEY] == "ghp_test_123"
+    assert gui_app_module._GITHUB_SSH_SECRET_KEY in secrets
+    assert save_data["settings"]["preferred_auth"] == "ssh"
+    assert save_data["settings"]["has_pat"] is True
+    assert save_data["settings"]["has_ssh_key"] is True
+
+    load_resp = client.get("/api/github/auth")
+    load_data = load_resp.get_json()
+    assert load_resp.status_code == 200
+    assert load_data
+    assert load_data["preferred_auth"] == "ssh"
+    assert load_data["has_pat"] is True
+    assert load_data["has_ssh_key"] is True
+    assert "ghp_test_123" not in json.dumps(load_data)
+
+    clear_resp = client.post(
+        "/api/github/auth",
+        json={
+            "preferred_auth": "https",
+            "clear_pat": True,
+        },
+    )
+    clear_data = clear_resp.get_json()
+    assert clear_resp.status_code == 200
+    assert clear_data
+    assert clear_data["settings"]["preferred_auth"] == "https"
+    assert clear_data["settings"]["has_pat"] is False
+    assert clear_data["settings"]["has_ssh_key"] is True
+
+
+def test_github_auth_save_requires_available_secure_storage(client, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", tmp_path / "github_auth.json")
+    monkeypatch.setattr(
+        gui_app_module,
+        "_github_keyring_status",
+        lambda: (False, "keyring.backends.fail.Keyring", "no keyring backend"),
+    )
+
+    resp = client.post(
+        "/api/github/auth",
+        json={
+            "preferred_auth": "https",
+            "pat": "ghp_fail_me",
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 503
+    assert data
+    assert "no keyring backend" in data["error"]
+
+
+def test_github_auth_test_endpoint_uses_saved_pat(client, monkeypatch, tmp_path: Path):
+    meta_path = tmp_path / "github_auth.json"
+    monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", meta_path)
+    monkeypatch.setattr(gui_app_module, "_github_secret_get", lambda _key: "ghp_saved_token")
+    monkeypatch.setattr(
+        gui_app_module,
+        "_github_test_pat",
+        lambda _token: {"ok": True, "message": "PAT accepted", "login": "octocat"},
+    )
+
+    resp = client.post(
+        "/api/github/auth/test",
+        json={
+            "auth_method": "https",
+            "use_saved": True,
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is True
+    assert data["auth_method"] == "https"
+    assert data["login"] == "octocat"
+    assert meta_path.is_file()
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["last_test_ok"] is True
+    assert meta["last_test_at"]
+
+
+def test_github_auth_test_endpoint_requires_credentials(client, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", tmp_path / "github_auth.json")
+    monkeypatch.setattr(gui_app_module, "_github_secret_get", lambda _key: "")
+
+    resp = client.post(
+        "/api/github/auth/test",
+        json={
+            "auth_method": "https",
+            "use_saved": True,
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data
+    assert data["ok"] is False
+    assert "Provide a GitHub PAT" in data["message"]
+
+
 def test_project_legal_review_signoff_endpoint_updates_state(client, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     gui_app_module._upsert_legal_review_state(
