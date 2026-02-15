@@ -142,6 +142,10 @@ _GIT_REMOTE_QUERY_TIMEOUT_SECONDS = 20
 _GIT_CLONE_TIMEOUT_SECONDS = 180
 _GIT_SYNC_TIMEOUT_SECONDS = 30
 _DEFAULT_BRANCH_SENTINEL = "__remote_default__"
+_OWNER_CONTEXT_MAX_FILES = 6
+_OWNER_CONTEXT_MAX_FILE_CHARS = 6000
+_OWNER_CONTEXT_MAX_TOTAL_CHARS = 24000
+_GENERAL_REQUEST_HISTORY_MAX_ITEMS = 200
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
@@ -596,6 +600,9 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
 
     if config.self_improvement_auto_restart and not config.self_improvement_enabled:
         issues.append("self_improvement_auto_restart requires self_improvement_enabled.")
+
+    if config.pr_aware_enabled and config.mode != "apply":
+        issues.append("pr_aware_enabled requires mode='apply'.")
 
     if config.deep_research_native_enabled and config.deep_research_enabled:
         providers = str(config.deep_research_providers or "both").strip().lower()
@@ -1284,6 +1291,10 @@ def _feature_dreams_path(repo: Path) -> Path:
     return repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md"
 
 
+def _general_request_history_path(repo: Path) -> Path:
+    return repo / ".codex_manager" / "owner" / "GENERAL_REQUEST_HISTORY.jsonl"
+
+
 def _pipeline_resume_checkpoint_path(repo: Path) -> Path:
     return repo / ".codex_manager" / "state" / "pipeline_resume.json"
 
@@ -1429,13 +1440,75 @@ def _feature_dreams_has_open_items(text: str) -> bool:
     return bool(re.search(r"^\s*[-*]\s+\[\s\]\s+", str(text or ""), flags=re.MULTILINE))
 
 
+def _normalize_owner_context_files(
+    raw_files: object,
+    *,
+    max_files: int = _OWNER_CONTEXT_MAX_FILES,
+    max_chars_per_file: int = _OWNER_CONTEXT_MAX_FILE_CHARS,
+    max_total_chars: int = _OWNER_CONTEXT_MAX_TOTAL_CHARS,
+) -> list[dict[str, str]]:
+    files = raw_files if isinstance(raw_files, list) else []
+    normalized: list[dict[str, str]] = []
+    total_chars = 0
+    for idx, row in enumerate(files, start=1):
+        if len(normalized) >= max_files:
+            break
+        if not isinstance(row, dict):
+            continue
+        name_raw = str(row.get("name") or "").strip()
+        name_clean = re.sub(r"\s+", " ", name_raw).strip()
+        if not name_clean:
+            name_clean = f"context-{idx:02d}.txt"
+        if len(name_clean) > 180:
+            name_clean = name_clean[:180]
+
+        content = str(row.get("content") or "").replace("\r\n", "\n").strip()
+        if not content:
+            continue
+        if len(content) > max_chars_per_file:
+            content = content[:max_chars_per_file]
+
+        remaining = max_total_chars - total_chars
+        if remaining <= 0:
+            break
+        if len(content) > remaining:
+            content = content[:remaining]
+        total_chars += len(content)
+        normalized.append(
+            {
+                "name": name_clean,
+                "content": content,
+            }
+        )
+    return normalized
+
+
+def _owner_context_files_prompt_section(context_files: list[dict[str, str]]) -> str:
+    if not context_files:
+        return "Uploaded context files: (none)\n\n"
+    lines = ["Uploaded context files:\n"]
+    for idx, row in enumerate(context_files, start=1):
+        name = str(row.get("name") or "").strip() or f"context-{idx:02d}.txt"
+        content = str(row.get("content") or "").strip()
+        lines.append(f"[{idx}] {name}\n")
+        lines.append("```text\n")
+        lines.append(content[: _OWNER_CONTEXT_MAX_FILE_CHARS])
+        if content and not content.endswith("\n"):
+            lines.append("\n")
+        lines.append("```\n")
+    lines.append("\n")
+    return "".join(lines)
+
+
 def _suggest_todo_wishlist_markdown(
     *,
     repo: Path,
     model: str,
     owner_context: str,
     existing_markdown: str,
+    context_files: list[dict[str, str]] | None = None,
 ) -> tuple[str, str]:
+    context_file_rows = context_files or []
     prompt = (
         "You are building a practical implementation backlog for a software repository.\n"
         "Return only markdown.\n\n"
@@ -1448,6 +1521,7 @@ def _suggest_todo_wishlist_markdown(
         "- Keep each item specific and actionable.\n\n"
         f"Repository: {repo.name}\n"
         f"Owner context: {owner_context or '(none)'}\n\n"
+        f"{_owner_context_files_prompt_section(context_file_rows)}"
         "Existing list (for dedupe context):\n"
         f"{existing_markdown[:4000]}"
     )
@@ -1533,6 +1607,186 @@ def _suggest_feature_dreams_markdown(
         logger.warning("AI suggestion failed for feature dreams", exc_info=True)
         fallback = _default_feature_dreams_markdown(repo.name)
         return fallback, f"AI suggestion failed ({exc}); used a starter template."
+
+
+def _normalize_general_request_status(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"considered", "implemented", "refused"}:
+        return raw
+    if "refus" in raw or "cannot" in raw or "can't" in raw:
+        return "refused"
+    if "implement" in raw:
+        return "implemented"
+    return "considered"
+
+
+def _parse_general_request_response(raw_output: str) -> tuple[str, str, str]:
+    text = str(raw_output or "").strip()
+    if not text:
+        return "refused", "AI returned an empty response.", ""
+    candidate = _extract_first_code_fence(text).strip() or text
+    try:
+        payload = json.loads(candidate)
+    except Exception:
+        status = "considered"
+        notes = "AI returned an unstructured response."
+        return status, notes, text
+    if not isinstance(payload, dict):
+        return "considered", "AI response JSON did not contain an object.", text
+    status = _normalize_general_request_status(payload.get("status"))
+    notes = str(payload.get("notes") or "").strip()
+    response_text = str(payload.get("response") or "").strip()
+    if not notes:
+        notes = "No notes provided."
+    if not response_text:
+        response_text = text
+    return status, notes, response_text
+
+
+def _trim_general_request_history(path: Path, *, max_items: int = _GENERAL_REQUEST_HISTORY_MAX_ITEMS) -> None:
+    if max_items <= 0 or not path.is_file():
+        return
+    try:
+        rows = [line for line in _read_text_utf8_resilient(path).splitlines() if line.strip()]
+    except Exception:
+        return
+    if len(rows) <= max_items:
+        return
+    trimmed = "\n".join(rows[-max_items:]) + "\n"
+    path.write_text(trimmed, encoding="utf-8")
+
+
+def _append_general_request_history(
+    *,
+    repo: Path,
+    request_text: str,
+    status: str,
+    notes: str,
+    output: str,
+    source: str,
+    model: str = "",
+) -> dict[str, object]:
+    now = datetime.utcnow().isoformat() + "Z"
+    normalized_status = _normalize_general_request_status(status)
+    entry: dict[str, object] = {
+        "id": f"gr-{int(time.time() * 1000)}",
+        "timestamp": now,
+        "request": str(request_text or "").strip(),
+        "status": normalized_status,
+        "notes": str(notes or "").strip(),
+        "output": str(output or ""),
+        "source": str(source or "").strip() or "general_request",
+        "model": str(model or "").strip(),
+    }
+    history_path = _general_request_history_path(repo)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    with history_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    _trim_general_request_history(history_path)
+    return entry
+
+
+def _read_general_request_history(repo: Path, *, limit: int = 25) -> list[dict[str, object]]:
+    path = _general_request_history_path(repo)
+    if not path.is_file():
+        return []
+    try:
+        raw = _read_text_utf8_resilient(path)
+    except Exception:
+        return []
+    rows: list[dict[str, object]] = []
+    for line in raw.splitlines():
+        item = line.strip()
+        if not item:
+            continue
+        try:
+            parsed = json.loads(item)
+        except Exception:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        rows.append(
+            {
+                "id": str(parsed.get("id") or "").strip(),
+                "timestamp": str(parsed.get("timestamp") or "").strip(),
+                "request": str(parsed.get("request") or "").strip(),
+                "status": _normalize_general_request_status(parsed.get("status")),
+                "notes": str(parsed.get("notes") or "").strip(),
+                "output": str(parsed.get("output") or ""),
+                "source": str(parsed.get("source") or "").strip(),
+                "model": str(parsed.get("model") or "").strip(),
+            }
+        )
+    rows.sort(key=lambda row: str(row.get("timestamp") or ""), reverse=True)
+    cap = max(1, min(200, int(limit)))
+    return rows[:cap]
+
+
+def _process_general_request(
+    *,
+    repo: Path,
+    request_text: str,
+    model: str,
+    owner_context: str,
+    context_files: list[dict[str, str]],
+) -> tuple[str, str, str, str]:
+    prompt = (
+        "You are assisting the repository owner with a general project request.\n"
+        "This mode can analyze and recommend, but does not directly edit repository files.\n"
+        "Return STRICT JSON with keys: status, notes, response.\n\n"
+        "Rules:\n"
+        "- status must be one of: considered, refused.\n"
+        "- Use `considered` when the request is valid and you can provide a useful response.\n"
+        "- Use `refused` when the request is unsafe, unrelated, or missing critical details.\n"
+        "- `notes` should be 1-3 concise sentences.\n"
+        "- `response` should be useful markdown for the owner.\n"
+        "- Never claim repository files were modified in this mode.\n\n"
+        f"Repository: {repo.name}\n"
+        f"Owner context: {owner_context or '(none)'}\n\n"
+        f"{_owner_context_files_prompt_section(context_files)}"
+        "Owner request:\n"
+        f"{request_text[:6000]}"
+    )
+    try:
+        from codex_manager.brain.connector import connect
+    except Exception as exc:
+        fallback = (
+            '{'
+            '"status":"refused",'
+            '"notes":"AI connector unavailable in this environment.",'
+            '"response":"Could not process the request because AI connectivity is unavailable."'
+            "}"
+        )
+        return "refused", str(exc), fallback, "AI connector unavailable"
+
+    try:
+        raw = connect(
+            model=str(model or "gpt-5.2").strip() or "gpt-5.2",
+            prompt=prompt,
+            text_only=True,
+            operation="owner_general_request",
+            stage="owner:general_request",
+            max_output_tokens=2200,
+            temperature=0.25,
+        )
+        raw_text = str(raw or "").strip()
+        if not raw_text:
+            raise RuntimeError("empty response")
+        status, notes, response = _parse_general_request_response(raw_text)
+        # This mode does not run repository edits.
+        if status == "implemented":
+            status = "considered"
+            notes = f"{notes} (Implementation not executed in consider mode.)".strip()
+        return status, notes, response, raw_text
+    except Exception as exc:
+        fallback = (
+            '{'
+            '"status":"refused",'
+            '"notes":"AI request failed in this run.",'
+            '"response":"The request could not be processed due to an AI/runtime error."'
+            "}"
+        )
+        return "refused", str(exc), fallback, fallback
 
 
 def _extract_governance_warnings(text: str) -> list[str]:
@@ -3770,6 +4024,7 @@ def api_owner_todo_wishlist_suggest():
     repo_raw = str(data.get("repo_path") or "").strip()
     owner_context = str(data.get("owner_context") or "").strip()
     existing_markdown = str(data.get("existing_markdown") or "").strip()
+    context_files = _normalize_owner_context_files(data.get("context_files"))
     model = str(data.get("model") or "gpt-5.2").strip() or "gpt-5.2"
     if not repo_raw:
         return jsonify({"error": "repo_path is required."}), 400
@@ -3784,6 +4039,7 @@ def api_owner_todo_wishlist_suggest():
         model=model,
         owner_context=owner_context,
         existing_markdown=existing_markdown,
+        context_files=context_files,
     )
     return jsonify(
         {
@@ -3791,6 +4047,7 @@ def api_owner_todo_wishlist_suggest():
             "model": model,
             "content": suggested,
             "has_open_items": _todo_wishlist_has_open_items(suggested),
+            "context_files_used": len(context_files),
             "warning": warning,
         }
     )
@@ -3878,6 +4135,115 @@ def api_owner_feature_dreams_suggest():
             "content": suggested,
             "has_open_items": _feature_dreams_has_open_items(suggested),
             "warning": warning,
+        }
+    )
+
+
+@app.route("/api/owner/general-request/history")
+def api_owner_general_request_history():
+    """Return recent general-request history for a repository (latest first)."""
+    repo_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+    limit_raw = request.args.get("limit", "25")
+    try:
+        limit = int(str(limit_raw).strip() or "25")
+    except Exception:
+        limit = 25
+    limit = max(1, min(200, limit))
+    entries = _read_general_request_history(repo, limit=limit)
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "path": str(_general_request_history_path(repo)),
+            "entries": entries,
+        }
+    )
+
+
+@app.route("/api/owner/general-request/process", methods=["POST"])
+def api_owner_general_request_process():
+    """Process one owner general request in consider mode and persist history."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    request_text = str(data.get("request_text") or "").strip()
+    owner_context = str(data.get("owner_context") or "").strip()
+    model = str(data.get("model") or "gpt-5.2").strip() or "gpt-5.2"
+    context_files = _normalize_owner_context_files(data.get("context_files"))
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    if not request_text:
+        return jsonify({"error": "request_text is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    status, notes, response, raw_output = _process_general_request(
+        repo=repo,
+        request_text=request_text,
+        model=model,
+        owner_context=owner_context,
+        context_files=context_files,
+    )
+    entry = _append_general_request_history(
+        repo=repo,
+        request_text=request_text,
+        status=status,
+        notes=notes,
+        output=raw_output,
+        source="consider",
+        model=model,
+    )
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "model": model,
+            "status": status,
+            "notes": notes,
+            "response": response,
+            "output": raw_output,
+            "history_entry": entry,
+            "cleared_request": True,
+            "context_files_used": len(context_files),
+        }
+    )
+
+
+@app.route("/api/owner/general-request/history/add", methods=["POST"])
+def api_owner_general_request_history_add():
+    """Append one general-request history item (used by chain-driven implementations)."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    request_text = str(data.get("request_text") or "").strip()
+    status = _normalize_general_request_status(data.get("status"))
+    notes = str(data.get("notes") or "").strip()
+    output = str(data.get("output") or "")
+    source = str(data.get("source") or "").strip() or "chain"
+    model = str(data.get("model") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    if not request_text:
+        return jsonify({"error": "request_text is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+    entry = _append_general_request_history(
+        repo=repo,
+        request_text=request_text,
+        status=status,
+        notes=notes,
+        output=output,
+        source=source,
+        model=model,
+    )
+    return jsonify(
+        {
+            "status": "saved",
+            "repo_path": str(repo),
+            "entry": entry,
         }
     )
 
@@ -7068,6 +7434,12 @@ def api_pipeline_start():
         improvement_threshold=gui_config.improvement_threshold,
         auto_commit=gui_config.auto_commit,
         commit_frequency=gui_config.commit_frequency,
+        pr_aware_enabled=gui_config.pr_aware_enabled,
+        pr_feature_branch=gui_config.pr_feature_branch,
+        pr_remote=gui_config.pr_remote,
+        pr_base_branch=gui_config.pr_base_branch,
+        pr_auto_push=gui_config.pr_auto_push,
+        pr_sync_description=gui_config.pr_sync_description,
         phases=phase_configs if phase_configs else [],
     )
 

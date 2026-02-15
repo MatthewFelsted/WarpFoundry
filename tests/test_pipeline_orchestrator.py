@@ -51,6 +51,39 @@ def _head_sha(repo: Path) -> str:
     return result.stdout.strip()
 
 
+def _attach_bare_origin(repo: Path, tmp_path: Path) -> Path:
+    remote = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    branch_result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    branch = branch_result.stdout.strip() or "master"
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(remote)],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "push", "--set-upstream", "origin", branch],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return remote
+
+
 class _WriteRunner:
     name = "StubCodex"
 
@@ -946,6 +979,127 @@ def test_auto_commit_manual_skips_non_commit_phase_auto_commits(monkeypatch, tmp
     assert len(commit_calls) == 0
     files_changed, _, _ = diff_numstat(repo)
     assert files_changed > 0
+
+
+def test_pr_aware_mode_runs_on_feature_branch_and_auto_pushes(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    remote = _attach_bare_origin(repo, tmp_path)
+
+    _PhaseWriteRunner.calls = 0
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _PhaseWriteRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    feature_branch = "feature/pr-aware-sync"
+    cfg = PipelineConfig(
+        mode="apply",
+        max_cycles=1,
+        auto_commit=True,
+        commit_frequency="per_phase",
+        pr_aware_enabled=True,
+        pr_feature_branch=feature_branch,
+        pr_remote="origin",
+        pr_auto_push=True,
+        pr_sync_description=False,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement something for PR sync mode.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    branch_result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert branch_result.stdout.strip() == feature_branch
+
+    pushed = subprocess.run(
+        ["git", "ls-remote", "--heads", str(remote), feature_branch],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert feature_branch in pushed.stdout
+    assert state.pr_aware.get("enabled") is True
+    assert state.pr_aware.get("branch") == feature_branch
+    assert state.pr_aware.get("last_pushed_head")
+
+
+def test_pr_aware_mode_syncs_pull_request_description(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    patched_bodies: list[str] = []
+
+    def _stub_setup_pr(self: PipelineOrchestrator, *, repo: Path, config: PipelineConfig) -> None:
+        self._pr_aware_state = {
+            "enabled": True,
+            "branch": "feature/pr-sync",
+            "remote": "origin",
+            "base_branch": "main",
+            "remote_url": "https://github.com/example/demo.git",
+            "owner": "example",
+            "repo_name": "demo",
+            "token": "ghp_test_token",
+            "auto_push": False,
+            "sync_description": True,
+            "upstream_configured": True,
+            "pull_number": 42,
+            "pull_request_url": "https://github.com/example/demo/pull/42",
+            "last_pushed_head": "",
+            "last_push_error": "",
+            "last_sync_error": "",
+            "last_body_digest": "",
+        }
+        self._refresh_pr_aware_state()
+
+    def _stub_github_api_request(self, *, method: str, path: str, token: str, payload=None):
+        if method.upper() == "PATCH" and path.endswith("/pulls/42"):
+            if isinstance(payload, dict):
+                patched_bodies.append(str(payload.get("body") or ""))
+            return {}, ""
+        return {}, ""
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(PipelineOrchestrator, "_setup_pr_aware_mode", _stub_setup_pr)
+    monkeypatch.setattr(PipelineOrchestrator, "_github_api_request", _stub_github_api_request)
+    monkeypatch.setattr(PipelineOrchestrator, "_preflight_issues", lambda *_a, **_k: [])
+
+    cfg = PipelineConfig(
+        mode="apply",
+        max_cycles=1,
+        pr_aware_enabled=True,
+        pr_auto_push=False,
+        pr_sync_description=True,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Collect one idea.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    assert patched_bodies
+    latest = patched_bodies[-1]
+    assert "Codex Manager Pipeline Summary" in latest
+    assert "Stop reason: `max_cycles_reached`" in latest
 
 
 def test_brain_follow_up_executes_extra_phase_and_logs(monkeypatch, tmp_path: Path):

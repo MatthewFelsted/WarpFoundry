@@ -18,17 +18,23 @@ integrates with:
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
 import queue
 import re
+import subprocess
 import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 from codex_manager.agent_runner import AgentRunner
 from codex_manager.agent_signals import (
@@ -75,6 +81,9 @@ _MUTATING_PHASES = {
     PipelinePhase.IMPLEMENTATION,
     PipelinePhase.DEBUGGING,
 }
+_GITHUB_API_TIMEOUT_SECONDS = 20
+_GITHUB_PAT_SERVICE = "codex_manager.github_auth"
+_GITHUB_PAT_KEY = "pat"
 
 
 class PipelineOrchestrator:
@@ -129,6 +138,7 @@ class PipelineOrchestrator:
         self._science_action_items: list[str] = []
         self._brain_logbook: BrainLogbook | None = None
         self._history_logbook: HistoryLogbook | None = None
+        self._pr_aware_state: dict[str, Any] = {}
         self._resume_cycle = max(1, int(resume_cycle))
         self._resume_phase_index = max(0, int(resume_phase_index))
 
@@ -151,7 +161,9 @@ class PipelineOrchestrator:
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             resume_cycle=self._resume_cycle,
             resume_phase_index=self._resume_phase_index,
+            pr_aware={},
         )
+        self._pr_aware_state = {}
         self._stop_event.clear()
         self._pause_event.set()
 
@@ -174,7 +186,9 @@ class PipelineOrchestrator:
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             resume_cycle=self._resume_cycle,
             resume_phase_index=self._resume_phase_index,
+            pr_aware={},
         )
+        self._pr_aware_state = {}
         self._stop_event.clear()
         self._pause_event.set()
         self._log("info", f"Pipeline started ({self.config.mode} mode)")
@@ -624,6 +638,15 @@ class PipelineOrchestrator:
             f"({self.state.total_cycles_completed} cycles, "
             f"{self.state.total_phases_completed} phases)",
         )
+        if self.config.mode == "apply" and self.config.pr_aware_enabled:
+            try:
+                self._pr_aware_maybe_sync(
+                    repo=self.repo_path,
+                    reason="run_finalized",
+                    force_description=True,
+                )
+            except Exception as exc:
+                self._log("warn", f"PR-aware final sync failed: {exc}")
         history_context = {
             "stop_reason": self.state.stop_reason,
             "total_cycles_completed": self.state.total_cycles_completed,
@@ -634,6 +657,7 @@ class PipelineOrchestrator:
             "restart_checkpoint_path": self.state.restart_checkpoint_path,
             "resume_cycle": self.state.resume_cycle,
             "resume_phase_index": self.state.resume_phase_index,
+            "pr_aware": self._pr_aware_snapshot(),
         }
         if extra_history_context:
             history_context.update(extra_history_context)
@@ -1467,6 +1491,611 @@ class PipelineOrchestrator:
             self._log("warn", f"  Auto-commit failed: {exc}")
             return False
 
+    @staticmethod
+    def _run_git_process(
+        repo: Path,
+        *args: str,
+        timeout: int = 30,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    @staticmethod
+    def _git_process_error(
+        result: subprocess.CompletedProcess[str],
+        fallback: str,
+    ) -> str:
+        stderr = str(result.stderr or "").strip()
+        if stderr:
+            return stderr
+        stdout = str(result.stdout or "").strip()
+        if stdout:
+            return stdout
+        return fallback
+
+    def _git_current_branch_name(self, repo: Path) -> str:
+        result = self._run_git_process(repo, "rev-parse", "--abbrev-ref", "HEAD")
+        if result.returncode != 0:
+            detail = self._git_process_error(result, "git rev-parse --abbrev-ref HEAD failed")
+            raise RuntimeError(detail)
+        return str(result.stdout or "").strip() or "HEAD"
+
+    def _git_head_sha_full(self, repo: Path) -> str:
+        result = self._run_git_process(repo, "rev-parse", "HEAD")
+        if result.returncode != 0:
+            detail = self._git_process_error(result, "git rev-parse HEAD failed")
+            raise RuntimeError(detail)
+        return str(result.stdout or "").strip()
+
+    def _git_remote_names(self, repo: Path) -> list[str]:
+        result = self._run_git_process(repo, "remote")
+        if result.returncode != 0:
+            detail = self._git_process_error(result, "git remote failed")
+            raise RuntimeError(detail)
+        names: list[str] = []
+        seen: set[str] = set()
+        for raw_line in str(result.stdout or "").splitlines():
+            name = raw_line.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return names
+
+    def _git_remote_url(self, repo: Path, remote: str) -> str:
+        result = self._run_git_process(repo, "remote", "get-url", remote)
+        if result.returncode != 0:
+            detail = self._git_process_error(result, f"git remote get-url {remote} failed")
+            raise RuntimeError(detail)
+        return str(result.stdout or "").strip()
+
+    def _git_tracking_remote(self, repo: Path) -> str:
+        result = self._run_git_process(
+            repo,
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        )
+        if result.returncode != 0:
+            return ""
+        tracking = str(result.stdout or "").strip()
+        if "/" not in tracking:
+            return ""
+        return tracking.split("/", 1)[0].strip()
+
+    def _git_remote_default_branch(self, repo: Path, remote: str) -> str:
+        result = self._run_git_process(repo, "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
+        if result.returncode != 0:
+            return ""
+        remote_head = str(result.stdout or "").strip()
+        prefix = f"{remote}/"
+        if remote_head.startswith(prefix):
+            return remote_head[len(prefix) :].strip()
+        return remote_head.rsplit("/", 1)[-1].strip()
+
+    def _git_require_valid_branch_name(self, repo: Path, branch: str) -> None:
+        probe = self._run_git_process(repo, "check-ref-format", "--branch", branch)
+        if probe.returncode != 0:
+            detail = self._git_process_error(probe, f"Invalid branch name: {branch}")
+            raise RuntimeError(detail)
+
+    def _git_local_branch_exists(self, repo: Path, branch: str) -> bool:
+        probe = self._run_git_process(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}")
+        return probe.returncode == 0
+
+    @staticmethod
+    def _github_owner_repo_from_remote(remote_url: str) -> tuple[str, str]:
+        raw = str(remote_url or "").strip()
+        if not raw:
+            return "", ""
+
+        host = ""
+        path = ""
+        parsed = urlparse(raw)
+        if parsed.scheme and parsed.netloc:
+            host = str(parsed.hostname or parsed.netloc).strip().lower()
+            path = str(parsed.path or "").strip()
+        elif "://" not in raw and ":" in raw:
+            left, right = raw.split(":", 1)
+            if "@" in left and right.strip():
+                host = left.split("@", 1)[1].strip().lower()
+                path = "/" + right.strip()
+
+        if host != "github.com":
+            return "", ""
+        normalized = path.strip().strip("/")
+        if normalized.lower().endswith(".git"):
+            normalized = normalized[:-4]
+        parts = [part.strip() for part in normalized.split("/") if part.strip()]
+        if len(parts) < 2:
+            return "", ""
+        return parts[0], parts[1]
+
+    @staticmethod
+    def _github_api_error_message(exc: HTTPError) -> str:
+        detail = ""
+        with suppress(Exception):
+            body = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(body) if body else {}
+            if isinstance(parsed, dict):
+                detail = str(parsed.get("message") or "").strip()
+        message = f"GitHub API returned HTTP {exc.code}."
+        if detail:
+            message += f" {detail[:220]}"
+        return message
+
+    @staticmethod
+    def _github_pat_token() -> str:
+        for key in ("CODEX_MANAGER_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+            token = str(os.getenv(key) or "").strip()
+            if token:
+                return token
+        with suppress(Exception):
+            import keyring
+
+            token = str(keyring.get_password(_GITHUB_PAT_SERVICE, _GITHUB_PAT_KEY) or "").strip()
+            if token:
+                return token
+        return ""
+
+    def _github_api_request(
+        self,
+        *,
+        method: str,
+        path: str,
+        token: str,
+        payload: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any] | list[Any] | None, str]:
+        url = f"https://api.github.com{path}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "codex-manager-pipeline-pr-aware",
+        }
+        token_value = str(token or "").strip()
+        if token_value:
+            headers["Authorization"] = f"Bearer {token_value}"
+
+        data: bytes | None = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(payload).encode("utf-8")
+
+        request_obj = Request(url, headers=headers, data=data, method=method.upper())
+        try:
+            with urlopen(request_obj, timeout=_GITHUB_API_TIMEOUT_SECONDS) as response:
+                body_text = response.read().decode("utf-8", errors="replace")
+        except HTTPError as exc:
+            return None, self._github_api_error_message(exc)
+        except URLError as exc:
+            reason = str(getattr(exc, "reason", exc) or "").strip()
+            if reason:
+                return None, f"Could not reach GitHub API: {reason}"
+            return None, "Could not reach GitHub API."
+        except Exception as exc:
+            return None, f"GitHub API request failed: {exc}"
+
+        if not body_text.strip():
+            return {}, ""
+        try:
+            parsed = json.loads(body_text)
+        except json.JSONDecodeError as exc:
+            return None, f"GitHub API returned invalid JSON: {exc}"
+        if isinstance(parsed, (dict, list)):
+            return parsed, ""
+        return None, "GitHub API returned an unexpected payload shape."
+
+    def _pr_aware_snapshot(self) -> dict[str, Any]:
+        state = self._pr_aware_state
+        return {
+            "enabled": bool(state.get("enabled")),
+            "branch": str(state.get("branch") or ""),
+            "remote": str(state.get("remote") or ""),
+            "base_branch": str(state.get("base_branch") or ""),
+            "auto_push": bool(state.get("auto_push")),
+            "sync_description": bool(state.get("sync_description")),
+            "pull_number": int(state.get("pull_number") or 0),
+            "pull_request_url": str(state.get("pull_request_url") or ""),
+            "last_pushed_head": str(state.get("last_pushed_head") or ""),
+            "last_push_succeeded_at": str(state.get("last_push_succeeded_at") or ""),
+            "last_sync_succeeded_at": str(state.get("last_sync_succeeded_at") or ""),
+            "last_push_error": str(state.get("last_push_error") or ""),
+            "last_sync_error": str(state.get("last_sync_error") or ""),
+        }
+
+    def _refresh_pr_aware_state(self) -> None:
+        if not isinstance(self.state.pr_aware, dict):
+            self.state.pr_aware = {}
+        self.state.pr_aware = self._pr_aware_snapshot()
+
+    def _resolve_pr_aware_remote(self, repo: Path, requested_remote: str) -> str:
+        remotes = self._git_remote_names(repo)
+        if not remotes:
+            raise RuntimeError("PR-aware mode requires at least one configured git remote.")
+        remote_set = set(remotes)
+
+        candidate = str(requested_remote or "").strip()
+        if candidate:
+            if candidate not in remote_set:
+                raise RuntimeError(
+                    f"Configured PR remote '{candidate}' is not defined in this repository."
+                )
+            return candidate
+
+        tracking_remote = self._git_tracking_remote(repo)
+        if tracking_remote and tracking_remote in remote_set:
+            return tracking_remote
+        if "origin" in remote_set:
+            return "origin"
+        return remotes[0]
+
+    def _build_pr_run_summary(self) -> str:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        stop_reason = str(self.state.stop_reason or "running")
+        pull_url = str(self._pr_aware_state.get("pull_request_url") or "").strip()
+        lines = [
+            "## Codex Manager Pipeline Summary",
+            "",
+            "> This description is managed automatically by PR-aware pipeline mode.",
+            "",
+            f"- Updated: {now}",
+            f"- Repo: `{self.repo_path}`",
+            f"- Mode: `{self.config.mode}`",
+            f"- Stop reason: `{stop_reason}`",
+            f"- Cycles completed: {int(self.state.total_cycles_completed or 0)}",
+            f"- Phases completed: {int(self.state.total_phases_completed or 0)}",
+            f"- Successes: {int(self.state.successes or 0)}",
+            f"- Failures: {int(self.state.failures or 0)}",
+            f"- Tokens used: {int(self.state.total_tokens or 0):,}",
+            f"- Elapsed seconds: {round(float(self.state.elapsed_seconds or 0.0), 1)}",
+        ]
+        if pull_url:
+            lines.append(f"- Pull request: {pull_url}")
+
+        recent = self.state.results[-12:]
+        lines.extend(["", "### Recent Phase Results", ""])
+        if not recent:
+            lines.append("No phase results recorded yet.")
+            return "\n".join(lines)
+
+        lines.append("| Cycle | Phase | Iter | Status | Tests | Files | Net | Commit |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        for result in recent:
+            status = "ok" if result.success else "failed"
+            commit_short = str(result.commit_sha or "").strip()
+            if len(commit_short) > 12:
+                commit_short = commit_short[:12]
+            lines.append(
+                "| "
+                f"{int(result.cycle or 0)} | "
+                f"`{result.phase}` | "
+                f"{int(result.iteration or 0)} | "
+                f"{status} | "
+                f"`{result.test_outcome}` | "
+                f"{int(result.files_changed or 0)} | "
+                f"{int(result.net_lines_changed or 0):+d} | "
+                f"`{commit_short or '-'}` |"
+            )
+        return "\n".join(lines)
+
+    def _pr_aware_find_pull_request(self) -> tuple[int, str]:
+        state = self._pr_aware_state
+        owner = str(state.get("owner") or "").strip()
+        repo_name = str(state.get("repo_name") or "").strip()
+        branch = str(state.get("branch") or "").strip()
+        base_branch = str(state.get("base_branch") or "").strip()
+        if not owner or not repo_name or not branch:
+            return 0, ""
+
+        query = f"state=open&head={quote(owner + ':' + branch, safe='')}"
+        if base_branch:
+            query += f"&base={quote(base_branch, safe='')}"
+        path = (
+            "/repos/"
+            f"{quote(owner, safe='')}/{quote(repo_name, safe='')}/pulls?{query}"
+        )
+        payload, error = self._github_api_request(
+            method="GET",
+            path=path,
+            token=str(state.get("token") or ""),
+            payload=None,
+        )
+        if error:
+            self._pr_aware_state["last_sync_error"] = error
+            self._refresh_pr_aware_state()
+            return 0, ""
+        if not isinstance(payload, list) or not payload:
+            return 0, ""
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            number = int(item.get("number") or 0)
+            url = str(item.get("html_url") or "").strip()
+            if number > 0:
+                return number, url
+        return 0, ""
+
+    def _pr_aware_create_pull_request(self) -> tuple[int, str, str]:
+        state = self._pr_aware_state
+        owner = str(state.get("owner") or "").strip()
+        repo_name = str(state.get("repo_name") or "").strip()
+        branch = str(state.get("branch") or "").strip()
+        base_branch = str(state.get("base_branch") or "").strip()
+        token = str(state.get("token") or "").strip()
+        if not owner or not repo_name or not branch or not base_branch:
+            return 0, "", "Missing owner/repo/head/base for pull request creation."
+        if not token:
+            return 0, "", "GitHub token is required to create pull requests."
+
+        path = f"/repos/{quote(owner, safe='')}/{quote(repo_name, safe='')}/pulls"
+        payload, error = self._github_api_request(
+            method="POST",
+            path=path,
+            token=token,
+            payload={
+                "title": f"Codex Manager pipeline updates ({branch})",
+                "head": branch,
+                "base": base_branch,
+                "body": self._build_pr_run_summary(),
+            },
+        )
+        if error:
+            return 0, "", error
+        if not isinstance(payload, dict):
+            return 0, "", "Unexpected pull-request creation payload."
+        number = int(payload.get("number") or 0)
+        url = str(payload.get("html_url") or "").strip()
+        if number <= 0:
+            return 0, "", "GitHub pull-request creation returned an invalid PR number."
+        return number, url, ""
+
+    def _pr_aware_ensure_pull_request(self, *, create_if_missing: bool) -> None:
+        state = self._pr_aware_state
+        if not state.get("enabled"):
+            return
+        if state.get("pull_number"):
+            return
+
+        number, url = self._pr_aware_find_pull_request()
+        if number > 0:
+            state["pull_number"] = number
+            state["pull_request_url"] = url
+            state["last_sync_error"] = ""
+            self._log("info", f"PR-aware mode linked existing PR #{number}.")
+            self._refresh_pr_aware_state()
+            return
+
+        if not create_if_missing:
+            self._refresh_pr_aware_state()
+            return
+
+        number, url, error = self._pr_aware_create_pull_request()
+        if number <= 0:
+            if error:
+                state["last_sync_error"] = error
+                self._log("warn", f"PR-aware mode could not create pull request: {error}")
+            self._refresh_pr_aware_state()
+            return
+
+        state["pull_number"] = number
+        state["pull_request_url"] = url
+        state["last_sync_error"] = ""
+        self._log("info", f"PR-aware mode created PR #{number}: {url}")
+        self._refresh_pr_aware_state()
+
+    def _pr_aware_push_updates(
+        self,
+        *,
+        repo: Path,
+        reason: str,
+        set_upstream: bool,
+        force: bool = False,
+    ) -> bool:
+        state = self._pr_aware_state
+        if not state.get("enabled"):
+            return False
+        if not state.get("auto_push"):
+            return False
+
+        remote = str(state.get("remote") or "").strip()
+        branch = str(state.get("branch") or "").strip()
+        if not remote or not branch:
+            state["last_push_error"] = "Missing remote/branch for PR-aware push."
+            self._refresh_pr_aware_state()
+            return False
+
+        try:
+            head = self._git_head_sha_full(repo)
+        except Exception as exc:
+            state["last_push_error"] = str(exc)
+            self._refresh_pr_aware_state()
+            return False
+
+        if not force and head and head == str(state.get("last_pushed_head") or "").strip():
+            return False
+
+        push_args: list[str] = ["push"]
+        needs_upstream = bool(set_upstream) or not bool(state.get("upstream_configured"))
+        if needs_upstream:
+            push_args.extend(["--set-upstream", remote, branch])
+        else:
+            push_args.extend([remote, branch])
+
+        result = self._run_git_process(repo, *push_args)
+        if result.returncode != 0:
+            detail = self._git_process_error(result, f"git {' '.join(push_args)} failed")
+            state["last_push_error"] = detail
+            self._log("warn", f"PR-aware auto-push failed ({reason}): {detail}")
+            self._refresh_pr_aware_state()
+            return False
+
+        state["last_pushed_head"] = head
+        state["upstream_configured"] = True
+        state["last_push_error"] = ""
+        state["last_push_succeeded_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        self._log("info", f"PR-aware auto-push succeeded ({reason}) to {remote}/{branch}.")
+        self._refresh_pr_aware_state()
+        return True
+
+    def _pr_aware_sync_pull_request_description(self, *, force: bool) -> bool:
+        state = self._pr_aware_state
+        if not state.get("enabled"):
+            return False
+        if not state.get("sync_description"):
+            return False
+
+        self._pr_aware_ensure_pull_request(create_if_missing=bool(state.get("auto_push")))
+        pull_number = int(state.get("pull_number") or 0)
+        if pull_number <= 0:
+            return False
+
+        token = str(state.get("token") or "").strip()
+        if not token:
+            state["last_sync_error"] = "GitHub token is required to update PR descriptions."
+            self._refresh_pr_aware_state()
+            return False
+
+        owner = str(state.get("owner") or "").strip()
+        repo_name = str(state.get("repo_name") or "").strip()
+        if not owner or not repo_name:
+            return False
+
+        body = self._build_pr_run_summary()
+        body_digest = hashlib.sha1(body.encode("utf-8")).hexdigest()
+        if not force and body_digest == str(state.get("last_body_digest") or ""):
+            return False
+
+        path = f"/repos/{quote(owner, safe='')}/{quote(repo_name, safe='')}/pulls/{pull_number}"
+        _payload, error = self._github_api_request(
+            method="PATCH",
+            path=path,
+            token=token,
+            payload={"body": body},
+        )
+        if error:
+            state["last_sync_error"] = error
+            self._log("warn", f"PR-aware description sync failed: {error}")
+            self._refresh_pr_aware_state()
+            return False
+
+        state["last_sync_error"] = ""
+        state["last_body_digest"] = body_digest
+        state["last_sync_succeeded_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        self._log("info", f"PR-aware description synced (PR #{pull_number}).")
+        self._refresh_pr_aware_state()
+        return True
+
+    def _pr_aware_maybe_sync(
+        self,
+        *,
+        repo: Path,
+        reason: str,
+        force_description: bool = False,
+    ) -> None:
+        state = self._pr_aware_state
+        if not state.get("enabled"):
+            return
+        pushed = self._pr_aware_push_updates(
+            repo=repo,
+            reason=reason,
+            set_upstream=False,
+            force=False,
+        )
+        self._pr_aware_sync_pull_request_description(force=force_description or pushed)
+
+    def _setup_pr_aware_mode(
+        self,
+        *,
+        repo: Path,
+        config: PipelineConfig,
+    ) -> None:
+        now_tag = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        requested_branch = str(config.pr_feature_branch or "").strip()
+        branch = requested_branch or f"codex-manager/pr/{now_tag}"
+        self._git_require_valid_branch_name(repo, branch)
+
+        current = self._git_current_branch_name(repo)
+        if self._git_local_branch_exists(repo, branch):
+            if current != branch:
+                checkout_result = self._run_git_process(repo, "checkout", branch)
+                if checkout_result.returncode != 0:
+                    detail = self._git_process_error(
+                        checkout_result,
+                        f"git checkout {branch} failed",
+                    )
+                    raise RuntimeError(detail)
+                self._log("info", f"Switched to existing PR branch: {branch}")
+            else:
+                self._log("info", f"Using current PR branch: {branch}")
+        else:
+            create_branch(repo, branch_name=branch)
+            self._log("info", f"Created PR branch: {branch}")
+
+        remote = self._resolve_pr_aware_remote(repo, str(config.pr_remote or ""))
+        remote_url = self._git_remote_url(repo, remote)
+        base_branch = (
+            str(config.pr_base_branch or "").strip()
+            or self._git_remote_default_branch(repo, remote)
+            or (current if current != "HEAD" else "main")
+        )
+        owner, repo_name = self._github_owner_repo_from_remote(remote_url)
+        token = self._github_pat_token() if owner and repo_name else ""
+        if config.pr_sync_description and owner and repo_name and not token:
+            self._log(
+                "warn",
+                "PR-aware description sync is enabled but no GitHub token is configured.",
+            )
+
+        self._pr_aware_state = {
+            "enabled": True,
+            "branch": branch,
+            "remote": remote,
+            "base_branch": base_branch,
+            "remote_url": remote_url,
+            "owner": owner,
+            "repo_name": repo_name,
+            "token": token,
+            "auto_push": bool(config.pr_auto_push),
+            "sync_description": bool(config.pr_sync_description),
+            "upstream_configured": False,
+            "pull_number": 0,
+            "pull_request_url": "",
+            "last_pushed_head": "",
+            "last_push_succeeded_at": "",
+            "last_sync_succeeded_at": "",
+            "last_push_error": "",
+            "last_sync_error": "",
+            "last_body_digest": "",
+        }
+        self._refresh_pr_aware_state()
+        self._log(
+            "info",
+            "PR-aware mode enabled: "
+            f"branch={branch}, remote={remote}, base={base_branch}.",
+        )
+        if not owner or not repo_name:
+            self._log(
+                "warn",
+                "PR-aware GitHub automation is limited because the selected remote is not github.com.",
+            )
+
+        if config.pr_auto_push:
+            self._pr_aware_push_updates(
+                repo=repo,
+                reason="startup",
+                set_upstream=True,
+                force=True,
+            )
+        self._pr_aware_ensure_pull_request(create_if_missing=bool(config.pr_auto_push))
+        self._pr_aware_sync_pull_request_description(force=True)
+
     def _check_phase_boundary_token_budget(self, config: PipelineConfig) -> bool:
         """Stop at phase boundary once token budget is exhausted in non-strict mode."""
         if getattr(config, "strict_token_budget", False):
@@ -1605,6 +2234,23 @@ class PipelineOrchestrator:
                 "self_improvement_auto_restart requires self_improvement_enabled to be true."
             )
 
+        if config.pr_aware_enabled:
+            if config.mode != "apply":
+                issues.append("pr_aware_enabled requires mode='apply'.")
+            branch = str(config.pr_feature_branch or "").strip()
+            if branch:
+                probe = self._run_git_process(repo, "check-ref-format", "--branch", branch)
+                if probe.returncode != 0:
+                    detail = self._git_process_error(
+                        probe,
+                        f"Invalid pr_feature_branch value: {branch}",
+                    )
+                    issues.append(f"Invalid pr_feature_branch: {detail}")
+            try:
+                self._resolve_pr_aware_remote(repo, str(config.pr_remote or ""))
+            except Exception as exc:
+                issues.append(f"PR-aware remote setup failed: {exc}")
+
         if config.deep_research_enabled and config.deep_research_native_enabled:
             providers = (config.deep_research_providers or "both").strip().lower()
             if providers in {"both", "openai"} and not (
@@ -1717,6 +2363,12 @@ class PipelineOrchestrator:
                 "deep_research_google_model": config.deep_research_google_model,
                 "self_improvement_enabled": bool(config.self_improvement_enabled),
                 "self_improvement_auto_restart": bool(config.self_improvement_auto_restart),
+                "pr_aware_enabled": bool(config.pr_aware_enabled),
+                "pr_feature_branch": str(config.pr_feature_branch or ""),
+                "pr_remote": str(config.pr_remote or ""),
+                "pr_base_branch": str(config.pr_base_branch or ""),
+                "pr_auto_push": bool(config.pr_auto_push),
+                "pr_sync_description": bool(config.pr_sync_description),
             },
         )
 
@@ -1835,19 +2487,34 @@ class PipelineOrchestrator:
         # Create branch in apply mode
         if config.mode == "apply":
             try:
-                branch = create_branch(repo)
-                self._log("info", f"Created branch: {branch}")
+                if config.pr_aware_enabled:
+                    self._setup_pr_aware_mode(repo=repo, config=config)
+                else:
+                    branch = create_branch(repo)
+                    self._log("info", f"Created branch: {branch}")
             except Exception as exc:
-                self._log("error", f"Failed to create branch: {exc}")
-                self.ledger.add(
-                    category="error",
-                    title=f"Branch creation failed: {str(exc)[:60]}",
-                    detail=str(exc),
-                    severity="critical",
-                    source="pipeline:startup",
-                    step_ref="branch_creation",
-                )
-                self.state.stop_reason = "branch_creation_failed"
+                if config.pr_aware_enabled:
+                    self._log("error", f"Failed to initialize PR-aware mode: {exc}")
+                    self.ledger.add(
+                        category="error",
+                        title=f"PR-aware setup failed: {str(exc)[:60]}",
+                        detail=str(exc),
+                        severity="critical",
+                        source="pipeline:startup",
+                        step_ref="pr_aware_setup",
+                    )
+                    self.state.stop_reason = "pr_aware_setup_failed"
+                else:
+                    self._log("error", f"Failed to create branch: {exc}")
+                    self.ledger.add(
+                        category="error",
+                        title=f"Branch creation failed: {str(exc)[:60]}",
+                        detail=str(exc),
+                        severity="critical",
+                        source="pipeline:startup",
+                        step_ref="branch_creation",
+                    )
+                    self.state.stop_reason = "branch_creation_failed"
                 self._finalize_run(
                     start_time=start_time,
                     history_level="error",
@@ -2362,6 +3029,15 @@ class PipelineOrchestrator:
                         self.state.total_phases_completed += 1
                         self.state.total_tokens += result.input_tokens + result.output_tokens
                         self.state.elapsed_seconds = time.monotonic() - start_time
+                        if (
+                            config.mode == "apply"
+                            and config.pr_aware_enabled
+                            and bool(result.commit_sha)
+                        ):
+                            self._pr_aware_maybe_sync(
+                                repo=repo,
+                                reason=f"{phase.value}:iter{iteration}:phase_commit",
+                            )
                         if self._check_strict_token_budget(config):
                             cycle_aborted = True
                             break
@@ -2553,6 +3229,17 @@ class PipelineOrchestrator:
                                         followup_result.input_tokens + followup_result.output_tokens
                                     )
                                     self.state.elapsed_seconds = time.monotonic() - start_time
+                                    if (
+                                        config.mode == "apply"
+                                        and config.pr_aware_enabled
+                                        and bool(followup_result.commit_sha)
+                                    ):
+                                        self._pr_aware_maybe_sync(
+                                            repo=repo,
+                                            reason=(
+                                                f"{phase.value}:iter{iteration}:brain_followup_commit"
+                                            ),
+                                        )
                                     if self._check_strict_token_budget(config):
                                         cycle_aborted = True
                                         break
@@ -2707,11 +3394,16 @@ class PipelineOrchestrator:
                         and self._is_auto_commit_candidate_phase(phase)
                         and (phase != PipelinePhase.SKEPTIC or science_commit_ok)
                     ):
-                        self._auto_commit_repo(
+                        committed = self._auto_commit_repo(
                             repo=repo,
                             cycle_num=cycle_num,
                             commit_scope=f"pipeline-{phase.value}",
                         )
+                        if committed and config.pr_aware_enabled:
+                            self._pr_aware_maybe_sync(
+                                repo=repo,
+                                reason=f"{phase.value}:per_phase_auto_commit",
+                            )
 
                     if self._is_auto_commit_candidate_phase(phase):
                         cycle_has_auto_commit_candidate = True
@@ -2738,11 +3430,16 @@ class PipelineOrchestrator:
                             f"  Auto-commit skipped for cycle {cycle_num}: {reason}",
                         )
                     else:
-                        self._auto_commit_repo(
+                        committed = self._auto_commit_repo(
                             repo=repo,
                             cycle_num=cycle_num,
                             commit_scope=f"pipeline-cycle-{cycle_num}",
                         )
+                        if committed and config.pr_aware_enabled:
+                            self._pr_aware_maybe_sync(
+                                repo=repo,
+                                reason=f"cycle-{cycle_num}:per_cycle_auto_commit",
+                            )
 
                 if cycle_aborted:
                     break
@@ -2750,6 +3447,12 @@ class PipelineOrchestrator:
                 self.state.total_cycles_completed = cycle_num
                 self.state.resume_cycle = cycle_num + 1
                 self.state.resume_phase_index = 0
+                if config.mode == "apply" and config.pr_aware_enabled:
+                    self._pr_aware_maybe_sync(
+                        repo=repo,
+                        reason=f"cycle-{cycle_num}:summary",
+                        force_description=True,
+                    )
 
                 # Brain progress assessment between cycles
                 if brain.enabled and cycle_num >= 2:

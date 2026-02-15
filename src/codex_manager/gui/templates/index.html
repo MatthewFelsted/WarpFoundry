@@ -655,14 +655,20 @@ body.mode-medium .easy-only{display:none}
 .git-commit-message{margin-top:12px}
 .git-commit-message textarea{min-height:100px}
 
-#todo-wishlist-overlay,#feature-dreams-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
-#todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden{display:none}
-.todo-wishlist-card,.feature-dreams-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.todo-wishlist-card h2,.feature-dreams-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
-.todo-wishlist-card .subtitle,.feature-dreams-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
-.todo-wishlist-card .actions,.feature-dreams-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
-.todo-wishlist-card .status,.feature-dreams-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
-.todo-wishlist-card .inline-actions,.feature-dreams-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#todo-wishlist-overlay,#feature-dreams-overlay,#general-request-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
+#todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden,#general-request-overlay.hidden{display:none}
+.todo-wishlist-card,.feature-dreams-card,.general-request-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.todo-wishlist-card h2,.feature-dreams-card h2,.general-request-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.todo-wishlist-card .subtitle,.feature-dreams-card .subtitle,.general-request-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.todo-wishlist-card .actions,.feature-dreams-card .actions,.general-request-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.todo-wishlist-card .status,.feature-dreams-card .status,.general-request-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
+.todo-wishlist-card .inline-actions,.feature-dreams-card .inline-actions,.general-request-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.context-file-list{margin-top:8px;font-size:11px;color:var(--text2)}
+.general-request-history{margin-top:10px;display:grid;gap:10px}
+.general-request-history-item{border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--bg)}
+.general-request-history-item h4{font-size:12px;margin:0 0 6px 0;color:var(--text)}
+.general-request-history-item .meta{font-size:11px;color:var(--text2);margin-bottom:6px}
+.general-request-history-item pre{white-space:pre-wrap;word-break:break-word;background:var(--surface2);border:1px solid var(--border);padding:8px;border-radius:8px;max-height:200px;overflow:auto}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Help tooltip Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .help-icon{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;background:var(--border);color:var(--text2);font-size:10px;font-weight:700;cursor:help;margin-left:4px;vertical-align:middle}
@@ -924,6 +930,7 @@ body.mode-medium .easy-only{display:none}
     <div class="header-shortcuts">
       <button type="button" class="btn" onclick="showTodoWishlistModal()">To-Do / Wishlist</button>
       <button type="button" class="btn" onclick="showFeatureDreamsModal()">Feature Dreams</button>
+      <button type="button" class="btn" onclick="showGeneralRequestModal()">General Request</button>
       <button type="button" class="btn btn-success" onclick="startTodoWishlistAutopilot()">Implement To-Do</button>
     </div>
   </div>
@@ -1543,6 +1550,47 @@ body.mode-medium .easy-only{display:none}
         <label><input type="checkbox" id="pipe-git-preflight-auto-pull" onchange="syncPipeGitPreflightOptions()"> Auto-pull latest commits (`git pull --ff-only`)</label>
       </div>
     </div>
+    <div class="form-row">
+      <label><input type="checkbox" id="pipe-pr-aware-enabled" onchange="togglePipePrAware()"> PR-aware execution mode</label>
+      <div class="field-help">Run on a feature branch, auto-push commits, and keep a GitHub PR description synced with pipeline summary.</div>
+    </div>
+    <div id="pipe-pr-aware-options" class="option-subpanel hidden">
+      <div class="form-row">
+        <label>Feature Branch <span style="color:var(--text2)">(optional)</span></label>
+        <input
+          type="text"
+          id="pipe-pr-feature-branch"
+          placeholder="codex-manager/pr/my-feature"
+          oninput="syncPipePrAwareOptions()"
+        >
+      </div>
+      <div class="form-row-inline">
+        <div class="form-row">
+          <label>Remote <span style="color:var(--text2)">(optional)</span></label>
+          <input
+            type="text"
+            id="pipe-pr-remote"
+            placeholder="origin"
+            oninput="syncPipePrAwareOptions()"
+          >
+        </div>
+        <div class="form-row">
+          <label>Base Branch <span style="color:var(--text2)">(optional)</span></label>
+          <input
+            type="text"
+            id="pipe-pr-base-branch"
+            placeholder="main"
+            oninput="syncPipePrAwareOptions()"
+          >
+        </div>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="pipe-pr-auto-push" onchange="syncPipePrAwareOptions()"> Auto-push commits to branch</label>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="pipe-pr-sync-description" onchange="syncPipePrAwareOptions()"> Sync PR description with run summary</label>
+      </div>
+    </div>
   </div>
 
   <!-- Phases -->
@@ -2150,6 +2198,12 @@ body.mode-medium .easy-only{display:none}
           <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast</option>
         </select>
       </div>
+      <div class="form-row">
+        <label>Context Files (optional)</label>
+        <input type="file" id="todo-wishlist-context-files" multiple onchange="onTodoWishlistContextFilesChanged(this)">
+        <div class="field-help">Attach text-like files for backlog context (plain text, markdown, code, config).</div>
+        <div class="context-file-list" id="todo-wishlist-context-files-list">No context files selected.</div>
+      </div>
       <div class="inline-actions">
         <button class="btn" type="button" onclick="suggestTodoWishlist()">Suggest with AI</button>
         <button class="btn" type="button" onclick="appendTodoWishlistSuggestion()">Append Suggestion</button>
@@ -2213,6 +2267,67 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" type="button" onclick="loadFeatureDreams()">Load</button>
       <button class="btn btn-primary" type="button" onclick="saveFeatureDreams()">Save</button>
       <button class="btn btn-success" type="button" onclick="saveAndStartFeatureDreamAutopilot()">Save + Implement</button>
+    </div>
+  </div>
+</div>
+
+<!-- General Request modal -->
+<div id="general-request-overlay" class="hidden" onclick="if(event.target===this)hideGeneralRequestModal()">
+  <div class="general-request-card" role="dialog" aria-modal="true" aria-labelledby="general-request-title">
+    <h2 id="general-request-title">General Request Workspace</h2>
+    <p class="subtitle">Drop one general request, let AI consider it (or run a direct implementation pass), and keep a timestamped history.</p>
+
+    <div class="form-row">
+      <label>Repository Path</label>
+      <div class="repo-row">
+        <input type="text" id="general-request-repo" placeholder="C:\path\to\your\repo">
+        <button class="btn" type="button" onclick="syncGeneralRequestRepoFromMain()">Use Current Repo</button>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>General Request</label>
+      <textarea id="general-request-content" rows="7" placeholder="Example: Add keyboard shortcuts to key actions and update the docs so users can discover them."></textarea>
+      <div class="field-help">The request box is cleared after the request is considered or implementation run is recorded.</div>
+    </div>
+
+    <details>
+      <summary>AI Options (optional)</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label>Extra context for AI</label>
+        <textarea id="general-request-context" rows="3" placeholder="Any constraints, product goals, or non-negotiables?"></textarea>
+      </div>
+      <div class="form-row">
+        <label>Model</label>
+        <select id="general-request-model">
+          <option value="gpt-5.2">GPT-5.2</option>
+          <option value="claude-opus-4-6">Claude Opus 4.6</option>
+          <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
+          <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast</option>
+        </select>
+      </div>
+    </details>
+
+    <div class="form-row">
+      <label>Latest AI Output (exact)</label>
+      <textarea id="general-request-output" rows="8" readonly placeholder="AI output will appear here exactly as returned."></textarea>
+    </div>
+    <div class="status" id="general-request-status"></div>
+
+    <details id="general-request-history-panel">
+      <summary>Recent History</summary>
+      <div class="inline-actions" style="margin-top:8px">
+        <button class="btn" type="button" onclick="loadGeneralRequestHistory()">Refresh History</button>
+      </div>
+      <div id="general-request-history" class="general-request-history">
+        <div class="state-card">No history yet.</div>
+      </div>
+    </details>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideGeneralRequestModal()">Close</button>
+      <button class="btn" type="button" onclick="considerGeneralRequest()">Consider with AI</button>
+      <button class="btn btn-success" type="button" onclick="implementGeneralRequestViaChain()">Implement Request</button>
     </div>
   </div>
 </div>
@@ -2707,6 +2822,7 @@ const _modalOverlayIds = [
   'github-auth-overlay',
   'todo-wishlist-overlay',
   'feature-dreams-overlay',
+  'general-request-overlay',
   'onboarding-overlay',
 ];
 
@@ -3892,6 +4008,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeDocsModal();
     hideTodoWishlistModal();
     hideFeatureDreamsModal();
+    hideGeneralRequestModal();
     hideGitRemoteModal();
     hideGitCommitModal();
     hideNewProjectModal();
@@ -3909,6 +4026,9 @@ function dismissOnboarding() {
 
 /* -- To-Do / Wishlist workspace -- */
 let lastTodoWishlistSuggestion = '';
+let todoWishlistContextFiles = [];
+let pendingGeneralRequestRun = null;
+let _generalRequestFinalizeInFlight = false;
 
 function _activeRepoPath() {
   const chainRepo = String(document.getElementById('repo-path').value || '').trim();
@@ -5507,6 +5627,83 @@ function syncTodoWishlistRepoFromMain() {
   return repo;
 }
 
+function _renderTodoWishlistContextFilesList() {
+  const el = document.getElementById('todo-wishlist-context-files-list');
+  if (!el) return;
+  if (!todoWishlistContextFiles.length) {
+    el.textContent = 'No context files selected.';
+    return;
+  }
+  const labels = todoWishlistContextFiles.map(row => {
+    const name = String(row && row.name || '').trim() || 'context.txt';
+    const content = String(row && row.content || '');
+    return name + ' (' + content.length + ' chars)';
+  });
+  el.textContent = labels.join(' | ');
+}
+
+async function onTodoWishlistContextFilesChanged(inputEl) {
+  const files = Array.from((inputEl && inputEl.files) ? inputEl.files : []);
+  todoWishlistContextFiles = [];
+  if (!files.length) {
+    _renderTodoWishlistContextFilesList();
+    _setTodoWishlistStatus('Cleared context files.', 'muted');
+    return;
+  }
+
+  const maxFiles = 6;
+  const maxCharsPerFile = 6000;
+  const maxTotalChars = 24000;
+  const accepted = [];
+  const warnings = [];
+  let totalChars = 0;
+
+  for (const file of files) {
+    if (accepted.length >= maxFiles) {
+      warnings.push('Only the first ' + maxFiles + ' files are used.');
+      break;
+    }
+    let text = '';
+    try {
+      text = String(await file.text());
+    } catch (_err) {
+      warnings.push('Could not read file: ' + file.name);
+      continue;
+    }
+    text = text.replace(/\r\n/g, '\n').trim();
+    if (!text) {
+      warnings.push('Skipped empty file: ' + file.name);
+      continue;
+    }
+    if (text.length > maxCharsPerFile) {
+      text = text.slice(0, maxCharsPerFile);
+      warnings.push('Trimmed large file: ' + file.name);
+    }
+    const remaining = maxTotalChars - totalChars;
+    if (remaining <= 0) {
+      warnings.push('Reached total context size limit.');
+      break;
+    }
+    if (text.length > remaining) {
+      text = text.slice(0, remaining);
+      warnings.push('Trimmed context to fit total size limit.');
+    }
+    totalChars += text.length;
+    accepted.push({
+      name: String(file.name || 'context.txt').trim() || 'context.txt',
+      content: text,
+    });
+  }
+
+  todoWishlistContextFiles = accepted;
+  _renderTodoWishlistContextFilesList();
+  if (warnings.length) {
+    _setTodoWishlistStatus(warnings.join(' '), 'warn');
+  } else {
+    _setTodoWishlistStatus('Loaded ' + accepted.length + ' context file(s).', 'ok');
+  }
+}
+
 function _setTodoWishlistStatus(text, tone = 'muted') {
   const el = document.getElementById('todo-wishlist-suggest-status');
   if (!el) return;
@@ -5526,6 +5723,10 @@ async function showTodoWishlistModal() {
   syncTodoWishlistRepoFromMain();
   const area = document.getElementById('todo-wishlist-content');
   if (area) area.value = '';
+  const filesEl = document.getElementById('todo-wishlist-context-files');
+  if (filesEl) filesEl.value = '';
+  todoWishlistContextFiles = [];
+  _renderTodoWishlistContextFilesList();
   lastTodoWishlistSuggestion = '';
   _setTodoWishlistStatus('');
   _openOverlay('todo-wishlist-overlay', '#todo-wishlist-repo');
@@ -5597,6 +5798,7 @@ async function suggestTodoWishlist() {
       repo_path: repo,
       existing_markdown: existing,
       owner_context: ownerContext,
+      context_files: todoWishlistContextFiles,
       model: model,
     });
     if (resp.error) {
@@ -5872,6 +6074,7 @@ async function implementNextDreamedFeature() {
   config.max_loops = 1;
   config.stop_on_convergence = false;
   config.parallel_execution = false;
+  config.mode = 'apply';
   config.steps = [
     {
       id: Math.random().toString(36).substring(2, 10),
@@ -5896,11 +6099,316 @@ async function implementNextDreamedFeature() {
   document.getElementById('max-loops').value = '1';
   document.getElementById('stop-convergence').checked = false;
   document.getElementById('parallel-exec').checked = false;
+  if (document.getElementById('mode-toggle')) {
+    document.querySelectorAll('#mode-toggle button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === 'apply');
+    });
+  }
   toggleUnlimited();
   renderSteps();
   renderStepDetails();
   switchTab('chain');
   await startChain();
+}
+
+/* -- General Request workspace -- */
+function syncGeneralRequestRepoFromMain() {
+  const repo = _activeRepoPath();
+  const input = document.getElementById('general-request-repo');
+  if (input) input.value = repo;
+  return repo;
+}
+
+function _setGeneralRequestStatus(text, tone = 'muted') {
+  const el = document.getElementById('general-request-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+function _formatGeneralRequestTimestamp(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return 'n/a';
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return value;
+  return new Date(ts).toLocaleString();
+}
+
+function _renderGeneralRequestHistory(entries) {
+  const host = document.getElementById('general-request-history');
+  if (!host) return;
+  const rows = Array.isArray(entries) ? entries : [];
+  if (!rows.length) {
+    host.innerHTML = '<div class="state-card">No history yet.</div>';
+    return;
+  }
+  host.innerHTML = rows.map((row) => {
+    const status = String(row && row.status || 'considered').trim().toLowerCase();
+    const requestText = String(row && row.request || '').trim();
+    const notes = String(row && row.notes || '').trim();
+    const output = String(row && row.output || '');
+    const timestamp = _formatGeneralRequestTimestamp(row && row.timestamp);
+    const source = String(row && row.source || '').trim();
+    const model = String(row && row.model || '').trim();
+    const statusTone = status === 'implemented' ? 'var(--success)' : (status === 'refused' ? 'var(--warning)' : 'var(--text2)');
+    return '<div class="general-request-history-item">'
+      + '<h4 style="color:' + statusTone + '">' + esc(status.toUpperCase()) + '</h4>'
+      + '<div class="meta">' + esc(timestamp)
+      + (source ? (' • source: ' + esc(source)) : '')
+      + (model ? (' • model: ' + esc(model)) : '')
+      + '</div>'
+      + '<div><strong>Request</strong></div>'
+      + '<pre>' + esc(requestText) + '</pre>'
+      + '<div><strong>Notes</strong></div>'
+      + '<pre>' + esc(notes || '(none)') + '</pre>'
+      + '<div><strong>Exact AI Output</strong></div>'
+      + '<pre>' + esc(output) + '</pre>'
+      + '</div>';
+  }).join('');
+}
+
+async function loadGeneralRequestHistory() {
+  const repo = String(document.getElementById('general-request-repo').value || '').trim();
+  if (!repo) {
+    _renderGeneralRequestHistory([]);
+    _setGeneralRequestStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  _setGeneralRequestStatus('Loading history...', 'muted');
+  try {
+    const resp = await api('/api/owner/general-request/history?repo_path=' + encodeURIComponent(repo) + '&limit=50');
+    if (resp.error) {
+      _setGeneralRequestStatus(resp.error, 'error');
+      return;
+    }
+    _renderGeneralRequestHistory(resp.entries || []);
+    _setGeneralRequestStatus('History loaded.', 'ok');
+  } catch (_err) {
+    _setGeneralRequestStatus('Could not load history.', 'error');
+  }
+}
+
+async function showGeneralRequestModal() {
+  syncGeneralRequestRepoFromMain();
+  _setGeneralRequestStatus('', 'muted');
+  const outEl = document.getElementById('general-request-output');
+  if (outEl) outEl.value = '';
+  _openOverlay('general-request-overlay', '#general-request-repo');
+  await loadGeneralRequestHistory();
+}
+
+function hideGeneralRequestModal() {
+  _closeOverlay('general-request-overlay');
+}
+
+async function considerGeneralRequest() {
+  const repo = String(document.getElementById('general-request-repo').value || '').trim();
+  const requestText = String(document.getElementById('general-request-content').value || '').trim();
+  const ownerContext = String(document.getElementById('general-request-context').value || '').trim();
+  const model = String(document.getElementById('general-request-model').value || 'gpt-5.2').trim() || 'gpt-5.2';
+  if (!repo) {
+    _setGeneralRequestStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  if (!requestText) {
+    _setGeneralRequestStatus('Write a general request first.', 'warn');
+    return;
+  }
+  _setGeneralRequestStatus('Considering request...', 'muted');
+  const outputEl = document.getElementById('general-request-output');
+  try {
+    const resp = await postJson('/api/owner/general-request/process', {
+      repo_path: repo,
+      request_text: requestText,
+      owner_context: ownerContext,
+      model: model,
+    });
+    if (resp.error) {
+      _setGeneralRequestStatus(resp.error, 'error');
+      return;
+    }
+    if (outputEl) outputEl.value = String(resp.output || resp.response || '').trim();
+    document.getElementById('general-request-content').value = '';
+    const status = String(resp.status || 'considered').toLowerCase();
+    const notes = String(resp.notes || '').trim();
+    const tone = status === 'refused' ? 'warn' : 'ok';
+    _setGeneralRequestStatus(status.toUpperCase() + ': ' + notes, tone);
+    await loadGeneralRequestHistory();
+  } catch (_err) {
+    _setGeneralRequestStatus('Could not process request.', 'error');
+  }
+}
+
+function _buildGeneralRequestImplementationPrompt(requestText) {
+  const ownerRequest = String(requestText || '').trim();
+  return (
+    "Owner request:\n"
+    + ownerRequest
+    + "\n\nExecute one focused implementation pass for this request.\n"
+    + "- If the request is valid and feasible, implement it directly in this repository with high-signal edits.\n"
+    + "- If the request is unsafe, unclear, or not feasible in this run, do not make code changes and explain why.\n"
+    + "- Keep scope tight and finish in one pass.\n\n"
+    + "At the end of your response, include exactly these lines:\n"
+    + "GENERAL_REQUEST_STATUS: implemented|considered|refused\n"
+    + "GENERAL_REQUEST_NOTES: <one short line>\n"
+  );
+}
+
+function _extractGeneralRequestMarker(outputText, key) {
+  const re = new RegExp('^\\s*' + key + '\\s*:\\s*(.+?)\\s*$', 'im');
+  const match = String(outputText || '').match(re);
+  return match ? String(match[1] || '').trim() : '';
+}
+
+async function _latestChainOutputForRepo(repoPath, sinceEpochMs = 0) {
+  const outputs = await api('/api/chain/outputs?repo_path=' + encodeURIComponent(repoPath));
+  if (outputs.error || !Array.isArray(outputs.files) || !outputs.files.length) {
+    return { name: '', content: '' };
+  }
+  const sorted = outputs.files.slice().sort((a, b) => Number(b.modified_epoch || 0) - Number(a.modified_epoch || 0));
+  let selected = null;
+  if (sinceEpochMs > 0) {
+    selected = sorted.find(file => (Number(file && file.modified_epoch || 0) * 1000) >= (sinceEpochMs - 5000)) || null;
+  }
+  if (!selected) selected = sorted[0];
+  if (!selected || !selected.name) return { name: '', content: '' };
+  const detail = await api('/api/chain/outputs/' + encodeURIComponent(selected.name) + '?repo_path=' + encodeURIComponent(repoPath));
+  if (detail.error) return { name: String(selected.name || ''), content: '' };
+  return {
+    name: String(selected.name || ''),
+    content: String(detail.content || ''),
+  };
+}
+
+async function implementGeneralRequestViaChain() {
+  const repo = String(document.getElementById('general-request-repo').value || '').trim() || _activeRepoPath();
+  const requestText = String(document.getElementById('general-request-content').value || '').trim();
+  if (!repo) {
+    _setGeneralRequestStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  if (!requestText) {
+    _setGeneralRequestStatus('Write a general request first.', 'warn');
+    return;
+  }
+  if (chainRunning) {
+    _setGeneralRequestStatus('A chain run is already active.', 'warn');
+    return;
+  }
+
+  document.getElementById('repo-path').value = repo;
+  config.repo_path = repo;
+  validateRepo();
+  config.unlimited = false;
+  config.max_loops = 1;
+  config.stop_on_convergence = false;
+  config.parallel_execution = false;
+  config.steps = [
+    {
+      id: Math.random().toString(36).substring(2, 10),
+      name: 'General Request',
+      job_type: 'implementation',
+      prompt_mode: 'custom',
+      custom_prompt: _buildGeneralRequestImplementationPrompt(requestText),
+      on_failure: 'skip',
+      max_retries: 1,
+      loop_count: 1,
+      enabled: true,
+      agent: 'codex',
+    },
+  ];
+  selectedStepId = config.steps[0].id;
+  document.querySelectorAll('.recipe-card').forEach(c => {
+    c.classList.remove('selected');
+    c.setAttribute('aria-pressed', 'false');
+  });
+  document.getElementById('unlimited').checked = false;
+  document.getElementById('max-loops').value = '1';
+  document.getElementById('stop-convergence').checked = false;
+  document.getElementById('parallel-exec').checked = false;
+  toggleUnlimited();
+  renderSteps();
+  renderStepDetails();
+
+  pendingGeneralRequestRun = {
+    repo_path: repo,
+    request_text: requestText,
+    started_epoch_ms: Date.now(),
+    model: 'gpt-5.3-codex',
+  };
+  _setGeneralRequestStatus('Implementation run started. Waiting for completion...', 'muted');
+  switchTab('chain');
+  await startChain();
+  if (!chainRunning) {
+    pendingGeneralRequestRun = null;
+    _setGeneralRequestStatus('Could not start implementation run.', 'error');
+  }
+}
+
+async function _finalizePendingGeneralRequestRun(state) {
+  if (_generalRequestFinalizeInFlight || !pendingGeneralRequestRun) return;
+  const pending = pendingGeneralRequestRun;
+  pendingGeneralRequestRun = null;
+  _generalRequestFinalizeInFlight = true;
+  try {
+    const output = await _latestChainOutputForRepo(pending.repo_path, pending.started_epoch_ms || 0);
+    const outputText = String(output && output.content || '');
+    const lastResult = Array.isArray(chainResultsCache) && chainResultsCache.length
+      ? chainResultsCache[chainResultsCache.length - 1]
+      : null;
+    let status = _extractGeneralRequestMarker(outputText, 'GENERAL_REQUEST_STATUS').toLowerCase();
+    if (!['implemented', 'considered', 'refused'].includes(status)) {
+      if (lastResult && lastResult.success && Number(lastResult.files_changed || 0) > 0) {
+        status = 'implemented';
+      } else if (lastResult && lastResult.success) {
+        status = 'considered';
+      } else {
+        status = 'refused';
+      }
+    }
+    let notes = _extractGeneralRequestMarker(outputText, 'GENERAL_REQUEST_NOTES');
+    if (!notes) {
+      const stopReason = String(state && state.stop_reason || '').trim();
+      if (status === 'implemented') {
+        notes = 'Implementation run completed successfully.';
+      } else if (status === 'refused') {
+        notes = stopReason ? ('Run ended with stop reason: ' + stopReason) : 'Request was not implemented in this run.';
+      } else {
+        notes = 'Request was considered, but no concrete implementation was applied.';
+      }
+    }
+
+    const saveResp = await postJson('/api/owner/general-request/history/add', {
+      repo_path: pending.repo_path,
+      request_text: pending.request_text,
+      status: status,
+      notes: notes,
+      output: outputText,
+      source: 'chain',
+      model: pending.model || '',
+    });
+    if (saveResp.error) {
+      toast('Could not save general-request history: ' + saveResp.error, 'error');
+    }
+
+    const requestEl = document.getElementById('general-request-content');
+    if (requestEl) requestEl.value = '';
+    const outputEl = document.getElementById('general-request-output');
+    if (outputEl) outputEl.value = outputText;
+    const tone = status === 'implemented' ? 'ok' : (status === 'refused' ? 'warn' : 'muted');
+    _setGeneralRequestStatus(status.toUpperCase() + ': ' + notes, tone);
+    await loadGeneralRequestHistory();
+  } finally {
+    _generalRequestFinalizeInFlight = false;
+  }
 }
 
 function showNewProjectModal() {
@@ -7780,6 +8288,7 @@ async function pollStatus() {
     }
 
     if (!s.running) {
+      await _finalizePendingGeneralRequestRun(s);
       setControlsRunning(false);
       stopPolling();
       disconnectSSE();
@@ -8431,6 +8940,10 @@ function resetTodoWishlistForm() {
   document.getElementById('todo-wishlist-content').value = '';
   document.getElementById('todo-wishlist-context').value = '';
   document.getElementById('todo-wishlist-model').value = 'gpt-5.2';
+  const filesEl = document.getElementById('todo-wishlist-context-files');
+  if (filesEl) filesEl.value = '';
+  todoWishlistContextFiles = [];
+  _renderTodoWishlistContextFilesList();
   lastTodoWishlistSuggestion = '';
   _setTodoWishlistStatus('', 'muted');
   hideTodoWishlistModal();
@@ -8445,6 +8958,24 @@ function resetFeatureDreamsForm() {
   lastFeatureDreamsSuggestion = '';
   _setFeatureDreamsStatus('', 'muted');
   hideFeatureDreamsModal();
+}
+
+function resetGeneralRequestForm() {
+  const repo = _activeRepoPath();
+  const repoEl = document.getElementById('general-request-repo');
+  if (repoEl) repoEl.value = repo;
+  const contentEl = document.getElementById('general-request-content');
+  if (contentEl) contentEl.value = '';
+  const contextEl = document.getElementById('general-request-context');
+  if (contextEl) contextEl.value = '';
+  const modelEl = document.getElementById('general-request-model');
+  if (modelEl) modelEl.value = 'gpt-5.2';
+  const outEl = document.getElementById('general-request-output');
+  if (outEl) outEl.value = '';
+  pendingGeneralRequestRun = null;
+  _setGeneralRequestStatus('', 'muted');
+  _renderGeneralRequestHistory([]);
+  hideGeneralRequestModal();
 }
 
 async function clearEverything() {
@@ -8496,6 +9027,7 @@ async function clearEverything() {
   resetGitRemoteForm();
   resetTodoWishlistForm();
   resetFeatureDreamsForm();
+  resetGeneralRequestForm();
   closeRunPlanModal({ action: 'cancel' });
   closePermissionsHelpModal();
   closeReadOnlyWarningModal('cancel');
@@ -8695,6 +9227,12 @@ const pipeConfig = {
   git_preflight_enabled: false,
   git_preflight_auto_stash: false,
   git_preflight_auto_pull: false,
+  pr_aware_enabled: false,
+  pr_feature_branch: '',
+  pr_remote: '',
+  pr_base_branch: '',
+  pr_auto_push: true,
+  pr_sync_description: true,
   timeout_per_phase: 0,
   // Git settings
   auto_commit: true,
@@ -8740,12 +9278,19 @@ function applyPipeConfigToUi() {
   document.getElementById('pipe-git-preflight-enabled').checked = !!pipeConfig.git_preflight_enabled;
   document.getElementById('pipe-git-preflight-auto-stash').checked = !!pipeConfig.git_preflight_auto_stash;
   document.getElementById('pipe-git-preflight-auto-pull').checked = !!pipeConfig.git_preflight_auto_pull;
+  document.getElementById('pipe-pr-aware-enabled').checked = !!pipeConfig.pr_aware_enabled;
+  document.getElementById('pipe-pr-feature-branch').value = pipeConfig.pr_feature_branch || '';
+  document.getElementById('pipe-pr-remote').value = pipeConfig.pr_remote || '';
+  document.getElementById('pipe-pr-base-branch').value = pipeConfig.pr_base_branch || '';
+  document.getElementById('pipe-pr-auto-push').checked = pipeConfig.pr_auto_push !== false;
+  document.getElementById('pipe-pr-sync-description').checked = pipeConfig.pr_sync_description !== false;
   pipeConfig.timeout_per_phase = _normalizedTimeoutSeconds(pipeConfig.timeout_per_phase, 600);
   syncPipelinePermissionControlsFromConfig();
   syncPipelineCapabilityControlsFromConfig();
   syncPipeTimeoutControlsFromConfig();
   setPipeMode(pipeConfig.mode || 'dry-run');
   togglePipeGitPreflight();
+  togglePipePrAware();
   togglePipeUnlimited();
   togglePipeScience();
   togglePipeCUA();
@@ -9022,6 +9567,7 @@ function setPipeMode(mode) {
   document.querySelectorAll('#pipe-mode-toggle button').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
+  togglePipePrAware();
 }
 
 function syncPipeGitPreflightOptions() {
@@ -9046,6 +9592,44 @@ function togglePipeGitPreflight() {
     if (pullEl) pullEl.checked = false;
   }
   syncPipeGitPreflightOptions();
+}
+
+function syncPipePrAwareOptions() {
+  const enabledEl = document.getElementById('pipe-pr-aware-enabled');
+  const branchEl = document.getElementById('pipe-pr-feature-branch');
+  const remoteEl = document.getElementById('pipe-pr-remote');
+  const baseEl = document.getElementById('pipe-pr-base-branch');
+  const autoPushEl = document.getElementById('pipe-pr-auto-push');
+  const syncDescEl = document.getElementById('pipe-pr-sync-description');
+  const mode = String(pipeConfig.mode || 'dry-run').toLowerCase();
+  const applyMode = mode === 'apply';
+  const enabled = !!(enabledEl && enabledEl.checked && applyMode);
+
+  pipeConfig.pr_aware_enabled = enabled;
+  pipeConfig.pr_feature_branch = branchEl ? branchEl.value.trim() : '';
+  pipeConfig.pr_remote = remoteEl ? remoteEl.value.trim() : '';
+  pipeConfig.pr_base_branch = baseEl ? baseEl.value.trim() : '';
+  pipeConfig.pr_auto_push = !!(enabled && autoPushEl && autoPushEl.checked);
+  pipeConfig.pr_sync_description = !!(enabled && syncDescEl && syncDescEl.checked);
+}
+
+function togglePipePrAware() {
+  const enabledEl = document.getElementById('pipe-pr-aware-enabled');
+  const optionsEl = document.getElementById('pipe-pr-aware-options');
+  const mode = String(pipeConfig.mode || 'dry-run').toLowerCase();
+  const applyMode = mode === 'apply';
+  const requested = !!(enabledEl && enabledEl.checked);
+  const enabled = requested && applyMode;
+
+  if (enabledEl) {
+    enabledEl.disabled = !applyMode;
+    enabledEl.title = applyMode
+      ? ''
+      : 'PR-aware mode requires Apply mode.';
+    if (!applyMode && requested) enabledEl.checked = false;
+  }
+  if (optionsEl) optionsEl.classList.toggle('hidden', !enabled);
+  syncPipePrAwareOptions();
 }
 
 let pipeRepoTimeout;
@@ -9279,6 +9863,12 @@ async function startPipeline() {
   pipeConfig.git_preflight_enabled = document.getElementById('pipe-git-preflight-enabled').checked;
   pipeConfig.git_preflight_auto_stash = document.getElementById('pipe-git-preflight-auto-stash').checked;
   pipeConfig.git_preflight_auto_pull = document.getElementById('pipe-git-preflight-auto-pull').checked;
+  pipeConfig.pr_aware_enabled = document.getElementById('pipe-pr-aware-enabled').checked;
+  pipeConfig.pr_feature_branch = document.getElementById('pipe-pr-feature-branch').value.trim();
+  pipeConfig.pr_remote = document.getElementById('pipe-pr-remote').value.trim();
+  pipeConfig.pr_base_branch = document.getElementById('pipe-pr-base-branch').value.trim();
+  pipeConfig.pr_auto_push = document.getElementById('pipe-pr-auto-push').checked;
+  pipeConfig.pr_sync_description = document.getElementById('pipe-pr-sync-description').checked;
   if (!pipeConfig.self_improvement_enabled) {
     pipeConfig.self_improvement_auto_restart = false;
   }
@@ -9286,7 +9876,13 @@ async function startPipeline() {
     pipeConfig.git_preflight_auto_stash = false;
     pipeConfig.git_preflight_auto_pull = false;
   }
+  if (!pipeConfig.pr_aware_enabled || (pipeConfig.mode || 'dry-run') !== 'apply') {
+    pipeConfig.pr_aware_enabled = false;
+    pipeConfig.pr_auto_push = false;
+    pipeConfig.pr_sync_description = false;
+  }
   togglePipeGitPreflight();
+  togglePipePrAware();
   normalizeCodexPermissions(pipeConfig);
   normalizeCapabilitySettings(pipeConfig);
   syncPipelinePermissionControlsFromConfig();

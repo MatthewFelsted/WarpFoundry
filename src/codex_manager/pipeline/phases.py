@@ -263,6 +263,12 @@ class PipelineConfig(BaseModel):
     # Git settings
     auto_commit: bool = True  # commit after implementation + debugging phases
     commit_frequency: CommitFrequency = "per_phase"
+    pr_aware_enabled: bool = False
+    pr_feature_branch: str = ""
+    pr_remote: str = ""
+    pr_base_branch: str = ""
+    pr_auto_push: bool = True
+    pr_sync_description: bool = True
 
     @model_validator(mode="after")
     def _validate_danger_confirmation(self) -> PipelineConfig:
@@ -295,6 +301,11 @@ class PipelineConfig(BaseModel):
             str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
             or "gemini-3-pro-preview"
         )
+        self.pr_feature_branch = str(self.pr_feature_branch or "").strip()
+        self.pr_remote = str(self.pr_remote or "").strip()
+        self.pr_base_branch = str(self.pr_base_branch or "").strip()
+        if self.pr_aware_enabled and self.mode != "apply":
+            raise ValueError("pr_aware_enabled requires mode='apply'")
         return self
 
     def get_phase_order(self) -> list[PhaseConfig]:
@@ -390,6 +401,7 @@ class PipelineState(BaseModel):
     restart_checkpoint_path: str = ""
     resume_cycle: int = 0
     resume_phase_index: int = 0
+    pr_aware: dict[str, Any] = Field(default_factory=dict)
 
     def to_summary(self, *, since_results: int | None = None) -> dict[str, Any]:
         """Return a summary dict for API responses.
@@ -421,6 +433,7 @@ class PipelineState(BaseModel):
             "restart_checkpoint_path": self.restart_checkpoint_path,
             "resume_cycle": self.resume_cycle,
             "resume_phase_index": self.resume_phase_index,
+            "pr_aware": dict(self.pr_aware or {}),
         }
         if since_results is None:
             payload["results"] = [r.model_dump() for r in self.results]

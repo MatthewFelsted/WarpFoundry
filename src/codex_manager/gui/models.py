@@ -247,6 +247,12 @@ class PipelineGUIConfig(BaseModel):
     # Git settings
     auto_commit: bool = True
     commit_frequency: CommitFrequency = "per_phase"
+    pr_aware_enabled: bool = False
+    pr_feature_branch: str = ""
+    pr_remote: str = ""
+    pr_base_branch: str = ""
+    pr_auto_push: bool = True
+    pr_sync_description: bool = True
 
     # Local-only mode — force all AI calls through Ollama
     local_only: bool = False
@@ -289,4 +295,9 @@ class PipelineGUIConfig(BaseModel):
             str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
             or "gemini-3-pro-preview"
         )
+        self.pr_feature_branch = str(self.pr_feature_branch or "").strip()
+        self.pr_remote = str(self.pr_remote or "").strip()
+        self.pr_base_branch = str(self.pr_base_branch or "").strip()
+        if self.pr_aware_enabled and self.mode != "apply":
+            raise ValueError("pr_aware_enabled requires mode='apply'")
         return self
