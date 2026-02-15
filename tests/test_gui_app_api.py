@@ -928,6 +928,40 @@ def test_configs_load_rejects_non_object_json(client, monkeypatch, tmp_path: Pat
     assert "must contain a JSON object" in data["error"]
 
 
+def test_configs_load_missing_valid_name_returns_404(client, monkeypatch, tmp_path: Path):
+    cfg_dir = tmp_path / "chains"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gui_app_module, "CONFIGS_DIR", cfg_dir)
+
+    resp = client.post("/api/configs/load", json={"name": "Missing"})
+    data = resp.get_json()
+
+    assert resp.status_code == 404
+    assert data
+    assert "Config not found" in data["error"]
+
+
+def test_configs_load_rejects_resolved_path_outside_configs_dir(client, monkeypatch, tmp_path: Path):
+    cfg_dir = tmp_path / "chains"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(gui_app_module, "CONFIGS_DIR", cfg_dir)
+
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"repo_path": "C:/repo"}', encoding="utf-8")
+    link = cfg_dir / "Alias.json"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not supported in this environment")
+
+    resp = client.post("/api/configs/load", json={"name": "Alias"})
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Invalid config name" in data["error"]
+
+
 def test_configs_save_rejects_non_object_json(client, monkeypatch, tmp_path: Path):
     cfg_dir = tmp_path / "chains"
     cfg_dir.mkdir(parents=True, exist_ok=True)

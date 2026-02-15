@@ -150,6 +150,15 @@ def _is_valid_config_name(name: object) -> bool:
     return raw == _sanitize_config_name(raw)
 
 
+def _is_within_directory(path: Path, root: Path) -> bool:
+    """Return True when *path* resolves inside *root*."""
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 def _parse_since_results_arg(raw: str | None) -> int | None:
     """Parse polling delta offset from query string."""
     if raw is None or not str(raw).strip():
@@ -2966,14 +2975,15 @@ def api_save_config():
 @app.route("/api/configs/load", methods=["POST"])
 def api_load_config():
     data = request.get_json(silent=True) or {}
-    raw_name = data.get("name", "")
-    if not _is_valid_config_name(raw_name):
+    raw_name = str(data.get("name", "") or "").strip()
+    safe_name = _sanitize_config_name(raw_name)
+    if not raw_name or safe_name != raw_name:
         return jsonify({"error": "Invalid config name"}), 400
 
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     root = CONFIGS_DIR.resolve()
-    path = (root / f"{raw_name}.json").resolve()
-    if path.parent != root:
+    path = (root / f"{safe_name}.json").resolve()
+    if not _is_within_directory(path, root):
         return jsonify({"error": "Invalid config name"}), 400
     if not path.is_file():
         return jsonify({"error": "Config not found"}), 404
