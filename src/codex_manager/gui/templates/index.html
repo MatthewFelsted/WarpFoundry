@@ -98,6 +98,7 @@ header{
 .git-sync-widget[data-tone="error"]{border-color:rgba(255,111,111,.55);background:rgba(255,111,111,.1)}
 .git-sync-widget-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .git-sync-widget-title{font-size:10px;color:var(--text3);letter-spacing:.45px;text-transform:uppercase;white-space:nowrap}
+.git-sync-widget-actions{display:flex;align-items:center;gap:6px}
 .git-sync-widget-head .btn{padding:3px 8px;font-size:11px;min-height:0}
 .git-sync-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 10px}
 .git-sync-widget-item{display:flex;gap:5px;align-items:center;min-width:0;font-size:11px}
@@ -968,13 +969,19 @@ body.mode-medium .easy-only{display:none}
       <div class="git-sync-widget" id="git-sync-widget" data-tone="muted" title="Select a repository path to view sync status">
         <div class="git-sync-widget-head">
           <span class="git-sync-widget-title">Sync Status</span>
-          <button class="btn" id="git-sync-refresh-btn" type="button" onclick="refreshGitSyncStatusNow()">Refresh</button>
+          <div class="git-sync-widget-actions">
+            <button class="btn" id="git-sync-open-repo-btn" type="button" onclick="gitSyncOpenRepoPage()" title="GitHub repository page is available when the selected remote points to github.com." disabled>Open Repo</button>
+            <button class="btn" id="git-sync-refresh-btn" type="button" onclick="refreshGitSyncStatusNow()">Refresh</button>
+          </div>
         </div>
         <div class="git-sync-widget-grid">
           <span class="git-sync-widget-item"><span class="git-sync-widget-key">Branch</span><span class="git-sync-widget-value" id="git-sync-widget-branch">n/a</span></span>
           <span class="git-sync-widget-item"><span class="git-sync-widget-key">Remote</span><span class="git-sync-widget-value" id="git-sync-widget-remote">none</span></span>
           <span class="git-sync-widget-item"><span class="git-sync-widget-key">Ahead/Behind</span><span class="git-sync-widget-value" id="git-sync-widget-ahead-behind">n/a</span></span>
           <span class="git-sync-widget-item"><span class="git-sync-widget-key">Last Fetch</span><span class="git-sync-widget-value" id="git-sync-widget-last-fetch">never</span></span>
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">GitHub</span><span class="git-sync-widget-value" id="git-sync-widget-github-name">n/a</span></span>
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">Visibility</span><span class="git-sync-widget-value" id="git-sync-widget-github-visibility">n/a</span></span>
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">Default Branch</span><span class="git-sync-widget-value" id="git-sync-widget-github-default-branch">n/a</span></span>
         </div>
         <span class="git-sync-indicator" id="git-sync-indicator" data-tone="muted" title="Select a repository path to view sync status">No repo selected</span>
       </div>
@@ -2605,6 +2612,7 @@ let gitRemoteState = null;
 let gitCommitWorkflowState = null;
 let gitSyncBusyAction = '';
 let gitSyncPullRequestUrl = '';
+let gitSyncGithubRepoUrl = '';
 let gitSyncRefreshTimer = null;
 let gitSyncPollTimer = null;
 const GIT_SYNC_POLL_INTERVAL_MS = 20000;
@@ -3838,6 +3846,10 @@ function _clearGitSyncWidgetDetails() {
   _setGitSyncWidgetValue('git-sync-widget-remote', 'none', 'No upstream tracking remote configured.');
   _setGitSyncWidgetValue('git-sync-widget-ahead-behind', 'n/a', 'Ahead/behind counts are unavailable.');
   _setGitSyncWidgetValue('git-sync-widget-last-fetch', 'never', 'No fetch metadata available yet.');
+  _setGitSyncWidgetValue('git-sync-widget-github-name', 'n/a', 'GitHub repository metadata is unavailable.');
+  _setGitSyncWidgetValue('git-sync-widget-github-visibility', 'n/a', 'GitHub visibility metadata is unavailable.');
+  _setGitSyncWidgetValue('git-sync-widget-github-default-branch', 'n/a', 'GitHub default-branch metadata is unavailable.');
+  _setGitSyncRepoUrl('');
 }
 
 function _formatGitSyncLastFetch(sync) {
@@ -3903,6 +3915,16 @@ function _setGitSyncPullRequestUrl(rawUrl) {
   const copyBtn = document.getElementById('git-sync-copy-pr-btn');
   if (copyBtn) {
     copyBtn.title = url ? ('Copy pull request URL: ' + url) : defaultTitle;
+  }
+}
+
+function _setGitSyncRepoUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  gitSyncGithubRepoUrl = url;
+  const defaultTitle = 'GitHub repository page is available when the selected remote points to github.com.';
+  const openBtn = document.getElementById('git-sync-open-repo-btn');
+  if (openBtn) {
+    openBtn.title = url ? ('Open GitHub repository page: ' + url) : defaultTitle;
   }
 }
 
@@ -4017,6 +4039,9 @@ function _syncGitSyncButtonState() {
     if (btn) btn.disabled = disabled;
   });
   const hasPullRequestUrl = !!String(gitSyncPullRequestUrl || '').trim();
+  const hasGithubRepoUrl = !!String(gitSyncGithubRepoUrl || '').trim();
+  const openRepoBtn = document.getElementById('git-sync-open-repo-btn');
+  if (openRepoBtn) openRepoBtn.disabled = disabled || !hasGithubRepoUrl;
   const openPrBtn = document.getElementById('git-sync-open-pr-btn');
   if (openPrBtn) openPrBtn.disabled = disabled || !hasPullRequestUrl;
   const copyPrBtn = document.getElementById('git-sync-copy-pr-btn');
@@ -4062,6 +4087,31 @@ function _renderGitSyncState(sync) {
   const dirtyLabel = dirty ? ('dirty (' + changeCount + ')') : 'clean';
   const summary = branch + ' | ' + divergence + ' | ' + dirtyLabel;
   const lastFetch = _formatGitSyncLastFetch(sync);
+  const githubRepo = (sync && typeof sync.github_repo === 'object' && sync.github_repo)
+    ? sync.github_repo
+    : null;
+  const githubDetected = !!(githubRepo && githubRepo.detected);
+  const githubRemote = String((githubRepo && githubRepo.remote) || '').trim();
+  const githubRemoteUrl = String((githubRepo && githubRepo.remote_url) || '').trim();
+  const githubName = String((githubRepo && (githubRepo.full_name || githubRepo.name)) || '').trim();
+  const githubVisibility = String((githubRepo && githubRepo.visibility) || '').trim();
+  const githubDefaultBranch = String((githubRepo && githubRepo.default_branch) || '').trim();
+  const githubUrl = String((githubRepo && githubRepo.url) || '').trim();
+  const githubReason = String((githubRepo && githubRepo.reason) || '').trim();
+  const githubSource = String((githubRepo && githubRepo.source) || '').trim();
+  const githubNameLabel = githubDetected ? (githubName || 'detected') : 'n/a';
+  const githubVisibilityLabel = githubDetected ? (githubVisibility || 'unknown') : 'n/a';
+  const githubDefaultBranchLabel = githubDetected ? (githubDefaultBranch || 'unknown') : 'n/a';
+  const githubRepoTitleParts = [];
+  if (githubName) githubRepoTitleParts.push('Repository: ' + githubName);
+  if (githubRemote) githubRepoTitleParts.push('Remote: ' + githubRemote);
+  if (githubRemoteUrl) githubRepoTitleParts.push('Remote URL: ' + githubRemoteUrl);
+  if (githubUrl) githubRepoTitleParts.push('URL: ' + githubUrl);
+  if (githubSource) githubRepoTitleParts.push('Source: ' + githubSource);
+  if (githubReason) githubRepoTitleParts.push('Note: ' + githubReason);
+  const githubRepoTitle = githubRepoTitleParts.length
+    ? githubRepoTitleParts.join('\n')
+    : 'GitHub repository metadata is unavailable.';
 
   let tone = 'ok';
   if (!trackingBranch || !aheadKnown || !behindKnown) tone = 'muted';
@@ -4091,6 +4141,26 @@ function _renderGitSyncState(sync) {
     lastFetch.label,
     lastFetch.title,
   );
+  _setGitSyncWidgetValue(
+    'git-sync-widget-github-name',
+    githubNameLabel,
+    githubRepoTitle,
+  );
+  _setGitSyncWidgetValue(
+    'git-sync-widget-github-visibility',
+    githubVisibilityLabel,
+    githubDetected
+      ? ('Visibility: ' + githubVisibilityLabel + (githubReason ? ('\nNote: ' + githubReason) : ''))
+      : (githubReason || 'GitHub visibility metadata is unavailable.'),
+  );
+  _setGitSyncWidgetValue(
+    'git-sync-widget-github-default-branch',
+    githubDefaultBranchLabel,
+    githubDetected
+      ? ('Default branch: ' + githubDefaultBranchLabel + (githubReason ? ('\nNote: ' + githubReason) : ''))
+      : (githubReason || 'GitHub default-branch metadata is unavailable.'),
+  );
+  _setGitSyncRepoUrl(githubUrl);
 
   let title = 'Branch: ' + branch;
   title += '\nTracking branch: ' + (trackingBranch || 'none');
@@ -4102,6 +4172,15 @@ function _renderGitSyncState(sync) {
   }
   title += '\nLast fetch: ' + lastFetch.label;
   title += '\nChanges: staged ' + staged + ', unstaged ' + unstaged + ', untracked ' + untracked;
+  if (githubDetected) {
+    title += '\nGitHub repo: ' + (githubName || 'detected');
+    title += '\nGitHub visibility: ' + (githubVisibility || 'unknown');
+    title += '\nGitHub default branch: ' + (githubDefaultBranch || 'unknown');
+    title += '\nGitHub remote: ' + (githubRemote || 'none');
+    if (githubReason) title += '\nGitHub note: ' + githubReason;
+  } else if (githubReason) {
+    title += '\nGitHub: ' + githubReason;
+  }
 
   _setGitSyncIndicator(summary, tone, title);
 }
@@ -4356,6 +4435,21 @@ async function gitSyncPull() {
 
 async function gitSyncPush() {
   await _runGitSyncAction('push');
+}
+
+function gitSyncOpenRepoPage() {
+  const url = String(gitSyncGithubRepoUrl || '').trim();
+  if (!url) {
+    toast('No GitHub repository URL is available yet.', 'info');
+    _syncGitSyncButtonState();
+    return;
+  }
+  const popup = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!popup) {
+    toast('Could not open GitHub repository URL.', 'error');
+    return;
+  }
+  toast('Opened GitHub repository page.', 'success');
 }
 
 function gitSyncOpenPullRequest() {

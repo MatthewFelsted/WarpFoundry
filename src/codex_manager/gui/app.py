@@ -135,6 +135,9 @@ _GITHUB_PAT_SECRET_KEY = "pat"
 _GITHUB_SSH_SECRET_KEY = "ssh_private_key"
 _GITHUB_AUTH_METHODS = frozenset({"https", "ssh"})
 _GITHUB_TEST_TIMEOUT_SECONDS = 20
+_GITHUB_REPO_METADATA_TIMEOUT_SECONDS = 8
+_GITHUB_REPO_METADATA_CACHE_TTL_SECONDS = 300
+_GITHUB_REPO_METADATA_ERROR_CACHE_TTL_SECONDS = 60
 _GIT_REMOTE_QUERY_TIMEOUT_SECONDS = 20
 _GIT_CLONE_TIMEOUT_SECONDS = 180
 _GIT_SYNC_TIMEOUT_SECONDS = 30
@@ -142,6 +145,8 @@ _DEFAULT_BRANCH_SENTINEL = "__remote_default__"
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
+_github_repo_metadata_cache: dict[str, tuple[float, dict[str, object] | None, str]] = {}
+_github_repo_metadata_cache_lock = threading.Lock()
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -4096,11 +4101,11 @@ def _git_remote_url(repo: Path, remote: str) -> str:
     return str(result.stdout or "").strip()
 
 
-def _github_repo_web_base(remote_url: str) -> str:
-    """Return ``https://github.com/<owner>/<repo>`` for GitHub remotes, else empty string."""
+def _github_remote_owner_repo(remote_url: str) -> tuple[str, str]:
+    """Return ``(owner, repo)`` for github.com remotes, else ``("", "")``."""
     raw = str(remote_url or "").strip()
     if not raw:
-        return ""
+        return "", ""
 
     host = ""
     path = ""
@@ -4116,18 +4121,164 @@ def _github_repo_web_base(remote_url: str) -> str:
             path = "/" + right.strip()
 
     if host != "github.com":
-        return ""
+        return "", ""
 
     normalized = path.strip().strip("/")
     if normalized.lower().endswith(".git"):
         normalized = normalized[:-4]
     parts = [part.strip() for part in normalized.split("/") if part.strip()]
     if len(parts) < 2:
-        return ""
+        return "", ""
+    return parts[0], parts[1]
 
-    owner = parts[0]
-    repo_name = parts[1]
+
+def _github_repo_web_base(remote_url: str) -> str:
+    """Return ``https://github.com/<owner>/<repo>`` for GitHub remotes, else empty string."""
+    owner, repo_name = _github_remote_owner_repo(remote_url)
+    if not owner or not repo_name:
+        return ""
     return f"https://github.com/{owner}/{repo_name}"
+
+
+def _github_repo_metadata_cache_key(owner: str, repo_name: str, *, authenticated: bool) -> str:
+    """Build a stable cache key for GitHub repo metadata lookups."""
+    owner_key = str(owner or "").strip().casefold()
+    repo_key = str(repo_name or "").strip().casefold()
+    auth_key = "auth" if authenticated else "anon"
+    return f"{owner_key}/{repo_key}|{auth_key}"
+
+
+def _github_repo_metadata_cache_get(cache_key: str) -> tuple[dict[str, object] | None, str] | None:
+    """Return cached repo metadata when fresh, else ``None``."""
+    now = time.time()
+    with _github_repo_metadata_cache_lock:
+        entry = _github_repo_metadata_cache.get(cache_key)
+        if not entry:
+            return None
+        expires_at, payload, error = entry
+        if expires_at <= now:
+            _github_repo_metadata_cache.pop(cache_key, None)
+            return None
+    return (dict(payload) if isinstance(payload, dict) else None, str(error or ""))
+
+
+def _github_repo_metadata_cache_set(
+    cache_key: str,
+    *,
+    payload: dict[str, object] | None,
+    error: str,
+) -> None:
+    """Store GitHub repo metadata lookup result with success/error TTLs."""
+    if str(error or "").strip():
+        ttl_seconds = _GITHUB_REPO_METADATA_ERROR_CACHE_TTL_SECONDS
+    else:
+        ttl_seconds = _GITHUB_REPO_METADATA_CACHE_TTL_SECONDS
+    expires_at = time.time() + max(1, int(ttl_seconds))
+    with _github_repo_metadata_cache_lock:
+        _github_repo_metadata_cache[cache_key] = (
+            expires_at,
+            dict(payload) if isinstance(payload, dict) else None,
+            str(error or "").strip(),
+        )
+
+
+def _github_repo_metadata_from_api(
+    owner: str,
+    repo_name: str,
+    *,
+    token: str = "",
+) -> tuple[dict[str, object] | None, str]:
+    """Fetch repository metadata from the GitHub REST API."""
+    owner_value = str(owner or "").strip()
+    repo_value = str(repo_name or "").strip()
+    if not owner_value or not repo_value:
+        return None, "GitHub owner/repository is missing."
+
+    token_value = str(token or "").strip()
+    cache_key = _github_repo_metadata_cache_key(
+        owner_value,
+        repo_value,
+        authenticated=bool(token_value),
+    )
+    cached = _github_repo_metadata_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    url = (
+        "https://api.github.com/repos/"
+        f"{quote(owner_value, safe='')}/{quote(repo_value, safe='')}"
+    )
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "codex-manager-git-sync-metadata",
+    }
+    if token_value:
+        headers["Authorization"] = f"Bearer {token_value}"
+
+    request_obj = Request(url, headers=headers, method="GET")
+    try:
+        with urlopen(request_obj, timeout=_GITHUB_REPO_METADATA_TIMEOUT_SECONDS) as response:
+            payload_text = response.read().decode("utf-8", errors="replace")
+        parsed = json.loads(payload_text) if payload_text else {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        is_private = bool(parsed.get("private"))
+        visibility = str(parsed.get("visibility") or "").strip().lower()
+        if not visibility:
+            visibility = "private" if is_private else "public"
+        metadata = {
+            "name": str(parsed.get("name") or repo_value).strip() or repo_value,
+            "full_name": str(parsed.get("full_name") or f"{owner_value}/{repo_value}").strip()
+            or f"{owner_value}/{repo_value}",
+            "owner": owner_value,
+            "repo": repo_value,
+            "url": str(parsed.get("html_url") or f"https://github.com/{owner_value}/{repo_value}").strip()
+            or f"https://github.com/{owner_value}/{repo_value}",
+            "default_branch": str(parsed.get("default_branch") or "").strip(),
+            "visibility": visibility,
+            "private": is_private,
+            "api_ok": True,
+        }
+        _github_repo_metadata_cache_set(cache_key, payload=metadata, error="")
+        return metadata, ""
+    except HTTPError as exc:
+        detail = ""
+        with suppress(Exception):
+            body = exc.read().decode("utf-8", errors="replace")
+            parsed = json.loads(body) if body else {}
+            if isinstance(parsed, dict):
+                detail = str(parsed.get("message") or "").strip()
+
+        if exc.code == 404:
+            message = (
+                "GitHub metadata lookup returned 404 (repository may be private, missing, "
+                "or inaccessible with current credentials)."
+            )
+        elif exc.code == 403 and "rate limit" in detail.lower():
+            message = "GitHub metadata lookup hit the API rate limit."
+        elif exc.code == 403:
+            message = "GitHub metadata lookup returned 403 (forbidden)."
+        else:
+            message = f"GitHub metadata lookup returned HTTP {exc.code}."
+        if detail:
+            message += f" {detail[:200]}"
+        _github_repo_metadata_cache_set(cache_key, payload=None, error=message)
+        return None, message
+    except URLError as exc:
+        reason = str(getattr(exc, "reason", exc) or "").strip()
+        message = (
+            "Could not reach api.github.com for metadata."
+            if not reason
+            else f"Could not reach api.github.com for metadata: {reason}"
+        )
+        _github_repo_metadata_cache_set(cache_key, payload=None, error=message)
+        return None, message
+    except Exception as exc:
+        message = f"GitHub metadata lookup failed: {exc}"
+        _github_repo_metadata_cache_set(cache_key, payload=None, error=message)
+        return None, message
 
 
 def _git_remote_default_branch(repo: Path, remote: str) -> str:
@@ -4362,6 +4513,101 @@ def _git_unstage_paths(repo: Path, paths: list[str]) -> subprocess.CompletedProc
     return restore_result
 
 
+def _git_remote_names(repo: Path) -> list[str]:
+    """Return configured git remote names (best effort)."""
+    result = _run_git_sync_command(repo, "remote")
+    if result.returncode != 0:
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw_line in str(result.stdout or "").splitlines():
+        name = raw_line.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _git_sync_preferred_remote_name(repo: Path, status_payload: dict[str, object]) -> str:
+    """Pick a default remote for repo metadata and link helpers."""
+    remote_names = _git_remote_names(repo)
+    if not remote_names:
+        return ""
+
+    remote_set = set(remote_names)
+    tracking_remote = str(status_payload.get("tracking_remote") or "").strip()
+    configured_default = _git_configured_push_default_remote(repo)
+
+    for candidate in (tracking_remote, configured_default, "origin"):
+        if candidate and candidate in remote_set:
+            return candidate
+    return remote_names[0]
+
+
+def _git_sync_github_repo_payload(repo: Path, status_payload: dict[str, object]) -> dict[str, object]:
+    """Resolve GitHub repository metadata for sync-status UI presentation."""
+    remote = _git_sync_preferred_remote_name(repo, status_payload)
+    payload: dict[str, object] = {
+        "provider": "github",
+        "remote": remote,
+        "remote_url": "",
+        "detected": False,
+        "available": False,
+        "owner": "",
+        "repo": "",
+        "name": "",
+        "full_name": "",
+        "visibility": "",
+        "default_branch": "",
+        "url": "",
+        "source": "none",
+        "api_ok": False,
+    }
+    if not remote:
+        payload["reason"] = "No git remote is configured."
+        return payload
+
+    remote_url = _git_remote_url(repo, remote)
+    payload["remote_url"] = remote_url
+    owner, repo_name = _github_remote_owner_repo(remote_url)
+    if not owner or not repo_name:
+        payload["reason"] = "Selected remote is not a github.com repository URL."
+        return payload
+
+    repo_web_url = f"https://github.com/{owner}/{repo_name}"
+    payload.update(
+        {
+            "detected": True,
+            "available": True,
+            "owner": owner,
+            "repo": repo_name,
+            "name": repo_name,
+            "full_name": f"{owner}/{repo_name}",
+            "visibility": "unknown",
+            "url": repo_web_url,
+            "source": "remote",
+        }
+    )
+
+    default_branch = _git_remote_default_branch(repo, remote)
+    if default_branch:
+        payload["default_branch"] = default_branch
+
+    token = ""
+    with suppress(RuntimeError):
+        token = _github_secret_get(_GITHUB_PAT_SECRET_KEY).strip()
+
+    api_payload, api_error = _github_repo_metadata_from_api(owner, repo_name, token=token)
+    if api_payload is not None:
+        payload.update(api_payload)
+        payload["source"] = "api"
+    elif api_error:
+        payload["reason"] = api_error
+
+    return payload
+
+
 def _git_sync_status_payload(repo: Path) -> dict[str, object]:
     """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
     branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -4417,7 +4663,7 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
 
     last_fetch_epoch_ms, last_fetch_at = _git_last_fetch_metadata(repo)
     dirty = bool(staged_changes or unstaged_changes or untracked_changes)
-    return {
+    payload: dict[str, object] = {
         "repo_path": str(repo),
         "branch": branch,
         "tracking_branch": tracking_branch,
@@ -4434,6 +4680,8 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
         "last_fetch_at": last_fetch_at,
         "checked_at_epoch_ms": int(time.time() * 1000),
     }
+    payload["github_repo"] = _git_sync_github_repo_payload(repo, payload)
+    return payload
 
 
 def _git_ref_exists(repo: Path, ref_name: str) -> bool:

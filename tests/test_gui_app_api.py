@@ -1915,6 +1915,12 @@ def test_index_includes_git_branch_switcher_controls(client):
     assert 'onclick="gitSyncCopyPullRequestUrl()"' in html
     assert "function gitSyncOpenPullRequest()" in html
     assert "async function gitSyncCopyPullRequestUrl()" in html
+    assert 'id="git-sync-open-repo-btn"' in html
+    assert 'onclick="gitSyncOpenRepoPage()"' in html
+    assert "function gitSyncOpenRepoPage()" in html
+    assert 'id="git-sync-widget-github-name"' in html
+    assert 'id="git-sync-widget-github-visibility"' in html
+    assert 'id="git-sync-widget-github-default-branch"' in html
     assert 'id="git-sync-branch-select"' in html
     assert 'id="git-sync-branch-refresh-btn"' in html
     assert 'onclick="refreshGitSyncBranchesNow()"' in html
@@ -2302,6 +2308,9 @@ def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path
     assert clean_data["clean"] is True
     assert "last_fetch_epoch_ms" in clean_data
     assert "last_fetch_at" in clean_data
+    assert isinstance(clean_data["github_repo"], dict)
+    assert clean_data["github_repo"]["provider"] == "github"
+    assert clean_data["github_repo"]["available"] is False
     if clean_data["last_fetch_epoch_ms"] is not None:
         assert isinstance(clean_data["last_fetch_epoch_ms"], int)
         assert clean_data["last_fetch_epoch_ms"] > 0
@@ -2315,6 +2324,56 @@ def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path
     assert dirty_data
     assert dirty_data["dirty"] is True
     assert dirty_data["untracked_changes"] >= 1
+
+
+def test_git_sync_status_includes_github_repo_metadata(client, monkeypatch, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-status-github-metadata")
+    _run_git(
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/example/demo-repo.git",
+        cwd=local,
+    )
+
+    def _fake_github_repo_metadata(owner: str, repo_name: str, *, token: str = ""):
+        assert owner == "example"
+        assert repo_name == "demo-repo"
+        assert token == ""
+        return (
+            {
+                "name": "demo-repo",
+                "full_name": "example/demo-repo",
+                "owner": "example",
+                "repo": "demo-repo",
+                "url": "https://github.com/example/demo-repo",
+                "default_branch": "main",
+                "visibility": "private",
+                "private": True,
+                "api_ok": True,
+            },
+            "",
+        )
+
+    monkeypatch.setattr(gui_app_module, "_github_repo_metadata_from_api", _fake_github_repo_metadata)
+
+    resp = client.get("/api/git/sync/status", query_string={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    github_repo = data["github_repo"]
+    assert github_repo["provider"] == "github"
+    assert github_repo["remote"] == "origin"
+    assert github_repo["detected"] is True
+    assert github_repo["available"] is True
+    assert github_repo["name"] == "demo-repo"
+    assert github_repo["full_name"] == "example/demo-repo"
+    assert github_repo["visibility"] == "private"
+    assert github_repo["default_branch"] == "main"
+    assert github_repo["url"] == "https://github.com/example/demo-repo"
+    assert github_repo["source"] == "api"
 
 
 def test_git_sync_branches_lists_local_and_remote_choices(client, tmp_path: Path):
