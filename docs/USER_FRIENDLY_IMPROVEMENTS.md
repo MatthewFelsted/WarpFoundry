@@ -2,23 +2,24 @@
 
 This backlog is prioritized for impact on first-time user success.
 
+## Implemented recently
+
+1. Added a guided "First Successful Run" wizard in the GUI onboarding flow.
+   - Scope: repo path input, inline diagnostics, actionable next steps, safe defaults, and one-click first dry run.
+
 ## P0 (highest impact)
 
-1. Add guided "First Successful Run" wizard in GUI.
-   - Why: users fail on repo/auth/preflight setup.
-   - Where: extend existing onboarding and preflight UI.
-
-2. Add docs links directly in header.
+1. Add docs links directly in header.
    - Why: users should not hunt for setup/troubleshooting.
    - Where: `README.md` and GUI top bar.
 
-3. Replace stale "8 presets" references with actual preset count from catalog.
+2. Replace stale "8 presets" references with actual preset count from catalog.
    - Why: avoid trust-breaking mismatch.
 
-4. Add copy/paste safe default profiles.
+3. Add copy/paste safe default profiles.
    - Why: reduces advanced-setting confusion for non-expert users.
 
-5. Add explicit auth diagnostics panel.
+4. Add explicit auth diagnostics panel.
    - Why: immediate feedback for missing keys/login state.
 
 ## P1

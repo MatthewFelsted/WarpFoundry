@@ -71,7 +71,10 @@ Use the `Next actions` section to apply fixes in priority order (including copy/
 python -m codex_manager gui
 ```
 
-Then in UI:
+Then in UI, choose one of these paths:
+
+1. Guided path (recommended): click `Guided First Run` and follow the wizard steps.
+2. Manual path:
 
 1. Set Repository Path.
 2. Select `dry-run` for safety.

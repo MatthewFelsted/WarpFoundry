@@ -581,7 +581,44 @@ body.mode-medium .easy-only{display:none}
 .onboarding-card .mode-row{display:flex;align-items:flex-start;gap:10px;margin:14px 0;padding:10px;background:var(--bg);border-radius:var(--radius)}
 .onboarding-card .mode-row strong{color:var(--accent);font-size:13px;min-width:80px}
 .onboarding-card .mode-row span{font-size:12px;color:var(--text2);line-height:1.5}
-.onboarding-card .btn-primary{width:100%;padding:12px;margin-top:16px;font-size:14px}
+.onboarding-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.onboarding-actions .btn{flex:1 1 190px;padding:11px;font-size:13px}
+
+#first-run-wizard-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2100;display:flex;align-items:center;justify-content:center;padding:24px}
+#first-run-wizard-overlay.hidden{display:none}
+.first-run-wizard-card{max-width:880px;width:100%;max-height:86vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:12px}
+.first-run-wizard-card h2{margin-bottom:4px;font-size:20px;color:var(--text)}
+.first-run-wizard-subtitle{font-size:13px;color:var(--text2);line-height:1.5}
+.first-run-wizard-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.first-run-wizard-step{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:8px 9px;font-size:12px;color:var(--text2);line-height:1.45}
+.first-run-wizard-step strong{display:block;color:var(--text);margin-bottom:2px;font-size:12px}
+.first-run-wizard-repo-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.first-run-wizard-repo-row input{flex:1 1 320px}
+.first-run-wizard-status{font-size:12px;color:var(--text2);min-height:1.2em}
+.first-run-wizard-status[data-tone="ok"]{color:var(--success)}
+.first-run-wizard-status[data-tone="warn"]{color:var(--warning)}
+.first-run-wizard-status[data-tone="error"]{color:var(--danger)}
+.first-run-wizard-diag-summary{font-size:13px;color:var(--text2)}
+.first-run-wizard-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.first-run-wizard-panel{border:1px solid var(--border);border-radius:var(--radius);background:rgba(15,22,34,.72);padding:10px;min-height:170px;overflow:auto}
+.first-run-wizard-panel h3{margin-bottom:8px;font-size:12px;text-transform:uppercase;letter-spacing:.25px;color:var(--text3)}
+.first-run-wizard-empty{font-size:12px;color:var(--text3)}
+.first-run-wizard-check{border:1px solid var(--border);border-radius:8px;background:rgba(7,11,17,.72);padding:7px 8px;font-size:12px;line-height:1.45;margin-bottom:7px}
+.first-run-wizard-check.pass{border-color:rgba(71,192,123,.45)}
+.first-run-wizard-check.warn{border-color:rgba(223,170,88,.45)}
+.first-run-wizard-check.fail{border-color:rgba(255,111,111,.45)}
+.first-run-wizard-check:last-child{margin-bottom:0}
+.first-run-wizard-check-title{font-weight:600;color:var(--text);display:flex;gap:6px;align-items:center}
+.first-run-wizard-check-detail{color:var(--text2);margin-top:3px}
+.first-run-wizard-check-hint{color:var(--warning);margin-top:2px}
+.first-run-wizard-action{border:1px solid var(--border);border-radius:8px;background:rgba(7,11,17,.72);padding:8px 9px;font-size:12px;line-height:1.45;margin-bottom:7px}
+.first-run-wizard-action:last-child{margin-bottom:0}
+.first-run-wizard-action-title{font-weight:600;color:var(--text)}
+.first-run-wizard-action-command{margin-top:4px;color:var(--text2);font-family:var(--mono);word-break:break-word}
+.first-run-wizard-action-controls{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.first-run-wizard-action-controls .btn{padding:5px 10px;font-size:12px}
+.first-run-wizard-footer{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-top:6px;border-top:1px solid var(--border)}
+.first-run-wizard-footer .btn{padding:9px 12px}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ New Project modal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 #new-project-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -949,6 +986,8 @@ body.mode-medium .easy-only{display:none}
   .git-remote-meta{grid-template-columns:1fr}
   .git-remote-add-grid{grid-template-columns:1fr}
   .workspace-repo-toolbar{align-items:stretch}
+  .first-run-wizard-steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .first-run-wizard-grid{grid-template-columns:1fr}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
@@ -957,9 +996,10 @@ body.mode-medium .easy-only{display:none}
   .workspace-repo-actions{flex-direction:column;align-items:stretch}
   .workspace-repo-actions select{min-width:0;max-width:none;width:100%}
   #toast-stack{right:12px;bottom:12px}
-  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal{max-height:88vh}
+  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal,.first-run-wizard-card{max-height:88vh}
   .science-cards{grid-template-columns:1fr}
   .science-bar-row{grid-template-columns:72px 1fr 38px}
+  .first-run-wizard-steps{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{
@@ -2261,7 +2301,61 @@ body.mode-medium .easy-only{display:none}
     <div class="mode-row"><strong>Autopilot</strong><span>Pick a recipe, set your repo path, and hit Start. Best for quick runs.</span></div>
     <div class="mode-row"><strong>Customize</strong><span>Build and reorder steps, set loop counts and stop conditions. No advanced options.</span></div>
     <div class="mode-row"><strong>Expert</strong><span>Full control: parallel execution, brain model, agent per step, timeouts, and advanced settings.</span></div>
-    <button type="button" class="btn btn-primary" onclick="dismissOnboarding()">Get Started</button>
+    <div class="onboarding-actions">
+      <button type="button" class="btn btn-primary" onclick="openFirstRunWizard()">Guided First Run</button>
+      <button type="button" class="btn" onclick="dismissOnboarding()">Skip Wizard</button>
+    </div>
+  </div>
+</div>
+
+<div id="first-run-wizard-overlay" class="hidden" onclick="if(event.target===this)closeFirstRunWizard()">
+  <div class="first-run-wizard-card" role="dialog" aria-modal="true" aria-labelledby="first-run-wizard-title">
+    <div>
+      <h2 id="first-run-wizard-title">First Successful Run Wizard</h2>
+      <p class="first-run-wizard-subtitle">Set your repository, run setup diagnostics, apply safe defaults, and start one dry-run strategic pass.</p>
+    </div>
+    <div class="first-run-wizard-steps">
+      <div class="first-run-wizard-step"><strong>1. Set Repo</strong>Pick the repository folder you want Codex Manager to work on.</div>
+      <div class="first-run-wizard-step"><strong>2. Run Diagnostics</strong>Check repo access, CLI binaries, and authentication for selected agents.</div>
+      <div class="first-run-wizard-step"><strong>3. Fix Required Items</strong>Use copy/run actions for missing dependencies and auth setup.</div>
+      <div class="first-run-wizard-step"><strong>4. Start Safe Run</strong>Apply dry-run defaults and launch one strategic chain run.</div>
+    </div>
+
+    <div class="config-section" style="padding:12px">
+      <label for="first-run-wizard-repo-path">Repository Path</label>
+      <div class="first-run-wizard-repo-row">
+        <input
+          type="text"
+          id="first-run-wizard-repo-path"
+          placeholder="C:\path\to\your\repo"
+          oninput="onFirstRunWizardRepoInput()"
+        >
+        <button type="button" class="btn" onclick="openBrowse('first-run-wizard-repo-path')">Browse</button>
+        <button type="button" class="btn" onclick="syncFirstRunWizardRepoFromCurrent()">Use Current Repo</button>
+      </div>
+      <div class="first-run-wizard-status" id="first-run-wizard-status">Set a repository path, then run diagnostics.</div>
+    </div>
+
+    <div class="first-run-wizard-diag-summary" id="first-run-wizard-diag-summary">Diagnostics not run yet.</div>
+    <div class="first-run-wizard-grid">
+      <div class="first-run-wizard-panel">
+        <h3>Checks</h3>
+        <div id="first-run-wizard-diag-list" class="first-run-wizard-empty">Run diagnostics to populate checks.</div>
+      </div>
+      <div class="first-run-wizard-panel">
+        <h3>Next Actions</h3>
+        <div id="first-run-wizard-actions" class="first-run-wizard-empty">No actions yet.</div>
+      </div>
+    </div>
+
+    <div class="first-run-wizard-footer">
+      <button type="button" class="btn" onclick="closeFirstRunWizard()">Close</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn" onclick="runFirstRunWizardDiagnostics()">Run Diagnostics</button>
+        <button type="button" class="btn" onclick="applyFirstRunWizardDefaults()">Apply Safe Defaults</button>
+        <button type="button" class="btn btn-success" onclick="startFirstRunWizard()">Start First Dry Run</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2881,6 +2975,8 @@ let gitSyncPollTimer = null;
 const GIT_SYNC_POLL_INTERVAL_MS = 20000;
 let workspaceState = null;
 let workspaceBusy = false;
+let firstRunWizardReport = null;
+let firstRunWizardBusy = false;
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
 const GIT_SYNC_DRAWER_STORAGE_KEY = 'cm_git_sync_open';
@@ -2929,6 +3025,7 @@ const _modalOverlayIds = [
   'feature-dreams-overlay',
   'general-request-overlay',
   'onboarding-overlay',
+  'first-run-wizard-overlay',
 ];
 
 function _captureModalFocus(overlayId) {
@@ -4163,6 +4260,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     hideNewProjectModal();
     hideCloneRepoModal();
     hideGithubAuthModal();
+    closeFirstRunWizard();
     browseClose();
   });
 });
@@ -4171,6 +4269,318 @@ function dismissOnboarding() {
   _closeOverlay('onboarding-overlay');
   if (typeof localStorage !== 'undefined') localStorage.setItem('cm_onboarded', '1');
   applyMode('easy');
+}
+
+function _setFirstRunWizardStatus(text, tone) {
+  const statusEl = document.getElementById('first-run-wizard-status');
+  if (!statusEl) return;
+  statusEl.textContent = text || '';
+  const normalizedTone = ['ok', 'warn', 'error'].includes(tone) ? tone : '';
+  if (normalizedTone) statusEl.setAttribute('data-tone', normalizedTone);
+  else statusEl.removeAttribute('data-tone');
+}
+
+function _firstRunWizardRepoPath() {
+  const input = document.getElementById('first-run-wizard-repo-path');
+  return String(input && input.value ? input.value : '').trim();
+}
+
+function _firstRunWizardDiagnosticsPayload(repoPath) {
+  return {
+    repo_path: repoPath,
+    codex_binary: String(document.getElementById('codex-bin').value || '').trim() || 'codex',
+    claude_binary: String(document.getElementById('claude-bin').value || '').trim() || 'claude',
+    agents: _collectChainAgentsForDiagnostics(),
+  };
+}
+
+function _setFirstRunWizardRepoPath(repoPath) {
+  const input = document.getElementById('first-run-wizard-repo-path');
+  if (!input) return;
+  input.value = String(repoPath || '').trim();
+}
+
+function _currentFirstRunWizardRepoSeed() {
+  const chainRepo = String(document.getElementById('repo-path').value || '').trim();
+  if (chainRepo) return chainRepo;
+  const pipeRepo = String(document.getElementById('pipe-repo-path').value || '').trim();
+  if (pipeRepo) return pipeRepo;
+  return String(config.repo_path || pipeConfig.repo_path || '').trim();
+}
+
+function _renderFirstRunWizardDiagnostics(payload) {
+  const summaryEl = document.getElementById('first-run-wizard-diag-summary');
+  const checksEl = document.getElementById('first-run-wizard-diag-list');
+  const actionsEl = document.getElementById('first-run-wizard-actions');
+  if (!summaryEl || !checksEl || !actionsEl) return;
+
+  const report = payload && typeof payload === 'object' ? payload : {};
+  const summary = report.summary || { pass: 0, warn: 0, fail: 0 };
+  const pass = Number(summary.pass || 0);
+  const warn = Number(summary.warn || 0);
+  const fail = Number(summary.fail || 0);
+  if (fail > 0) {
+    summaryEl.textContent = 'Diagnostics: ' + fail + ' failing checks, ' + warn + ' warnings.';
+  } else if (warn > 0) {
+    summaryEl.textContent = 'Diagnostics: ready with warnings (' + pass + ' pass, ' + warn + ' warn).';
+  } else if (pass > 0) {
+    summaryEl.textContent = 'Diagnostics: ready (' + pass + ' checks passed).';
+  } else {
+    summaryEl.textContent = 'Diagnostics not run yet.';
+  }
+
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  if (!checks.length) {
+    checksEl.innerHTML = '<div class="first-run-wizard-empty">Run diagnostics to populate checks.</div>';
+  } else {
+    checksEl.innerHTML = checks.map(check => {
+      const status = String(check.status || 'warn').toLowerCase();
+      const category = DIAG_CATEGORY_LABEL[check.category] || String(check.category || 'Check');
+      const label = String(check.label || 'Check');
+      const detail = String(check.detail || '');
+      const hint = String(check.hint || '');
+      return '<div class="first-run-wizard-check ' + escAttr(status) + '">'
+        + '<div class="first-run-wizard-check-title">' + _diagStatusIcon(status) + ' '
+        + escHtml(category + ': ' + label) + '</div>'
+        + (detail ? ('<div class="first-run-wizard-check-detail">' + escHtml(detail) + '</div>') : '')
+        + (hint ? ('<div class="first-run-wizard-check-hint">Fix: ' + escHtml(hint) + '</div>') : '')
+        + '</div>';
+    }).join('');
+  }
+
+  const actions = Array.isArray(report.next_actions) ? report.next_actions : [];
+  if (!actions.length) {
+    actionsEl.innerHTML = '<div class="first-run-wizard-empty">No next actions for the current diagnostics result.</div>';
+  } else {
+    actionsEl.innerHTML = actions.map(action => {
+      const key = String(action.key || '');
+      const severity = String(action.severity || 'required').toLowerCase();
+      const badge = severity === 'required' ? '[Required]' : '[Recommended]';
+      const title = String(action.title || 'Action');
+      const detail = String(action.detail || '');
+      const command = String(action.command || '');
+      const canRun = !!action.can_run;
+      return '<div class="first-run-wizard-action">'
+        + '<div class="first-run-wizard-action-title">' + escHtml(badge + ' ' + title) + '</div>'
+        + (detail ? ('<div class="first-run-wizard-check-detail">' + escHtml(detail) + '</div>') : '')
+        + (command ? ('<div class="first-run-wizard-action-command">Command: ' + escHtml(command) + '</div>') : '')
+        + (command
+          ? ('<div class="first-run-wizard-action-controls">'
+            + '<button type="button" class="btn" data-command="' + escAttr(command)
+            + '" onclick="copyFirstRunWizardCommand(this)">Copy</button>'
+            + (canRun
+              ? ('<button type="button" class="btn btn-primary" data-action-key="' + escAttr(key)
+                + '" onclick="runFirstRunWizardActionFromButton(this)">Run</button>')
+              : '')
+            + '</div>')
+          : '')
+        + '</div>';
+    }).join('');
+  }
+}
+
+function onFirstRunWizardRepoInput() {
+  const repoPath = _firstRunWizardRepoPath();
+  firstRunWizardReport = null;
+  _renderFirstRunWizardDiagnostics({});
+  if (!repoPath) {
+    _setFirstRunWizardStatus('Set a repository path, then run diagnostics.');
+    return;
+  }
+  _setFirstRunWizardStatus('Repository set. Run diagnostics to validate setup.');
+}
+
+function syncFirstRunWizardRepoFromCurrent() {
+  const current = _currentFirstRunWizardRepoSeed();
+  _setFirstRunWizardRepoPath(current);
+  onFirstRunWizardRepoInput();
+}
+
+function openFirstRunWizard() {
+  _closeOverlay('onboarding-overlay');
+  syncFirstRunWizardRepoFromCurrent();
+  _openOverlay('first-run-wizard-overlay', '#first-run-wizard-repo-path');
+}
+
+function closeFirstRunWizard() {
+  _closeOverlay('first-run-wizard-overlay');
+}
+
+function _applyFirstRunWizardRepoToMainInputs(repoPath) {
+  const normalized = String(repoPath || '').trim();
+  const chainRepoEl = document.getElementById('repo-path');
+  const pipeRepoEl = document.getElementById('pipe-repo-path');
+  if (chainRepoEl) chainRepoEl.value = normalized;
+  if (pipeRepoEl) pipeRepoEl.value = normalized;
+  config.repo_path = normalized;
+  pipeConfig.repo_path = normalized;
+  validateRepo();
+  validatePipeRepo();
+}
+
+async function runFirstRunWizardDiagnostics() {
+  if (firstRunWizardBusy) return null;
+  const repoPath = _firstRunWizardRepoPath();
+  if (!repoPath) {
+    _setFirstRunWizardStatus('Repository path is required before diagnostics can run.', 'error');
+    return null;
+  }
+
+  firstRunWizardBusy = true;
+  _setFirstRunWizardStatus('Running diagnostics...', 'warn');
+  try {
+    const payload = _firstRunWizardDiagnosticsPayload(repoPath);
+    const report = await postJson('/api/diagnostics', payload);
+    if (report && report.error) throw new Error(report.error);
+    firstRunWizardReport = report || {};
+    _renderFirstRunWizardDiagnostics(firstRunWizardReport);
+    const ready = !!(firstRunWizardReport && firstRunWizardReport.ready);
+    if (ready) {
+      _setFirstRunWizardStatus('Setup checks passed. You can start a safe first run.', 'ok');
+    } else {
+      const failCount = Number((firstRunWizardReport.summary && firstRunWizardReport.summary.fail) || 0);
+      if (failCount > 0) {
+        _setFirstRunWizardStatus('Fix required checks before starting your first run.', 'error');
+      } else {
+        _setFirstRunWizardStatus('Diagnostics passed with warnings. Starting is allowed but review warnings first.', 'warn');
+      }
+    }
+    return firstRunWizardReport;
+  } catch (e) {
+    const message = (e && e.message) ? e.message : 'Failed to run diagnostics.';
+    _setFirstRunWizardStatus(message, 'error');
+    _renderFirstRunWizardDiagnostics({});
+    return null;
+  } finally {
+    firstRunWizardBusy = false;
+  }
+}
+
+async function copyFirstRunWizardCommand(btn) {
+  const command = String((btn && btn.dataset && btn.dataset.command) || '').trim();
+  if (!command) {
+    toast('No command is available for this action.', 'error');
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(command);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = command;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    }
+    toast('Copied diagnostics command.', 'success');
+  } catch (_err) {
+    toast('Could not copy command to clipboard.', 'error');
+  }
+}
+
+async function runFirstRunWizardActionFromButton(btn) {
+  if (!btn || firstRunWizardBusy) return;
+  const actionKey = String((btn.dataset && btn.dataset.actionKey) || '').trim();
+  if (!actionKey) {
+    toast('Missing diagnostics action key.', 'error');
+    return;
+  }
+
+  const repoPath = _firstRunWizardRepoPath();
+  if (!repoPath) {
+    _setFirstRunWizardStatus('Repository path is required before running actions.', 'error');
+    return;
+  }
+
+  const originalText = String(btn.textContent || 'Run');
+  btn.disabled = true;
+  btn.textContent = 'Running...';
+  firstRunWizardBusy = true;
+  _setFirstRunWizardStatus('Running diagnostics action...', 'warn');
+  try {
+    const payload = _firstRunWizardDiagnosticsPayload(repoPath);
+    payload.action_key = actionKey;
+    const result = await postJson('/api/diagnostics/actions/run', payload);
+    if (result && result.error) throw new Error(result.error);
+    if (result && result.ok) {
+      _setFirstRunWizardStatus('Diagnostics action completed. Re-running checks...', 'warn');
+      toast('Diagnostics action completed.', 'success');
+    } else {
+      const exitCode = String((result && result.exit_code) || '?');
+      throw new Error('Diagnostics action failed (exit ' + exitCode + ').');
+    }
+    await runFirstRunWizardDiagnostics();
+  } catch (e) {
+    const message = (e && e.message) ? e.message : 'Failed to run diagnostics action.';
+    _setFirstRunWizardStatus(message, 'error');
+    toast(message, 'error');
+  } finally {
+    firstRunWizardBusy = false;
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+function applyFirstRunWizardDefaults() {
+  const repoPath = _firstRunWizardRepoPath();
+  if (!repoPath) {
+    _setFirstRunWizardStatus('Set a repository path first.', 'error');
+    return;
+  }
+  _applyFirstRunWizardRepoToMainInputs(repoPath);
+  applyMode('easy');
+  if (RECIPES.strategic) {
+    selectRecipe('strategic');
+  } else {
+    applyDefaultEasyRecipe();
+  }
+  setMode('dry-run');
+  setPermissionProfile('chain', 'safe');
+
+  const unlimitedEl = document.getElementById('unlimited');
+  if (unlimitedEl) unlimitedEl.checked = false;
+  toggleUnlimited();
+  const maxLoopsEl = document.getElementById('max-loops');
+  if (maxLoopsEl) maxLoopsEl.value = '1';
+  config.max_loops = 1;
+  scheduleDiagnosticsRefresh('chain');
+  _setFirstRunWizardStatus('Safe defaults applied: Strategic recipe + dry-run + 1 loop.', 'ok');
+}
+
+async function startFirstRunWizard() {
+  if (chainRunning || chainPaused) {
+    _setFirstRunWizardStatus('A chain run is already active. Stop it before starting another.', 'error');
+    return;
+  }
+  const repoPath = _firstRunWizardRepoPath();
+  if (!repoPath) {
+    _setFirstRunWizardStatus('Set a repository path first.', 'error');
+    return;
+  }
+
+  const reportRepo = firstRunWizardReport
+    ? String(firstRunWizardReport.resolved_repo_path || firstRunWizardReport.repo_path || '').trim()
+    : '';
+  const needsDiagnostics = !firstRunWizardReport || !reportRepo || reportRepo !== repoPath;
+  if (needsDiagnostics) {
+    const report = await runFirstRunWizardDiagnostics();
+    if (!report) return;
+  }
+  if (!firstRunWizardReport || !firstRunWizardReport.ready) {
+    _setFirstRunWizardStatus('Setup is not ready yet. Resolve required diagnostics actions first.', 'error');
+    return;
+  }
+
+  applyFirstRunWizardDefaults();
+  closeFirstRunWizard();
+  _closeOverlay('onboarding-overlay');
+  if (typeof localStorage !== 'undefined') localStorage.setItem('cm_onboarded', '1');
+  switchTab('chain');
+  await startChain({ skipRunPlan: true });
 }
 
 /* -- To-Do / Wishlist workspace -- */
@@ -8594,7 +9004,8 @@ function updateStep(field, value) {
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Execution Control Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
-async function startChain() {
+async function startChain(options = {}) {
+  const opts = options || {};
   // Sync config from UI inputs
   config.repo_path             = document.getElementById('repo-path').value.trim();
   config.unlimited             = document.getElementById('unlimited').checked;
@@ -8651,9 +9062,15 @@ async function startChain() {
     return;
   }
   const chainUsesCodex = config.steps.some(s => s.enabled && (s.agent || 'auto') !== 'claude_code');
-  const runPlan = await openRunPlanModal('chain');
-  if (!applyRunPlanChoice(runPlan)) return;
-  if ((runPlan.profile || 'safe') === 'readonly' && chainUsesCodex) {
+  let selectedProfile = _permissionProfileFromConfig(config);
+  if (!opts.skipRunPlan) {
+    const runPlan = await openRunPlanModal('chain');
+    if (!applyRunPlanChoice(runPlan)) return;
+    selectedProfile = runPlan.profile || selectedProfile;
+  } else {
+    selectedProfile = _permissionProfileFromConfig(config);
+  }
+  if ((selectedProfile || 'safe') === 'readonly' && chainUsesCodex) {
     toast('Read-Only Inspect selected: Codex can analyze but cannot write files in this run.', 'info');
   }
   if (!requestDangerConfirmationIfNeeded(config)) return;

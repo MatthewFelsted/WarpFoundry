@@ -65,6 +65,8 @@ Launch GUI:
 python -m codex_manager gui
 ```
 
+On first launch, use the `Guided First Run` wizard to set repo path, run diagnostics, apply safe defaults, and start one dry-run chain automatically.
+
 In the GUI header, use `Quickstart`, `Outputs`, `Troubleshooting`, and `CLI Reference` to open built-in docs without leaving the app.
 Use the `Setup Diagnostics` panel under Repository Path (Chain and Pipeline tabs) to validate repo access, CLI binaries, and auth before you run.
 Diagnostics now include prioritized `Next actions` with concrete commands so first-run fixes are one screen away.

@@ -2336,6 +2336,25 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert "data-phase-test-policy" in html
 
 
+def test_index_includes_first_run_wizard_controls(client):
+    resp = client.get("/")
+    html = resp.get_data(as_text=True)
+
+    assert resp.status_code == 200
+    assert 'onclick="openFirstRunWizard()"' in html
+    assert 'id="first-run-wizard-overlay"' in html
+    assert 'id="first-run-wizard-repo-path"' in html
+    assert 'id="first-run-wizard-diag-summary"' in html
+    assert 'id="first-run-wizard-diag-list"' in html
+    assert 'id="first-run-wizard-actions"' in html
+    assert "async function runFirstRunWizardDiagnostics()" in html
+    assert "async function runFirstRunWizardActionFromButton(btn)" in html
+    assert "function applyFirstRunWizardDefaults()" in html
+    assert "async function startFirstRunWizard()" in html
+    assert "async function startChain(options = {})" in html
+    assert "/api/diagnostics/actions/run" in html
+
+
 def test_index_includes_general_request_workspace_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
