@@ -1144,6 +1144,7 @@ body.mode-medium .easy-only{display:none}
   <div style="display:flex;justify-content:space-between;align-items:center">
     <h2>Execution</h2>
     <div class="exec-controls">
+      <button class="btn btn-primary" id="btn-feature-dream-next" onclick="implementNextDreamedFeature()">Implement Next Dream</button>
       <button class="btn btn-success" id="btn-start" onclick="startChain()">&#9654; Start</button>
       <button class="btn btn-warning" id="btn-pause" onclick="pauseChain()" disabled>&#9208; Pause</button>
       <button class="btn btn-danger"  id="btn-stop"  onclick="stopChain()"  disabled>&#9209; Stop</button>
@@ -3441,6 +3442,93 @@ async function startFeatureDreamAutopilot() {
   await startChain();
 }
 
+function _firstUncheckedChecklistItem(markdown) {
+  const match = String(markdown || '').match(/^\s*[-*]\s+\[\s\]\s+(.+?)\s*$/m);
+  return match ? String(match[1] || '').replace(/\s+/g, ' ').trim() : '';
+}
+
+function _implementNextDreamPrompt(itemText) {
+  const target = String(itemText || '').trim();
+  let prompt =
+    "Read `.codex_manager/owner/FEATURE_DREAMS.md` and implement the first unchecked feature item (`- [ ] ...`) end-to-end. "
+    + "After implementation, mark it done as `- [x] ...` and add a short completion note.\n\n"
+    + "If `.codex_manager/owner/FEATURE_DREAMS.md` does not exist, create it first with concrete feature items and then implement the first unchecked item.\n\n"
+    + "Run exactly one implementation pass in this step. Do not continue to additional unchecked items.\n\n"
+    + "If there are no unchecked feature items remaining, output exactly `[TERMINATE_STEP]` on its own line and do not make code changes.";
+  if (target) {
+    prompt += "\n\nCurrent first unchecked item to target:\n- [ ] " + target;
+  }
+  return prompt;
+}
+
+async function implementNextDreamedFeature() {
+  const repo = _activeRepoPath();
+  if (!repo) {
+    toast('Set a repository path first.', 'error');
+    return;
+  }
+  if (chainRunning) {
+    toast('A chain run is already active.', 'info');
+    return;
+  }
+
+  let featureDreams;
+  try {
+    featureDreams = await api('/api/owner/feature-dreams?repo_path=' + encodeURIComponent(repo));
+  } catch (e) {
+    toast('Could not load feature dreams.', 'error');
+    return;
+  }
+
+  if (featureDreams && featureDreams.error) {
+    toast(String(featureDreams.error), 'error');
+    return;
+  }
+  if (!featureDreams || !featureDreams.has_open_items) {
+    toast('No unchecked feature dreams found.', 'info');
+    return;
+  }
+
+  const firstOpenItem = _firstUncheckedChecklistItem(featureDreams.content || '');
+  document.getElementById('repo-path').value = repo;
+  config.repo_path = repo;
+  validateRepo();
+
+  config.unlimited = false;
+  config.max_loops = 1;
+  config.stop_on_convergence = false;
+  config.parallel_execution = false;
+  config.steps = [
+    {
+      id: Math.random().toString(36).substring(2, 10),
+      name: 'Implement Next Dreamed Feature',
+      job_type: 'implementation',
+      prompt_mode: 'custom',
+      custom_prompt: _implementNextDreamPrompt(firstOpenItem),
+      on_failure: 'skip',
+      max_retries: 1,
+      loop_count: 1,
+      enabled: true,
+      agent: 'codex',
+    },
+  ];
+  selectedStepId = config.steps[0].id;
+
+  document.querySelectorAll('.recipe-card').forEach(c => {
+    c.classList.remove('selected');
+    c.setAttribute('aria-pressed', 'false');
+  });
+  document.getElementById('unlimited').checked = false;
+  document.getElementById('max-loops').value = '1';
+  document.getElementById('stop-convergence').checked = false;
+  document.getElementById('parallel-exec').checked = false;
+  toggleUnlimited();
+  renderSteps();
+  renderStepDetails();
+  switchTab('chain');
+  await startChain();
+}
+
 function showNewProjectModal() {
   document.getElementById('np-result').style.display = 'none';
   document.getElementById('np-create-btn').disabled = false;
@@ -4957,6 +5045,7 @@ async function pauseChain() {
 }
 
 function setControlsRunning(running) {
+  document.getElementById('btn-feature-dream-next').disabled = running;
   document.getElementById('btn-start').disabled = running;
   document.getElementById('btn-pause').disabled = !running;
   document.getElementById('btn-stop').disabled  = !running;

@@ -1401,6 +1401,10 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert 'onclick="saveAndStartFeatureDreamAutopilot()"' in html
     assert "async function startFeatureDreamAutopilot()" in html
     assert "selectRecipe('feature_dream_autopilot')" in html
+    assert 'id="btn-feature-dream-next"' in html
+    assert 'onclick="implementNextDreamedFeature()"' in html
+    assert "async function implementNextDreamedFeature()" in html
+    assert "_implementNextDreamPrompt(" in html
 
 
 def test_owner_feature_dreams_helpers_default_template_and_open_item_detection(tmp_path: Path):
