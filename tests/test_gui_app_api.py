@@ -242,6 +242,84 @@ def test_chain_start_preflight_reports_repo_not_writable(client, monkeypatch, tm
     assert any("Repository is not writable" in issue for issue in data.get("issues", []))
 
 
+def test_chain_start_git_preflight_blocks_dirty_worktree_without_auto_stash(
+    client, monkeypatch, tmp_path: Path
+):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-chain-preflight-dirty")
+    (local / "DIRTY_PREFLIGHT.txt").write_text("dirty\n", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    resp = client.post(
+        "/api/chain/start",
+        json=_chain_payload(
+            local,
+            git_preflight_enabled=True,
+            git_preflight_auto_stash=False,
+            git_preflight_auto_pull=False,
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any("dirty" in issue.lower() for issue in data.get("issues", []))
+    assert isinstance(data.get("git_preflight"), dict)
+    assert data["git_preflight"]["ok"] is False
+
+
+def test_chain_start_git_preflight_auto_stash_and_auto_pull(
+    client, monkeypatch, tmp_path: Path
+):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-chain-preflight-auto")
+    _push_remote_update(
+        tmp_path,
+        remote,
+        clone_name="updater-chain-preflight-auto",
+        filename="REMOTE_PREFLIGHT.md",
+        content="from remote\n",
+        message="remote preflight update",
+    )
+    (local / "LOCAL_PREFLIGHT_DIRTY.txt").write_text("local dirty change\n", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    started: dict[str, object] = {}
+
+    class _StubExecutor:
+        is_running = False
+
+        @staticmethod
+        def start(config):
+            started["config"] = config
+
+    monkeypatch.setattr(gui_app_module, "executor", _StubExecutor())
+
+    resp = client.post(
+        "/api/chain/start",
+        json=_chain_payload(
+            local,
+            git_preflight_enabled=True,
+            git_preflight_auto_stash=True,
+            git_preflight_auto_pull=True,
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "started"
+    preflight = data["git_preflight"]
+    assert preflight["ok"] is True
+    assert preflight["stash_created"] is True
+    assert preflight["status_after"]["behind"] == 0
+    assert (local / "REMOTE_PREFLIGHT.md").is_file()
+    assert "config" in started
+
+    stash_list = _run_git("stash", "list", cwd=local).stdout
+    assert "codex-manager:preflight-auto-stash" in stash_list
+
+
 def test_chain_start_requires_danger_confirmation_when_bypass_enabled(client, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     resp = client.post(
@@ -340,6 +418,31 @@ def test_pipeline_start_requires_danger_confirmation_when_bypass_enabled(client,
     assert data
     assert "Invalid config" in data["error"]
     assert "codex_danger_confirmation" in data["error"]
+
+
+def test_pipeline_start_git_preflight_reports_unreachable_remote(client, monkeypatch, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-pipeline-preflight-unreachable")
+    unreachable = tmp_path / "missing-remote.git"
+    _run_git("remote", "set-url", "origin", str(unreachable), cwd=local)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            local,
+            git_preflight_enabled=True,
+            git_preflight_auto_stash=False,
+            git_preflight_auto_pull=False,
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any("reach remote" in issue.lower() for issue in data.get("issues", []))
+    assert isinstance(data.get("git_preflight"), dict)
+    assert data["git_preflight"]["ok"] is False
 
 
 def test_pipeline_phases_api_marks_self_improvement_phase(client):
@@ -2007,6 +2110,14 @@ def test_index_includes_git_branch_switcher_controls(client):
     assert "/api/git/sync/commit/unstage" in html
     assert "/api/git/sync/commit/create" in html
     assert "allow dirty switch" in html
+    assert 'id="chain-git-preflight-enabled"' in html
+    assert 'id="chain-git-preflight-auto-stash"' in html
+    assert 'id="chain-git-preflight-auto-pull"' in html
+    assert 'id="pipe-git-preflight-enabled"' in html
+    assert 'id="pipe-git-preflight-auto-stash"' in html
+    assert 'id="pipe-git-preflight-auto-pull"' in html
+    assert "function toggleChainGitPreflight()" in html
+    assert "function togglePipeGitPreflight()" in html
 
 
 def test_owner_feature_dreams_helpers_default_template_and_open_item_detection(tmp_path: Path):

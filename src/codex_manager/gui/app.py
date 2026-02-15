@@ -3327,8 +3327,31 @@ def api_start():
         msg = "Preflight checks failed:\n" + "\n".join(f"- {i}" for i in issues)
         return jsonify({"error": msg, "issues": issues}), 400
 
+    git_preflight: dict[str, object] | None = None
+    if config.git_preflight_enabled:
+        try:
+            git_preflight = _git_preflight_before_run(
+                Path(config.repo_path).resolve(),
+                auto_stash=bool(config.git_preflight_auto_stash),
+                auto_pull=bool(config.git_preflight_auto_pull),
+            )
+        except subprocess.TimeoutExpired:
+            return jsonify({"error": "Git pre-flight checks timed out."}), 504
+        except RuntimeError as exc:
+            return jsonify({"error": f"Git pre-flight checks failed: {exc}"}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Git pre-flight checks failed: {exc}"}), 500
+
+        git_issues = [str(item) for item in git_preflight.get("issues", []) if str(item).strip()]
+        if git_issues:
+            msg = "Git pre-flight checks failed:\n" + "\n".join(f"- {i}" for i in git_issues)
+            return jsonify({"error": msg, "issues": git_issues, "git_preflight": git_preflight}), 400
+
     executor.start(config)
-    return jsonify({"status": "started"})
+    payload: dict[str, object] = {"status": "started"}
+    if git_preflight is not None:
+        payload["git_preflight"] = git_preflight
+    return jsonify(payload)
 
 
 @app.route("/api/chain/stop", methods=["POST"])
@@ -4809,8 +4832,8 @@ def _git_sync_github_repo_payload(repo: Path, status_payload: dict[str, object])
     return payload
 
 
-def _git_sync_status_payload(repo: Path) -> dict[str, object]:
-    """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
+def _git_sync_status_core_payload(repo: Path) -> dict[str, object]:
+    """Return git sync metadata without optional GitHub API enrichment."""
     branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
     if branch_result.returncode != 0:
         raise RuntimeError(
@@ -4864,7 +4887,7 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
 
     last_fetch_epoch_ms, last_fetch_at = _git_last_fetch_metadata(repo)
     dirty = bool(staged_changes or unstaged_changes or untracked_changes)
-    payload: dict[str, object] = {
+    return {
         "repo_path": str(repo),
         "branch": branch,
         "tracking_branch": tracking_branch,
@@ -4881,6 +4904,11 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
         "last_fetch_at": last_fetch_at,
         "checked_at_epoch_ms": int(time.time() * 1000),
     }
+
+
+def _git_sync_status_payload(repo: Path) -> dict[str, object]:
+    """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
+    payload = _git_sync_status_core_payload(repo)
     payload["github_repo"] = _git_sync_github_repo_payload(repo, payload)
     return payload
 
@@ -4980,6 +5008,288 @@ def _git_sync_dirty_guardrail_response(
         ),
         409,
     )
+
+
+def _git_preflight_before_run(
+    repo: Path,
+    *,
+    auto_stash: bool,
+    auto_pull: bool,
+) -> dict[str, object]:
+    """Run optional git pre-flight checks/actions before starting a run."""
+    checks: list[dict[str, str]] = []
+    issues: list[str] = []
+    warnings: list[str] = []
+    actions: list[str] = []
+
+    def add_check(*, key: str, label: str, status: str, detail: str) -> None:
+        checks.append(
+            {
+                "key": key,
+                "label": label,
+                "status": status,
+                "detail": detail,
+            }
+        )
+
+    status_before = _git_sync_status_core_payload(repo)
+    status_after = dict(status_before)
+    branch = str(status_before.get("branch") or "").strip() or "HEAD"
+    tracking_branch = str(status_before.get("tracking_branch") or "").strip()
+    tracking_remote = str(status_before.get("tracking_remote") or "").strip()
+
+    staged_changes = int(status_before.get("staged_changes") or 0)
+    unstaged_changes = int(status_before.get("unstaged_changes") or 0)
+    untracked_changes = int(status_before.get("untracked_changes") or 0)
+    dirty = bool(status_before.get("dirty"))
+
+    stash_created = False
+    stash_ref = ""
+    stash_before = ""
+
+    if dirty:
+        detail = (
+            "Worktree is dirty: staged "
+            f"{staged_changes}, unstaged {unstaged_changes}, untracked {untracked_changes}."
+        )
+        if auto_stash:
+            stash_before = _resolve_stash_ref(repo)
+            stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            stash_message = f"codex-manager:preflight-auto-stash {stamp}"
+            stash_result = _run_git_sync_command(
+                repo,
+                "stash",
+                "push",
+                "--include-untracked",
+                "--message",
+                stash_message,
+            )
+            if stash_result.returncode != 0:
+                stash_error = _extract_git_process_error(
+                    stash_result,
+                    "git stash push --include-untracked failed",
+                )
+                add_check(
+                    key="worktree_state",
+                    label="Clean or stashed worktree",
+                    status="fail",
+                    detail=f"{detail} Auto-stash failed: {stash_error}",
+                )
+                issues.append(
+                    "Git pre-flight auto-stash failed. Commit, stash, or discard local changes and retry."
+                )
+            else:
+                stash_after = _resolve_stash_ref(repo)
+                stash_created = bool(stash_after and stash_after != stash_before)
+                stash_ref = stash_after if stash_created else ""
+                add_check(
+                    key="worktree_state",
+                    label="Clean or stashed worktree",
+                    status="pass",
+                    detail=(
+                        "Worktree was dirty and was auto-stashed."
+                        if stash_created
+                        else "Worktree was dirty; auto-stash ran but did not create a new stash ref."
+                    ),
+                )
+                if stash_created:
+                    actions.append("Auto-stashed local changes before run.")
+        else:
+            add_check(
+                key="worktree_state",
+                label="Clean or stashed worktree",
+                status="fail",
+                detail=detail,
+            )
+            issues.append(
+                "Git pre-flight blocked the run because the worktree is dirty. "
+                "Enable auto-stash or clean the worktree first."
+            )
+    else:
+        add_check(
+            key="worktree_state",
+            label="Clean or stashed worktree",
+            status="pass",
+            detail="Worktree is clean.",
+        )
+
+    if branch == "HEAD":
+        add_check(
+            key="branch_validation",
+            label="Branch validation",
+            status="fail",
+            detail="Repository is in detached HEAD state.",
+        )
+        issues.append(
+            "Git pre-flight requires an active branch (not detached HEAD). Check out a branch first."
+        )
+    else:
+        add_check(
+            key="branch_validation",
+            label="Branch validation",
+            status="pass",
+            detail=f"Active branch: {branch}",
+        )
+
+    if not tracking_branch:
+        add_check(
+            key="tracking_branch",
+            label="Tracking branch configured",
+            status="fail",
+            detail=f"Branch '{branch}' has no upstream tracking branch.",
+        )
+        issues.append(
+            "Git pre-flight requires an upstream tracking branch. "
+            "Set it with 'git push --set-upstream <remote> <branch>'."
+        )
+    else:
+        add_check(
+            key="tracking_branch",
+            label="Tracking branch configured",
+            status="pass",
+            detail=f"Tracking branch: {tracking_branch}",
+        )
+
+    if tracking_remote:
+        remote_probe = _run_git_sync_command(repo, "remote", "get-url", tracking_remote)
+        if remote_probe.returncode != 0:
+            remote_error = _extract_git_process_error(
+                remote_probe,
+                f"git remote get-url {tracking_remote} failed",
+            )
+            add_check(
+                key="remote_reachability",
+                label="Remote reachability",
+                status="fail",
+                detail=f"Remote '{tracking_remote}' is not configured: {remote_error}",
+            )
+            issues.append(
+                f"Git pre-flight could not resolve remote '{tracking_remote}'. "
+                "Fix git remote settings and retry."
+            )
+        else:
+            reachability_probe = _run_git_sync_command(
+                repo,
+                "ls-remote",
+                "--exit-code",
+                tracking_remote,
+                "HEAD",
+            )
+            if reachability_probe.returncode != 0:
+                reachability_error = _extract_git_process_error(
+                    reachability_probe,
+                    f"git ls-remote {tracking_remote} HEAD failed",
+                )
+                add_check(
+                    key="remote_reachability",
+                    label="Remote reachability",
+                    status="fail",
+                    detail=f"Remote '{tracking_remote}' is unreachable: {reachability_error}",
+                )
+                issues.append(
+                    f"Git pre-flight could not reach remote '{tracking_remote}'. "
+                    "Check network/auth settings and retry."
+                )
+            else:
+                add_check(
+                    key="remote_reachability",
+                    label="Remote reachability",
+                    status="pass",
+                    detail=f"Remote '{tracking_remote}' is reachable.",
+                )
+    else:
+        add_check(
+            key="remote_reachability",
+            label="Remote reachability",
+            status="fail",
+            detail="Could not determine tracking remote name.",
+        )
+        issues.append(
+            "Git pre-flight could not determine the tracking remote. "
+            "Configure upstream tracking and retry."
+        )
+
+    behind_raw = status_before.get("behind")
+    behind = int(behind_raw) if isinstance(behind_raw, int) else None
+    if behind is not None and behind > 0 and not auto_pull:
+        warn_text = f"Local branch is behind upstream by {behind} commit(s); auto-pull is disabled."
+        add_check(
+            key="upstream_freshness",
+            label="Upstream freshness",
+            status="warn",
+            detail=warn_text,
+        )
+        warnings.append(warn_text)
+    elif behind is not None:
+        add_check(
+            key="upstream_freshness",
+            label="Upstream freshness",
+            status="pass",
+            detail=f"Behind upstream by {behind} commit(s).",
+        )
+    else:
+        add_check(
+            key="upstream_freshness",
+            label="Upstream freshness",
+            status="warn",
+            detail="Ahead/behind counts are unavailable for this branch.",
+        )
+
+    if auto_pull:
+        pull_result = _run_git_sync_command(repo, "pull", "--ff-only")
+        if pull_result.returncode != 0:
+            pull_error = _extract_git_process_error(pull_result, "git pull --ff-only failed")
+            detail = f"Auto-pull failed: {pull_error}"
+            if stash_created:
+                detail += " Local changes were stashed before pull."
+            add_check(
+                key="auto_pull",
+                label="Auto-pull latest commits",
+                status="fail",
+                detail=detail,
+            )
+            issue = "Git pre-flight auto-pull failed."
+            if stash_created:
+                issue += " Local changes were stashed; use 'git stash list' to review."
+            issues.append(issue)
+        else:
+            add_check(
+                key="auto_pull",
+                label="Auto-pull latest commits",
+                status="pass",
+                detail="Auto-pull succeeded with fast-forward-only mode.",
+            )
+            actions.append("Pulled latest commits before run.")
+    else:
+        add_check(
+            key="auto_pull",
+            label="Auto-pull latest commits",
+            status="skip",
+            detail="Auto-pull is disabled.",
+        )
+
+    if not issues:
+        status_after = _git_sync_status_core_payload(repo)
+
+    return {
+        "ok": len(issues) == 0,
+        "repo_path": str(repo),
+        "auto_stash": auto_stash,
+        "auto_pull": auto_pull,
+        "branch": branch,
+        "tracking_branch": tracking_branch,
+        "tracking_remote": tracking_remote,
+        "stash_created": stash_created,
+        "stash_ref": stash_ref,
+        "stash_ref_before": stash_before,
+        "checks": checks,
+        "issues": issues,
+        "warnings": warnings,
+        "actions": actions,
+        "status_before": status_before,
+        "status_after": status_after,
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
 
 
 def _list_git_remote_branches(remote_url: str) -> tuple[list[str], str]:
@@ -6662,6 +6972,26 @@ def api_pipeline_start():
         msg = "Preflight checks failed:\n" + "\n".join(f"- {i}" for i in issues)
         return jsonify({"error": msg, "issues": issues}), 400
 
+    git_preflight: dict[str, object] | None = None
+    if gui_config.git_preflight_enabled:
+        try:
+            git_preflight = _git_preflight_before_run(
+                Path(gui_config.repo_path).resolve(),
+                auto_stash=bool(gui_config.git_preflight_auto_stash),
+                auto_pull=bool(gui_config.git_preflight_auto_pull),
+            )
+        except subprocess.TimeoutExpired:
+            return jsonify({"error": "Git pre-flight checks timed out."}), 504
+        except RuntimeError as exc:
+            return jsonify({"error": f"Git pre-flight checks failed: {exc}"}), 502
+        except Exception as exc:
+            return jsonify({"error": f"Git pre-flight checks failed: {exc}"}), 500
+
+        git_issues = [str(item) for item in git_preflight.get("issues", []) if str(item).strip()]
+        if git_issues:
+            msg = "Git pre-flight checks failed:\n" + "\n".join(f"- {i}" for i in git_issues)
+            return jsonify({"error": msg, "issues": git_issues, "git_preflight": git_preflight}), 400
+
     # Convert GUI config to pipeline config
     from codex_manager.pipeline.phases import PhaseConfig, PipelineConfig, PipelinePhase
 
@@ -6748,7 +7078,10 @@ def api_pipeline_start():
         config=config,
     )
     _pipeline_executor.start()
-    return jsonify({"status": "started"})
+    payload: dict[str, object] = {"status": "started"}
+    if git_preflight is not None:
+        payload["git_preflight"] = git_preflight
+    return jsonify(payload)
 
 
 @app.route("/api/pipeline/stop", methods=["POST"])

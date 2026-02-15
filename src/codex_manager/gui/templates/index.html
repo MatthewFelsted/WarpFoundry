@@ -1068,6 +1068,18 @@ body.mode-medium .easy-only{display:none}
         <button data-mode="apply" onclick="setMode('apply')">&#128295; Apply</button>
       </div>
     </div>
+    <div class="form-row">
+      <label><input type="checkbox" id="chain-git-preflight-enabled" onchange="toggleChainGitPreflight()"> Pre-flight before run (git checks)</label>
+      <div class="field-help">Checks clean/stash state, branch tracking, and remote reachability before starting.</div>
+    </div>
+    <div id="chain-git-preflight-options" class="option-subpanel hidden">
+      <div class="form-row">
+        <label><input type="checkbox" id="chain-git-preflight-auto-stash" onchange="syncChainGitPreflightOptions()"> Auto-stash dirty changes before run</label>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="chain-git-preflight-auto-pull" onchange="syncChainGitPreflightOptions()"> Auto-pull latest commits (`git pull --ff-only`)</label>
+      </div>
+    </div>
   </div>
 
   <!-- Recipe Picker (Easy mode only) -->
@@ -1517,6 +1529,18 @@ body.mode-medium .easy-only{display:none}
       <div class="mode-toggle" id="pipe-mode-toggle">
         <button class="active" data-mode="dry-run" onclick="setPipeMode('dry-run')">&#128269; Dry Run</button>
         <button data-mode="apply" onclick="setPipeMode('apply')">&#128295; Apply</button>
+      </div>
+    </div>
+    <div class="form-row">
+      <label><input type="checkbox" id="pipe-git-preflight-enabled" onchange="togglePipeGitPreflight()"> Pre-flight before run (git checks)</label>
+      <div class="field-help">Checks clean/stash state, branch tracking, and remote reachability before starting.</div>
+    </div>
+    <div id="pipe-git-preflight-options" class="option-subpanel hidden">
+      <div class="form-row">
+        <label><input type="checkbox" id="pipe-git-preflight-auto-stash" onchange="syncPipeGitPreflightOptions()"> Auto-stash dirty changes before run</label>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="pipe-git-preflight-auto-pull" onchange="syncPipeGitPreflightOptions()"> Auto-pull latest commits (`git pull --ff-only`)</label>
       </div>
     </div>
   </div>
@@ -2584,6 +2608,9 @@ const config = {
   vector_memory_backend: 'chroma',
   vector_memory_collection: '',
   vector_memory_top_k: 8,
+  git_preflight_enabled: false,
+  git_preflight_auto_stash: false,
+  git_preflight_auto_pull: false,
   timeout_per_step: 0,
   parallel_execution: false,
   brain_enabled: false,
@@ -6601,6 +6628,31 @@ function setMode(mode) {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
 }
+
+function syncChainGitPreflightOptions() {
+  const enabledEl = document.getElementById('chain-git-preflight-enabled');
+  const stashEl = document.getElementById('chain-git-preflight-auto-stash');
+  const pullEl = document.getElementById('chain-git-preflight-auto-pull');
+  const enabled = !!(enabledEl && enabledEl.checked);
+  config.git_preflight_enabled = enabled;
+  config.git_preflight_auto_stash = !!(enabled && stashEl && stashEl.checked);
+  config.git_preflight_auto_pull = !!(enabled && pullEl && pullEl.checked);
+}
+
+function toggleChainGitPreflight() {
+  const enabledEl = document.getElementById('chain-git-preflight-enabled');
+  const optionsEl = document.getElementById('chain-git-preflight-options');
+  const stashEl = document.getElementById('chain-git-preflight-auto-stash');
+  const pullEl = document.getElementById('chain-git-preflight-auto-pull');
+  const enabled = !!(enabledEl && enabledEl.checked);
+  if (optionsEl) optionsEl.classList.toggle('hidden', !enabled);
+  if (!enabled) {
+    if (stashEl) stashEl.checked = false;
+    if (pullEl) pullEl.checked = false;
+  }
+  syncChainGitPreflightOptions();
+}
+
 function _normalizedTimeoutSeconds(rawValue, fallbackSeconds) {
   const parsed = Number(rawValue);
   if (!Number.isFinite(parsed) || parsed <= 0) return 0;
@@ -7472,6 +7524,14 @@ async function startChain() {
   config.vector_memory_backend = document.getElementById('chain-vector-memory-backend').value;
   config.vector_memory_collection = document.getElementById('chain-vector-memory-collection').value.trim();
   config.vector_memory_top_k = parseInt(document.getElementById('chain-vector-memory-top-k').value, 10) || 8;
+  config.git_preflight_enabled = document.getElementById('chain-git-preflight-enabled').checked;
+  config.git_preflight_auto_stash = document.getElementById('chain-git-preflight-auto-stash').checked;
+  config.git_preflight_auto_pull = document.getElementById('chain-git-preflight-auto-pull').checked;
+  if (!config.git_preflight_enabled) {
+    config.git_preflight_auto_stash = false;
+    config.git_preflight_auto_pull = false;
+  }
+  toggleChainGitPreflight();
   normalizeCodexPermissions(config);
   normalizeCapabilitySettings(config);
   syncChainPermissionControlsFromConfig();
@@ -7543,6 +7603,17 @@ async function startChain() {
   refreshChainOutputs(false);
   if ((config.mode || 'dry-run') === 'dry-run') {
     toast('SAFE MODE ACTIVE: Dry Run is enabled. Changes are evaluated and then reverted.', 'info');
+  }
+  const gitPreflight = (resp && typeof resp.git_preflight === 'object') ? resp.git_preflight : null;
+  if (gitPreflight) {
+    const actions = Array.isArray(gitPreflight.actions) ? gitPreflight.actions : [];
+    const warnings = Array.isArray(gitPreflight.warnings) ? gitPreflight.warnings : [];
+    if (actions.length) {
+      toast('Git pre-flight: ' + actions.join(' | '), 'info');
+    }
+    if (warnings.length) {
+      toast('Git pre-flight warnings: ' + warnings.join(' | '), 'warn');
+    }
   }
   toast('Chain started', 'success');
 }
@@ -8160,7 +8231,11 @@ function applyConfig(data) {
   document.getElementById('brain-enabled').checked = !!config.brain_enabled;
   document.getElementById('brain-model').value = config.brain_model || 'gpt-5.2';
   document.getElementById('local-only').checked = !!config.local_only;
+  document.getElementById('chain-git-preflight-enabled').checked = !!config.git_preflight_enabled;
+  document.getElementById('chain-git-preflight-auto-stash').checked = !!config.git_preflight_auto_stash;
+  document.getElementById('chain-git-preflight-auto-pull').checked = !!config.git_preflight_auto_pull;
   setMode(config.mode || 'dry-run');
+  toggleChainGitPreflight();
   toggleUnlimited();
   toggleBrain();
   toggleLocalOnly();
@@ -8206,6 +8281,14 @@ async function saveConfig() {
   config.vector_memory_backend = document.getElementById('chain-vector-memory-backend').value;
   config.vector_memory_collection = document.getElementById('chain-vector-memory-collection').value.trim();
   config.vector_memory_top_k = parseInt(document.getElementById('chain-vector-memory-top-k').value, 10) || 8;
+  config.git_preflight_enabled = document.getElementById('chain-git-preflight-enabled').checked;
+  config.git_preflight_auto_stash = document.getElementById('chain-git-preflight-auto-stash').checked;
+  config.git_preflight_auto_pull = document.getElementById('chain-git-preflight-auto-pull').checked;
+  if (!config.git_preflight_enabled) {
+    config.git_preflight_auto_stash = false;
+    config.git_preflight_auto_pull = false;
+  }
+  toggleChainGitPreflight();
   normalizeCodexPermissions(config);
   normalizeCapabilitySettings(config);
   syncChainPermissionControlsFromConfig();
@@ -8609,6 +8692,9 @@ const pipeConfig = {
   deep_research_google_model: 'gemini-3-pro-preview',
   self_improvement_enabled: false,
   self_improvement_auto_restart: false,
+  git_preflight_enabled: false,
+  git_preflight_auto_stash: false,
+  git_preflight_auto_pull: false,
   timeout_per_phase: 0,
   // Git settings
   auto_commit: true,
@@ -8651,11 +8737,15 @@ function applyPipeConfigToUi() {
   document.getElementById('pipe-test-cmd').value = pipeConfig.test_cmd || '';
   document.getElementById('pipe-codex-bin').value = pipeConfig.codex_binary || 'codex';
   document.getElementById('pipe-claude-bin').value = pipeConfig.claude_binary || 'claude';
+  document.getElementById('pipe-git-preflight-enabled').checked = !!pipeConfig.git_preflight_enabled;
+  document.getElementById('pipe-git-preflight-auto-stash').checked = !!pipeConfig.git_preflight_auto_stash;
+  document.getElementById('pipe-git-preflight-auto-pull').checked = !!pipeConfig.git_preflight_auto_pull;
   pipeConfig.timeout_per_phase = _normalizedTimeoutSeconds(pipeConfig.timeout_per_phase, 600);
   syncPipelinePermissionControlsFromConfig();
   syncPipelineCapabilityControlsFromConfig();
   syncPipeTimeoutControlsFromConfig();
   setPipeMode(pipeConfig.mode || 'dry-run');
+  togglePipeGitPreflight();
   togglePipeUnlimited();
   togglePipeScience();
   togglePipeCUA();
@@ -8934,6 +9024,30 @@ function setPipeMode(mode) {
   });
 }
 
+function syncPipeGitPreflightOptions() {
+  const enabledEl = document.getElementById('pipe-git-preflight-enabled');
+  const stashEl = document.getElementById('pipe-git-preflight-auto-stash');
+  const pullEl = document.getElementById('pipe-git-preflight-auto-pull');
+  const enabled = !!(enabledEl && enabledEl.checked);
+  pipeConfig.git_preflight_enabled = enabled;
+  pipeConfig.git_preflight_auto_stash = !!(enabled && stashEl && stashEl.checked);
+  pipeConfig.git_preflight_auto_pull = !!(enabled && pullEl && pullEl.checked);
+}
+
+function togglePipeGitPreflight() {
+  const enabledEl = document.getElementById('pipe-git-preflight-enabled');
+  const optionsEl = document.getElementById('pipe-git-preflight-options');
+  const stashEl = document.getElementById('pipe-git-preflight-auto-stash');
+  const pullEl = document.getElementById('pipe-git-preflight-auto-pull');
+  const enabled = !!(enabledEl && enabledEl.checked);
+  if (optionsEl) optionsEl.classList.toggle('hidden', !enabled);
+  if (!enabled) {
+    if (stashEl) stashEl.checked = false;
+    if (pullEl) pullEl.checked = false;
+  }
+  syncPipeGitPreflightOptions();
+}
+
 let pipeRepoTimeout;
 function validatePipeRepo() {
   clearTimeout(pipeRepoTimeout);
@@ -9162,9 +9276,17 @@ async function startPipeline() {
   pipeConfig.deep_research_google_model = document.getElementById('pipe-deep-research-google-model').value.trim();
   pipeConfig.self_improvement_enabled = document.getElementById('pipe-self-improvement-enabled').checked;
   pipeConfig.self_improvement_auto_restart = document.getElementById('pipe-self-improvement-auto-restart').checked;
+  pipeConfig.git_preflight_enabled = document.getElementById('pipe-git-preflight-enabled').checked;
+  pipeConfig.git_preflight_auto_stash = document.getElementById('pipe-git-preflight-auto-stash').checked;
+  pipeConfig.git_preflight_auto_pull = document.getElementById('pipe-git-preflight-auto-pull').checked;
   if (!pipeConfig.self_improvement_enabled) {
     pipeConfig.self_improvement_auto_restart = false;
   }
+  if (!pipeConfig.git_preflight_enabled) {
+    pipeConfig.git_preflight_auto_stash = false;
+    pipeConfig.git_preflight_auto_pull = false;
+  }
+  togglePipeGitPreflight();
   normalizeCodexPermissions(pipeConfig);
   normalizeCapabilitySettings(pipeConfig);
   syncPipelinePermissionControlsFromConfig();
@@ -9240,6 +9362,17 @@ async function startPipeline() {
   startPipePolling();
   if ((pipeConfig.mode || 'dry-run') === 'dry-run') {
     toast('SAFE MODE ACTIVE: Dry Run is enabled. Changes are evaluated and then reverted.', 'info');
+  }
+  const gitPreflight = (resp && typeof resp.git_preflight === 'object') ? resp.git_preflight : null;
+  if (gitPreflight) {
+    const actions = Array.isArray(gitPreflight.actions) ? gitPreflight.actions : [];
+    const warnings = Array.isArray(gitPreflight.warnings) ? gitPreflight.warnings : [];
+    if (actions.length) {
+      toast('Git pre-flight: ' + actions.join(' | '), 'info');
+    }
+    if (warnings.length) {
+      toast('Git pre-flight warnings: ' + warnings.join(' | '), 'warn');
+    }
   }
   toast('Pipeline started', 'success');
 }

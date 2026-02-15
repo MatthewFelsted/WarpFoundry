@@ -75,6 +75,10 @@ class ChainConfig(BaseModel):
     vector_memory_backend: VectorMemoryBackend = "chroma"
     vector_memory_collection: str = ""
     vector_memory_top_k: int = 8
+    # Optional git readiness checks before starting a run.
+    git_preflight_enabled: bool = False
+    git_preflight_auto_stash: bool = False
+    git_preflight_auto_pull: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_step: int = 0
     parallel_execution: bool = False  # run independent steps concurrently
@@ -233,6 +237,10 @@ class PipelineGUIConfig(BaseModel):
     deep_research_google_model: str = "gemini-3-pro-preview"
     self_improvement_enabled: bool = False
     self_improvement_auto_restart: bool = False
+    # Optional git readiness checks before starting a run.
+    git_preflight_enabled: bool = False
+    git_preflight_auto_stash: bool = False
+    git_preflight_auto_pull: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_phase: int = 0
 
