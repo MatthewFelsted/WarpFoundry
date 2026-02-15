@@ -1,4 +1,4 @@
-﻿"""Flask web application - serves the GUI and provides API endpoints."""
+"""Flask web application - serves the GUI and provides API endpoints."""
 
 from __future__ import annotations
 
@@ -899,7 +899,7 @@ def _suggest_todo_wishlist_markdown(
 
     try:
         raw = connect(
-            model=str(model or "gpt-5.3").strip() or "gpt-5.3",
+            model=str(model or "gpt-5.2").strip() or "gpt-5.2",
             prompt=prompt,
             text_only=True,
             operation="todo_wishlist_suggest",
@@ -1179,8 +1179,8 @@ with suppress(Exception):
 
 
 _FOUNDATION_ASSISTANT_MODEL: dict[str, str] = {
-    "codex": "gpt-5.3",
-    "openai": "gpt-5.3",
+    "codex": "gpt-5.2",
+    "openai": "gpt-5.2",
     "google": "gemini-3-pro-preview",
     "claude": "claude-opus-4-6",
 }
@@ -2267,12 +2267,22 @@ def api_ollama_models():
 def api_validate_repo():
     data = request.get_json(silent=True) or {}
     raw_path = str(data.get("path") or "").strip()
+    def _repo_has_vector_memory(repo_path: Path) -> bool:
+        memory_root = repo_path / ".codex_manager" / "memory"
+        return (
+            (memory_root / "vector_db").is_dir()
+            or (memory_root / "vector_events.jsonl").is_file()
+            or (memory_root / "deep_research_cache.jsonl").is_file()
+        )
+
     if not raw_path:
         return jsonify(
             {
                 "exists": False,
                 "is_git": False,
                 "path": "",
+                "vector_memory_detected": False,
+                "vector_memory_path": "",
             }
         )
     try:
@@ -2283,13 +2293,20 @@ def api_validate_repo():
                 "exists": False,
                 "is_git": False,
                 "path": raw_path,
+                "vector_memory_detected": False,
+                "vector_memory_path": "",
             }
         )
+    exists = p.is_dir()
+    resolved = p.resolve() if exists else p
+    vector_memory_path = str(resolved / ".codex_manager" / "memory" / "vector_db")
     return jsonify(
         {
-            "exists": p.is_dir(),
-            "is_git": (p / ".git").is_dir(),
-            "path": str(p.resolve()) if p.is_dir() else raw_path,
+            "exists": exists,
+            "is_git": (resolved / ".git").is_dir() if exists else False,
+            "path": str(resolved) if exists else raw_path,
+            "vector_memory_detected": _repo_has_vector_memory(resolved) if exists else False,
+            "vector_memory_path": vector_memory_path if exists else "",
         }
     )
 
@@ -2514,7 +2531,7 @@ def api_owner_todo_wishlist_suggest():
     repo_raw = str(data.get("repo_path") or "").strip()
     owner_context = str(data.get("owner_context") or "").strip()
     existing_markdown = str(data.get("existing_markdown") or "").strip()
-    model = str(data.get("model") or "gpt-5.3").strip() or "gpt-5.3"
+    model = str(data.get("model") or "gpt-5.2").strip() or "gpt-5.2"
     if not repo_raw:
         return jsonify({"error": "repo_path is required."}), 400
     repo = Path(repo_raw).expanduser().resolve()

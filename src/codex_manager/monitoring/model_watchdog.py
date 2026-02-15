@@ -423,7 +423,7 @@ class ModelCatalogWatchdog:
             return sorted(family_matches)[-1]
 
         provider_hints: dict[str, tuple[str, ...]] = {
-            "openai": ("gpt-5.3", "gpt-5", "gpt-4.1"),
+            "openai": ("gpt-5.2", "gpt-5", "gpt-4.1"),
             "anthropic": ("claude-opus-4-6", "claude-sonnet-4"),
             "google": ("gemini-3", "gemini-2.5"),
             "xai": ("grok-4", "grok-3"),

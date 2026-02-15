@@ -80,7 +80,7 @@ class ChainConfig(BaseModel):
 
     # Brain (thinking layer)
     brain_enabled: bool = False
-    brain_model: str = "gpt-5.3"
+    brain_model: str = "gpt-5.2"
 
     # Local-only mode — force all AI calls through Ollama
     local_only: bool = False
@@ -187,7 +187,7 @@ class PipelineGUIConfig(BaseModel):
     agent: str = "codex"
     science_enabled: bool = False
     brain_enabled: bool = False
-    brain_model: str = "gpt-5.3"
+    brain_model: str = "gpt-5.2"
     phases: list[PipelinePhaseGUI] = Field(default_factory=list)
 
     # Stop conditions (consistent with ChainConfig)
@@ -225,7 +225,7 @@ class PipelineGUIConfig(BaseModel):
     deep_research_daily_quota: int = 8
     deep_research_max_provider_tokens: int = 12000
     deep_research_budget_usd: float = 5.0
-    deep_research_openai_model: str = "gpt-5.3"
+    deep_research_openai_model: str = "gpt-5.2"
     deep_research_google_model: str = "gemini-3-pro-preview"
     self_improvement_enabled: bool = False
     self_improvement_auto_restart: bool = False
@@ -271,7 +271,7 @@ class PipelineGUIConfig(BaseModel):
         )
         self.deep_research_budget_usd = max(0.0, float(self.deep_research_budget_usd or 5.0))
         self.deep_research_openai_model = (
-            str(self.deep_research_openai_model or "gpt-5.3").strip() or "gpt-5.3"
+            str(self.deep_research_openai_model or "gpt-5.2").strip() or "gpt-5.2"
         )
         self.deep_research_google_model = (
             str(self.deep_research_google_model or "gemini-3-pro-preview").strip()

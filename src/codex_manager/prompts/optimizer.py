@@ -2,7 +2,7 @@
 
 Usage::
 
-    python -m codex_manager optimize-prompts [--model gpt-5.3] [--dry-run]
+    python -m codex_manager optimize-prompts [--model gpt-5.2] [--dry-run]
 
 This is a one-time (or occasional) process.  The optimizer:
 1. Loads all prompts from the catalog
@@ -54,7 +54,7 @@ class PromptOptimizer:
 
     def __init__(
         self,
-        model: str = "gpt-5.3",
+        model: str = "gpt-5.2",
         threshold: float = 7.5,
         catalog: PromptCatalog | None = None,
     ) -> None:

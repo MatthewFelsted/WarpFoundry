@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -951,7 +951,7 @@ body.mode-medium .easy-only{display:none}
         <label>Brain Model <span style="font-size:10px;color:var(--text2);font-weight:400;margin-left:4px">Expert</span></label>
         <select id="brain-model" title="AI model used for planning and evaluating step results.">
           <optgroup label="OpenAI" class="cloud-model-group">
-            <option value="gpt-5.3">GPT-5.3</option>
+            <option value="gpt-5.2">GPT-5.2</option>
             <option value="gpt-4.1">GPT-4.1</option>
             <option value="gpt-4o">GPT-4o</option>
           </optgroup>
@@ -1394,7 +1394,7 @@ body.mode-medium .easy-only{display:none}
         <label>Brain Model</label>
         <select id="pipe-brain-model">
           <optgroup label="OpenAI" class="cloud-model-group">
-            <option value="gpt-5.3">GPT-5.3</option>
+            <option value="gpt-5.2">GPT-5.2</option>
             <option value="gpt-4.1">GPT-4.1</option>
           </optgroup>
           <optgroup label="Anthropic" class="cloud-model-group">
@@ -1569,7 +1569,7 @@ body.mode-medium .easy-only{display:none}
           <div class="form-row-inline">
             <div class="form-row">
               <label>OpenAI Deep Research Model</label>
-              <input type="text" id="pipe-deep-research-openai-model" value="gpt-5.3">
+              <input type="text" id="pipe-deep-research-openai-model" value="gpt-5.2">
             </div>
             <div class="form-row">
               <label>Google Deep Research Model</label>
@@ -1812,7 +1812,7 @@ body.mode-medium .easy-only{display:none}
       <div class="form-row">
         <label>Suggestion Model</label>
         <select id="todo-wishlist-model">
-          <option value="gpt-5.3">GPT-5.3</option>
+          <option value="gpt-5.2">GPT-5.2</option>
           <option value="claude-opus-4-6">Claude Opus 4.6</option>
           <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
           <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast</option>
@@ -1998,7 +1998,7 @@ const config = {
   timeout_per_step: 0,
   parallel_execution: false,
   brain_enabled: false,
-  brain_model: 'gpt-5.3',
+  brain_model: 'gpt-5.2',
   local_only: false,
 };
 const DEFAULT_CHAIN_CONFIG = cloneState(config);
@@ -2033,6 +2033,7 @@ let watchdogAlertsTimer = null;
 let watchdogAlertsMutedUntil = 0;
 let watchdogAlertDigest = '';
 let watchdogMigrationSuggestions = [];
+const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
 
@@ -2185,7 +2186,7 @@ function normalizeCapabilitySettings(cfg) {
     Math.max(512, parseInt(cfg.deep_research_max_provider_tokens, 10) || 12000),
   );
   cfg.deep_research_budget_usd = Math.max(0, parseFloat(cfg.deep_research_budget_usd) || 5.0);
-  cfg.deep_research_openai_model = String(cfg.deep_research_openai_model || 'gpt-5.3').trim() || 'gpt-5.3';
+  cfg.deep_research_openai_model = String(cfg.deep_research_openai_model || 'gpt-5.2').trim() || 'gpt-5.2';
   cfg.deep_research_google_model = String(cfg.deep_research_google_model || 'gemini-3-pro-preview').trim() || 'gemini-3-pro-preview';
 }
 
@@ -2224,7 +2225,7 @@ function syncPipelineCapabilityControlsFromConfig() {
   document.getElementById('pipe-deep-research-daily-quota').value = pipeConfig.deep_research_daily_quota || 8;
   document.getElementById('pipe-deep-research-max-provider-tokens').value = pipeConfig.deep_research_max_provider_tokens || 12000;
   document.getElementById('pipe-deep-research-budget-usd').value = pipeConfig.deep_research_budget_usd || 5.0;
-  document.getElementById('pipe-deep-research-openai-model').value = pipeConfig.deep_research_openai_model || 'gpt-5.3';
+  document.getElementById('pipe-deep-research-openai-model').value = pipeConfig.deep_research_openai_model || 'gpt-5.2';
   document.getElementById('pipe-deep-research-google-model').value = pipeConfig.deep_research_google_model || 'gemini-3-pro-preview';
   document.getElementById('pipe-self-improvement-enabled').checked = !!pipeConfig.self_improvement_enabled;
   document.getElementById('pipe-self-improvement-auto-restart').checked = !!pipeConfig.self_improvement_auto_restart;
@@ -3154,7 +3155,7 @@ async function suggestTodoWishlist() {
   }
   const existing = String(document.getElementById('todo-wishlist-content').value || '').trim();
   const ownerContext = String(document.getElementById('todo-wishlist-context').value || '').trim();
-  const model = String(document.getElementById('todo-wishlist-model').value || 'gpt-5.3').trim() || 'gpt-5.3';
+  const model = String(document.getElementById('todo-wishlist-model').value || 'gpt-5.2').trim() || 'gpt-5.2';
   _setTodoWishlistStatus('Generating suggestions...', 'muted');
   try {
     const resp = await postJson('/api/owner/todo-wishlist/suggest', {
@@ -4327,6 +4328,32 @@ async function refreshDiagnostics(target, opts) {
 }
 
 let repoTimeout;
+function maybeAutoEnableVectorMemory(target, payload) {
+  if (!payload || !payload.vector_memory_detected) return;
+  const repoPath = String(payload.path || '').trim();
+  if (!repoPath) return;
+
+  let enabledNow = false;
+  if (target === 'pipeline') {
+    if (!pipeConfig.vector_memory_enabled) {
+      pipeConfig.vector_memory_enabled = true;
+      syncPipelineCapabilityControlsFromConfig();
+      enabledNow = true;
+    }
+  } else {
+    if (!config.vector_memory_enabled) {
+      config.vector_memory_enabled = true;
+      syncChainCapabilityControlsFromConfig();
+      enabledNow = true;
+    }
+  }
+
+  if (enabledNow && _autoVectorMemoryNotified[target] !== repoPath) {
+    toast('Detected existing vector memory for this repository and enabled it automatically.', 'info');
+    _autoVectorMemoryNotified[target] = repoPath;
+  }
+}
+
 function validateRepo() {
   clearTimeout(repoTimeout);
   const path = document.getElementById('repo-path').value.trim();
@@ -4341,10 +4368,12 @@ function validateRepo() {
   repoTimeout = setTimeout(async () => {
     try {
       const r = await postJson('/api/validate-repo', {path});
+      if (path !== document.getElementById('repo-path').value.trim()) return;
       const el = document.getElementById('repo-status');
       if (r.is_git)       { el.textContent = '\u2705'; el.title = 'Valid git repo'; }
       else if (r.exists)  { el.textContent = '\u26a0\ufe0f'; el.title = 'Directory exists but not a git repo'; }
       else                { el.textContent = '\u274c'; el.title = 'Path not found'; }
+      maybeAutoEnableVectorMemory('chain', r);
     } catch(e) { /* ignore */ }
   }, 400);
 }
@@ -5267,7 +5296,7 @@ function applyConfig(data) {
   syncChainTimeoutControlsFromConfig();
   document.getElementById('parallel-exec').checked = !!config.parallel_execution;
   document.getElementById('brain-enabled').checked = !!config.brain_enabled;
-  document.getElementById('brain-model').value = config.brain_model || 'gpt-5.3';
+  document.getElementById('brain-model').value = config.brain_model || 'gpt-5.2';
   document.getElementById('local-only').checked = !!config.local_only;
   setMode(config.mode || 'dry-run');
   toggleUnlimited();
@@ -5430,7 +5459,7 @@ function resetTodoWishlistForm() {
   document.getElementById('todo-wishlist-repo').value = repo;
   document.getElementById('todo-wishlist-content').value = '';
   document.getElementById('todo-wishlist-context').value = '';
-  document.getElementById('todo-wishlist-model').value = 'gpt-5.3';
+  document.getElementById('todo-wishlist-model').value = 'gpt-5.2';
   lastTodoWishlistSuggestion = '';
   _setTodoWishlistStatus('', 'muted');
   hideTodoWishlistModal();
@@ -5625,7 +5654,7 @@ const pipeConfig = {
   cua_target_url: '',
   cua_task: '',
   brain_enabled: false,
-  brain_model: 'gpt-5.3',
+  brain_model: 'gpt-5.2',
   phases: [],
   // Stop conditions (consistent with chain builder)
   max_time_minutes: 240,
@@ -5659,7 +5688,7 @@ const pipeConfig = {
   deep_research_daily_quota: 8,
   deep_research_max_provider_tokens: 12000,
   deep_research_budget_usd: 5.0,
-  deep_research_openai_model: 'gpt-5.3',
+  deep_research_openai_model: 'gpt-5.2',
   deep_research_google_model: 'gemini-3-pro-preview',
   self_improvement_enabled: false,
   self_improvement_auto_restart: false,
@@ -5697,7 +5726,7 @@ function applyPipeConfigToUi() {
   cuaStatus.textContent = '';
   cuaStatus.style.color = 'var(--text2)';
   document.getElementById('pipe-brain').checked = !!pipeConfig.brain_enabled;
-  document.getElementById('pipe-brain-model').value = pipeConfig.brain_model || 'gpt-5.3';
+  document.getElementById('pipe-brain-model').value = pipeConfig.brain_model || 'gpt-5.2';
   document.getElementById('pipe-local-only').checked = !!pipeConfig.local_only;
   document.getElementById('pipe-auto-commit').checked = pipeConfig.auto_commit !== false;
   document.getElementById('pipe-commit-freq').value = pipeConfig.commit_frequency || 'per_phase';
@@ -5988,10 +6017,12 @@ function validatePipeRepo() {
   pipeRepoTimeout = setTimeout(async () => {
     try {
       const r = await postJson('/api/validate-repo', {path});
+      if (path !== document.getElementById('pipe-repo-path').value.trim()) return;
       const el = document.getElementById('pipe-repo-status');
       if (r.is_git)      { el.textContent = '\u2705'; el.title = 'Valid git repo'; }
       else if (r.exists)  { el.textContent = '\u26a0\ufe0f'; el.title = 'Not a git repo'; }
       else                { el.textContent = '\u274c'; el.title = 'Path not found'; }
+      maybeAutoEnableVectorMemory('pipeline', r);
     } catch(e) {}
   }, 400);
 }

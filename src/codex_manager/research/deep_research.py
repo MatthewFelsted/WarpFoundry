@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
 _DEFAULT_TIMEOUT_SECONDS = 45
-_DEFAULT_OPENAI_MODEL = "gpt-5.3"
+_DEFAULT_OPENAI_MODEL = "gpt-5.2"
 _DEFAULT_GOOGLE_MODEL = "gemini-3-pro-preview"
 _DEFAULT_BLOCKED_SOURCE_DOMAINS = frozenset(
     {
