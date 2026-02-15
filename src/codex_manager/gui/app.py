@@ -83,6 +83,7 @@ _pipeline_executor = None  # lazy init
 
 # Saved chain-config directory
 CONFIGS_DIR = Path.home() / ".codex_manager" / "chains"
+WORKSPACE_REPOS_PATH = Path.home() / ".codex_manager" / "workspace" / "repos.json"
 _CONFIG_NAME_ALLOWED_CHARS = frozenset(string.ascii_letters + string.digits + "-_ ")
 _KNOWN_AGENTS = {"codex", "claude_code", "auto"}
 _DOCS_CATALOG: dict[str, tuple[str, str]] = {
@@ -7127,6 +7128,501 @@ def api_foundation_bootstrap_status():
 
 
 # â”€â”€ Config persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+# -- Workspace multi-repo management ------------------------------------------
+
+
+def _workspace_default_store() -> dict[str, object]:
+    """Return the default persisted multi-repo workspace payload."""
+    return {
+        "active_repo_path": "",
+        "repos": [],
+        "updated_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
+def _normalize_workspace_repo_path(raw_path: object) -> str:
+    """Normalize a user-supplied workspace repo path to an absolute path string."""
+    raw = str(raw_path or "").strip()
+    if not raw:
+        return ""
+    try:
+        return str(Path(raw).expanduser().resolve())
+    except Exception:
+        return ""
+
+
+def _normalize_workspace_repo_paths(raw_paths: object) -> list[str]:
+    """Normalize and deduplicate stored workspace repo paths."""
+    if not isinstance(raw_paths, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_paths:
+        repo_path = _normalize_workspace_repo_path(raw_value)
+        if not repo_path:
+            continue
+        key = repo_path.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(repo_path)
+    return normalized
+
+
+def _load_workspace_store() -> dict[str, object]:
+    """Load persisted workspace repo metadata from disk."""
+    defaults = _workspace_default_store()
+    path = WORKSPACE_REPOS_PATH
+    if not path.is_file():
+        return defaults
+    try:
+        payload = json.loads(_read_text_utf8_resilient(path))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not load workspace repo store %s: %s", path, exc)
+        return defaults
+
+    if not isinstance(payload, dict):
+        return defaults
+
+    repos = _normalize_workspace_repo_paths(payload.get("repos"))
+    active_repo = _normalize_workspace_repo_path(payload.get("active_repo_path"))
+    if active_repo and active_repo.casefold() not in {item.casefold() for item in repos}:
+        active_repo = ""
+    if not active_repo and repos:
+        active_repo = repos[0]
+
+    return {
+        "active_repo_path": active_repo,
+        "repos": repos,
+        "updated_at_epoch_ms": _safe_int(
+            payload.get("updated_at_epoch_ms"),
+            int(time.time() * 1000),
+        ),
+    }
+
+
+def _save_workspace_store(payload: dict[str, object]) -> dict[str, object]:
+    """Persist workspace repo metadata and return normalized payload."""
+    repos = _normalize_workspace_repo_paths(payload.get("repos"))
+    active_repo = _normalize_workspace_repo_path(payload.get("active_repo_path"))
+    repo_keys = {item.casefold() for item in repos}
+    if active_repo and active_repo.casefold() not in repo_keys:
+        active_repo = ""
+    if not active_repo and repos:
+        active_repo = repos[0]
+
+    normalized = {
+        "active_repo_path": active_repo,
+        "repos": repos,
+        "updated_at_epoch_ms": int(time.time() * 1000),
+    }
+    _write_json_file_atomic(WORKSPACE_REPOS_PATH, normalized)
+    return normalized
+
+
+def _workspace_remote_settings_defaults() -> dict[str, object]:
+    """Return default remote-settings payload for workspace rows."""
+    return {
+        "default_remote": "",
+        "default_remote_source": "none",
+        "tracking_remote": "",
+        "configured_default_remote": "",
+        "configured_default_missing": False,
+        "remote_names": [],
+    }
+
+
+def _workspace_recent_runs_defaults(message: str = "No recent runs found.") -> dict[str, object]:
+    """Return default recent-run summary payload for workspace rows."""
+    return {
+        "available": False,
+        "message": message,
+        "latest": None,
+        "count": 0,
+        "runs": [],
+    }
+
+
+def _git_workspace_remote_settings(repo: Path, *, tracking_remote: str) -> dict[str, object]:
+    """Return lightweight per-repo remote settings for workspace summaries."""
+    result = _run_git_sync_command(repo, "remote")
+    if result.returncode != 0:
+        raise RuntimeError(_extract_git_process_error(result, "git remote failed"))
+
+    names = sorted(
+        {raw.strip() for raw in str(result.stdout or "").splitlines() if raw.strip()},
+        key=lambda item: item.casefold(),
+    )
+    name_set = {item.casefold() for item in names}
+    configured_default_remote = _git_configured_push_default_remote(repo)
+    configured_default_key = configured_default_remote.casefold()
+    tracking_key = str(tracking_remote or "").strip().casefold()
+
+    default_remote = ""
+    default_source = "none"
+    if configured_default_remote and configured_default_key in name_set:
+        default_remote = configured_default_remote
+        default_source = "config"
+    elif tracking_key and tracking_key in name_set:
+        default_remote = next((item for item in names if item.casefold() == tracking_key), "")
+        default_source = "tracking"
+    elif "origin" in name_set:
+        default_remote = next((item for item in names if item.casefold() == "origin"), "origin")
+        default_source = "origin"
+
+    return {
+        "default_remote": default_remote,
+        "default_remote_source": default_source,
+        "tracking_remote": tracking_remote,
+        "configured_default_remote": configured_default_remote,
+        "configured_default_missing": bool(
+            configured_default_remote and configured_default_key not in name_set
+        ),
+        "remote_names": names,
+    }
+
+
+def _git_workspace_branch_choices(repo: Path) -> dict[str, object]:
+    """Return local/remote branch choices for workspace quick-checkout actions."""
+    branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch_result.returncode != 0:
+        raise RuntimeError(
+            _extract_git_process_error(branch_result, "git rev-parse --abbrev-ref HEAD failed")
+        )
+    current_branch = str(branch_result.stdout or "").strip() or "HEAD"
+
+    local_result = _run_git_sync_command(
+        repo,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+    )
+    if local_result.returncode != 0:
+        raise RuntimeError(_extract_git_process_error(local_result, "git for-each-ref refs/heads failed"))
+    local_branches = sorted(
+        {raw.strip() for raw in str(local_result.stdout or "").splitlines() if raw.strip()},
+        key=lambda item: item.casefold(),
+    )
+
+    remote_result = _run_git_sync_command(
+        repo,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/remotes",
+    )
+    if remote_result.returncode != 0:
+        raise RuntimeError(
+            _extract_git_process_error(remote_result, "git for-each-ref refs/remotes failed")
+        )
+    remote_branches = sorted(
+        {
+            raw.strip()
+            for raw in str(remote_result.stdout or "").splitlines()
+            if raw.strip() and raw.strip() != "HEAD" and not raw.strip().endswith("/HEAD")
+        },
+        key=lambda item: item.casefold(),
+    )
+
+    return {
+        "current_branch": current_branch,
+        "local_branches": local_branches,
+        "remote_branches": remote_branches,
+    }
+
+
+def _workspace_recent_runs_summary(repo: Path, *, limit: int) -> dict[str, object]:
+    """Return recent run summaries for a workspace repo entry."""
+    normalized_limit = min(12, max(1, int(limit or 3)))
+    comparison = _pipeline_run_comparison(repo, scope="all", limit=normalized_limit)
+    runs_raw = comparison.get("runs") if isinstance(comparison, dict) else []
+    runs: list[dict[str, object]] = []
+    if isinstance(runs_raw, list):
+        for raw_run in runs_raw:
+            if not isinstance(raw_run, dict):
+                continue
+            runs.append(
+                {
+                    "run_id": str(raw_run.get("run_id") or "").strip(),
+                    "scope": str(raw_run.get("scope") or "").strip(),
+                    "mode": str(raw_run.get("mode") or "").strip(),
+                    "finished_at": str(raw_run.get("finished_at") or "").strip(),
+                    "finished_at_epoch_ms": _safe_int(raw_run.get("finished_at_epoch_ms"), 0),
+                    "duration_seconds": _safe_float(raw_run.get("duration_seconds"), 0.0),
+                    "token_usage": _safe_int(raw_run.get("token_usage"), 0),
+                    "tests_summary": str(raw_run.get("tests_summary") or "").strip(),
+                    "stop_reason": str(raw_run.get("stop_reason") or "").strip(),
+                    "configuration": str(raw_run.get("configuration") or "").strip(),
+                }
+            )
+
+    latest = runs[0] if runs else None
+    return {
+        "available": bool(comparison.get("available")) if isinstance(comparison, dict) else False,
+        "message": str(comparison.get("message") or "").strip()
+        if isinstance(comparison, dict)
+        else "No recent runs found.",
+        "latest": latest,
+        "count": len(runs),
+        "runs": runs,
+    }
+
+
+def _workspace_repo_entry(
+    repo_path: str,
+    *,
+    include_branches: bool,
+    recent_runs_limit: int,
+) -> dict[str, object]:
+    """Build one workspace repository entry with sync/remotes/runs summaries."""
+    resolved = Path(repo_path).expanduser().resolve()
+    payload: dict[str, object] = {
+        "repo_path": str(resolved),
+        "name": resolved.name or str(resolved),
+        "exists": resolved.is_dir(),
+        "is_git": False,
+        "available": False,
+        "sync": None,
+        "remote_settings": _workspace_remote_settings_defaults(),
+        "recent_runs": _workspace_recent_runs_defaults(),
+        "errors": [],
+    }
+    if include_branches:
+        payload["branches"] = {
+            "current_branch": "",
+            "local_branches": [],
+            "remote_branches": [],
+        }
+
+    if not resolved.is_dir():
+        payload["errors"] = [f"Repository path not found: {resolved}"]
+        payload["recent_runs"] = _workspace_recent_runs_defaults(
+            "Repository path is unavailable on disk.",
+        )
+        return payload
+
+    probe = _run_git_sync_command(resolved, "rev-parse", "--is-inside-work-tree")
+    if probe.returncode != 0 or str(probe.stdout or "").strip().lower() != "true":
+        payload["errors"] = [f"Not a git repository: {resolved}"]
+        payload["recent_runs"] = _workspace_recent_runs_defaults(
+            "Directory exists, but is not a git repository.",
+        )
+        return payload
+
+    payload["is_git"] = True
+    try:
+        sync_payload = _git_sync_status_core_payload(resolved)
+        tracking_remote = str(sync_payload.get("tracking_remote") or "").strip()
+        payload["sync"] = sync_payload
+        payload["remote_settings"] = _git_workspace_remote_settings(
+            resolved,
+            tracking_remote=tracking_remote,
+        )
+        payload["recent_runs"] = _workspace_recent_runs_summary(
+            resolved,
+            limit=recent_runs_limit,
+        )
+        if include_branches:
+            payload["branches"] = _git_workspace_branch_choices(resolved)
+        payload["available"] = True
+    except subprocess.TimeoutExpired:
+        payload["errors"] = [f"Timed out while reading git metadata for {resolved}."]
+    except RuntimeError as exc:
+        payload["errors"] = [str(exc)]
+    except Exception as exc:
+        payload["errors"] = [str(exc)]
+    return payload
+
+
+def _workspace_payload(
+    *,
+    include_branches: bool,
+    recent_runs_limit: int,
+) -> dict[str, object]:
+    """Return full workspace payload including per-repo summaries."""
+    store = _load_workspace_store()
+    repo_paths = _normalize_workspace_repo_paths(store.get("repos"))
+    active_repo_path = _normalize_workspace_repo_path(store.get("active_repo_path"))
+    repo_keys = {item.casefold() for item in repo_paths}
+    if active_repo_path and active_repo_path.casefold() not in repo_keys:
+        active_repo_path = ""
+
+    repos = [
+        _workspace_repo_entry(
+            repo_path,
+            include_branches=include_branches,
+            recent_runs_limit=recent_runs_limit,
+        )
+        for repo_path in repo_paths
+    ]
+
+    available_count = sum(1 for entry in repos if bool(entry.get("available")))
+    return {
+        "active_repo_path": active_repo_path,
+        "repos": repos,
+        "total_repos": len(repos),
+        "available_repos": available_count,
+        "updated_at_epoch_ms": _safe_int(store.get("updated_at_epoch_ms"), int(time.time() * 1000)),
+    }
+
+
+@app.route("/api/workspace/repos")
+def api_workspace_repos():
+    """List workspace repositories with sync/remotes/recent-run summaries."""
+    include_branches = _safe_bool(request.args.get("include_branches"), default=False)
+    recent_runs_limit = _safe_int(request.args.get("recent_runs_limit"), 3)
+    recent_runs_limit = min(12, max(1, recent_runs_limit))
+    return jsonify(
+        _workspace_payload(
+            include_branches=include_branches,
+            recent_runs_limit=recent_runs_limit,
+        )
+    )
+
+
+@app.route("/api/workspace/repos/add", methods=["POST"])
+def api_workspace_repo_add():
+    """Add one git repository path to the persisted workspace list."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    include_branches = _safe_bool(data.get("include_branches"), default=True)
+    recent_runs_limit = min(12, max(1, _safe_int(data.get("recent_runs_limit"), 3)))
+    make_active = _safe_bool(data.get("make_active"), default=False)
+    normalized_repo_path = str(repo)
+
+    store = _load_workspace_store()
+    repos = _normalize_workspace_repo_paths(store.get("repos"))
+    repo_keys = {item.casefold() for item in repos}
+    was_added = normalized_repo_path.casefold() not in repo_keys
+    if was_added:
+        repos.append(normalized_repo_path)
+
+    active_repo_path = _normalize_workspace_repo_path(store.get("active_repo_path"))
+    if not active_repo_path and repos:
+        active_repo_path = repos[0]
+    if make_active:
+        active_repo_path = normalized_repo_path
+
+    saved = _save_workspace_store(
+        {
+            "repos": repos,
+            "active_repo_path": active_repo_path,
+        }
+    )
+    workspace = _workspace_payload(
+        include_branches=include_branches,
+        recent_runs_limit=recent_runs_limit,
+    )
+    return jsonify(
+        {
+            "status": "added" if was_added else "unchanged",
+            "repo_path": normalized_repo_path,
+            "active_repo_path": str(saved.get("active_repo_path") or ""),
+            "workspace": workspace,
+            "message": (
+                f"Added workspace repo: {normalized_repo_path}"
+                if was_added
+                else f"Workspace repo already exists: {normalized_repo_path}"
+            ),
+        }
+    )
+
+
+@app.route("/api/workspace/repos/remove", methods=["POST"])
+def api_workspace_repo_remove():
+    """Remove one repository path from the workspace list."""
+    data = request.get_json(silent=True) or {}
+    repo_path = _normalize_workspace_repo_path(data.get("repo_path"))
+    if not repo_path:
+        return jsonify({"error": "repo_path is required."}), 400
+
+    include_branches = _safe_bool(data.get("include_branches"), default=True)
+    recent_runs_limit = min(12, max(1, _safe_int(data.get("recent_runs_limit"), 3)))
+    store = _load_workspace_store()
+    repos = _normalize_workspace_repo_paths(store.get("repos"))
+
+    removed = False
+    filtered_repos: list[str] = []
+    target_key = repo_path.casefold()
+    for item in repos:
+        if item.casefold() == target_key:
+            removed = True
+            continue
+        filtered_repos.append(item)
+    if not removed:
+        return jsonify({"error": f"Workspace repo not found: {repo_path}"}), 404
+
+    active_repo_path = _normalize_workspace_repo_path(store.get("active_repo_path"))
+    if active_repo_path.casefold() == target_key:
+        active_repo_path = filtered_repos[0] if filtered_repos else ""
+
+    saved = _save_workspace_store(
+        {
+            "repos": filtered_repos,
+            "active_repo_path": active_repo_path,
+        }
+    )
+    workspace = _workspace_payload(
+        include_branches=include_branches,
+        recent_runs_limit=recent_runs_limit,
+    )
+    return jsonify(
+        {
+            "status": "removed",
+            "repo_path": repo_path,
+            "active_repo_path": str(saved.get("active_repo_path") or ""),
+            "workspace": workspace,
+            "message": f"Removed workspace repo: {repo_path}",
+        }
+    )
+
+
+@app.route("/api/workspace/repos/activate", methods=["POST"])
+def api_workspace_repo_activate():
+    """Set the active workspace repository path."""
+    data = request.get_json(silent=True) or {}
+    repo_path = _normalize_workspace_repo_path(data.get("repo_path"))
+    if not repo_path:
+        return jsonify({"error": "repo_path is required."}), 400
+
+    include_branches = _safe_bool(data.get("include_branches"), default=True)
+    recent_runs_limit = min(12, max(1, _safe_int(data.get("recent_runs_limit"), 3)))
+    add_if_missing = _safe_bool(data.get("add_if_missing"), default=False)
+    store = _load_workspace_store()
+    repos = _normalize_workspace_repo_paths(store.get("repos"))
+    repo_keys = {item.casefold() for item in repos}
+    if repo_path.casefold() not in repo_keys:
+        if not add_if_missing:
+            return jsonify({"error": f"Workspace repo not found: {repo_path}"}), 404
+        repo, error, status = _resolve_git_sync_repo(repo_path)
+        if repo is None:
+            return jsonify({"error": error}), status
+        repo_path = str(repo)
+        repos.append(repo_path)
+
+    saved = _save_workspace_store(
+        {
+            "repos": repos,
+            "active_repo_path": repo_path,
+        }
+    )
+    workspace = _workspace_payload(
+        include_branches=include_branches,
+        recent_runs_limit=recent_runs_limit,
+    )
+    return jsonify(
+        {
+            "status": "activated",
+            "repo_path": repo_path,
+            "active_repo_path": str(saved.get("active_repo_path") or ""),
+            "workspace": workspace,
+            "message": f"Active workspace repo set to {repo_path}",
+        }
+    )
 
 
 @app.route("/api/configs")

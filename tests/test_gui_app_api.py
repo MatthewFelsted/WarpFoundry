@@ -1462,6 +1462,159 @@ def test_configs_save_rejects_non_object_json(client, monkeypatch, tmp_path: Pat
     assert not (cfg_dir / "Listy.json").exists()
 
 
+def test_workspace_repo_endpoints_add_list_activate_remove_roundtrip(
+    client, monkeypatch, tmp_path: Path
+):
+    workspace_store = tmp_path / "workspace" / "repos.json"
+    monkeypatch.setattr(gui_app_module, "WORKSPACE_REPOS_PATH", workspace_store)
+
+    repo_a = tmp_path / "repo-a"
+    repo_a.mkdir(parents=True, exist_ok=True)
+    _run_git("init", "-b", "main", cwd=repo_a)
+    (repo_a / "README.md").write_text("repo-a\n", encoding="utf-8")
+    _run_git("add", "README.md", cwd=repo_a)
+    _run_git("config", "user.name", "Workspace Tests", cwd=repo_a)
+    _run_git("config", "user.email", "workspace-tests@example.com", cwd=repo_a)
+    _run_git("commit", "-m", "init", cwd=repo_a)
+
+    logs_dir = repo_a / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+    history_events = [
+        {
+            "id": "workspace_chain_start",
+            "timestamp": "2026-02-15T12:00:00+00:00",
+            "scope": "chain",
+            "event": "run_started",
+            "summary": "started",
+            "context": {
+                "mode": "apply",
+                "max_loops": 1,
+                "steps": ["one"],
+            },
+        },
+        {
+            "id": "workspace_chain_finish",
+            "timestamp": "2026-02-15T12:00:20+00:00",
+            "scope": "chain",
+            "event": "run_finished",
+            "summary": "finished",
+            "context": {
+                "stop_reason": "max_loops_reached",
+                "elapsed_seconds": 20,
+                "total_tokens": 111,
+            },
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(item) for item in history_events) + "\n",
+        encoding="utf-8",
+    )
+
+    repo_b = tmp_path / "repo-b"
+    repo_b.mkdir(parents=True, exist_ok=True)
+    _run_git("init", "-b", "main", cwd=repo_b)
+    (repo_b / "README.md").write_text("repo-b\n", encoding="utf-8")
+    _run_git("add", "README.md", cwd=repo_b)
+    _run_git("config", "user.name", "Workspace Tests", cwd=repo_b)
+    _run_git("config", "user.email", "workspace-tests@example.com", cwd=repo_b)
+    _run_git("commit", "-m", "init", cwd=repo_b)
+
+    add_a = client.post(
+        "/api/workspace/repos/add",
+        json={"repo_path": str(repo_a), "make_active": True},
+    ).get_json()
+    assert add_a
+    assert add_a["status"] == "added"
+    assert add_a["active_repo_path"] == str(repo_a.resolve())
+
+    add_b = client.post(
+        "/api/workspace/repos/add",
+        json={"repo_path": str(repo_b)},
+    ).get_json()
+    assert add_b
+    assert add_b["status"] == "added"
+
+    list_resp = client.get(
+        "/api/workspace/repos",
+        query_string={"include_branches": "1", "recent_runs_limit": "3"},
+    )
+    list_data = list_resp.get_json()
+    assert list_resp.status_code == 200
+    assert list_data
+    assert list_data["total_repos"] == 2
+    assert list_data["available_repos"] == 2
+    assert list_data["active_repo_path"] == str(repo_a.resolve())
+
+    entries = {entry["repo_path"]: entry for entry in list_data["repos"]}
+    entry_a = entries[str(repo_a.resolve())]
+    assert entry_a["available"] is True
+    assert entry_a["remote_settings"]["default_remote"] == ""
+    assert entry_a["recent_runs"]["count"] >= 1
+    assert entry_a["recent_runs"]["latest"]["scope"] == "chain"
+    assert "main" in entry_a["branches"]["local_branches"]
+
+    activate_b_resp = client.post(
+        "/api/workspace/repos/activate",
+        json={"repo_path": str(repo_b)},
+    )
+    activate_b = activate_b_resp.get_json()
+    assert activate_b_resp.status_code == 200
+    assert activate_b
+    assert activate_b["status"] == "activated"
+    assert activate_b["active_repo_path"] == str(repo_b.resolve())
+
+    remove_a_resp = client.post(
+        "/api/workspace/repos/remove",
+        json={"repo_path": str(repo_a)},
+    )
+    remove_a = remove_a_resp.get_json()
+    assert remove_a_resp.status_code == 200
+    assert remove_a
+    assert remove_a["status"] == "removed"
+    assert remove_a["workspace"]["total_repos"] == 1
+
+
+def test_workspace_repo_add_rejects_non_git_repo(client, monkeypatch, tmp_path: Path):
+    workspace_store = tmp_path / "workspace" / "repos.json"
+    monkeypatch.setattr(gui_app_module, "WORKSPACE_REPOS_PATH", workspace_store)
+
+    not_git = tmp_path / "not-git"
+    not_git.mkdir(parents=True, exist_ok=True)
+    resp = client.post("/api/workspace/repos/add", json={"repo_path": str(not_git)})
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data
+    assert "Not a git repository" in data["error"]
+
+
+def test_workspace_repo_list_marks_missing_repo_entries(client, monkeypatch, tmp_path: Path):
+    workspace_store = tmp_path / "workspace" / "repos.json"
+    workspace_store.parent.mkdir(parents=True, exist_ok=True)
+    missing_repo = tmp_path / "missing-repo"
+    workspace_store.write_text(
+        json.dumps(
+            {
+                "active_repo_path": str(missing_repo),
+                "repos": [str(missing_repo)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gui_app_module, "WORKSPACE_REPOS_PATH", workspace_store)
+
+    resp = client.get("/api/workspace/repos")
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data
+    assert data["total_repos"] == 1
+    assert data["available_repos"] == 0
+    entry = data["repos"][0]
+    assert entry["exists"] is False
+    assert entry["available"] is False
+    assert "not found" in entry["errors"][0].lower()
+
+
 def test_write_json_file_atomic_handles_concurrent_writers(tmp_path: Path):
     target = tmp_path / "chains" / "Concurrent.json"
     errors: list[Exception] = []
@@ -2204,6 +2357,19 @@ def test_index_includes_git_branch_switcher_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
+    assert 'id="workspace-repo-path"' in html
+    assert 'id="workspace-repo-body"' in html
+    assert 'id="workspace-repo-add-btn"' in html
+    assert 'onclick="addWorkspaceRepoFromInput()"' in html
+    assert 'onclick="refreshWorkspaceReposNow()"' in html
+    assert "async function refreshWorkspaceReposNow()" in html
+    assert "async function workspaceQuickPull(repoPath)" in html
+    assert "async function workspaceQuickPush(repoPath)" in html
+    assert "async function workspaceQuickCheckout(repoPath)" in html
+    assert "/api/workspace/repos" in html
+    assert "/api/workspace/repos/add" in html
+    assert "/api/workspace/repos/remove" in html
+    assert "/api/workspace/repos/activate" in html
     assert 'id="git-sync-remotes-btn"' in html
     assert 'onclick="showGitRemoteModal()"' in html
     assert 'id="git-remote-overlay"' in html

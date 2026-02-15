@@ -216,6 +216,30 @@ summary:focus-visible{
 .repo-row{display:flex;gap:8px;align-items:center}
 .repo-row input{flex:1}
 .repo-status{font-size:18px;width:24px;text-align:center;flex-shrink:0}
+.workspace-repo-card{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg)}
+.workspace-repo-head{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px}
+.workspace-repo-head strong{font-size:12px;color:var(--text)}
+.workspace-repo-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.workspace-repo-toolbar input{flex:1;min-width:180px}
+.workspace-repo-status{font-size:11px;color:var(--text2);min-height:1.2em}
+.workspace-repo-status[data-tone="ok"]{color:var(--success)}
+.workspace-repo-status[data-tone="warn"]{color:var(--warning)}
+.workspace-repo-status[data-tone="error"]{color:var(--danger)}
+.workspace-repo-list{border:1px solid var(--border);border-radius:var(--radius);overflow:auto;background:var(--surface)}
+.workspace-repo-table{width:100%;border-collapse:collapse;font-size:11px;min-width:720px}
+.workspace-repo-table th,.workspace-repo-table td{padding:7px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.workspace-repo-table thead th{font-size:10px;color:var(--text2);letter-spacing:.2px;text-transform:uppercase;background:var(--surface2);position:sticky;top:0;z-index:1}
+.workspace-repo-table tbody tr:last-child td{border-bottom:none}
+.workspace-repo-main{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.workspace-repo-main code{font-size:10px}
+.workspace-repo-badge{font-size:10px;padding:2px 6px;border-radius:999px;border:1px solid var(--border);color:var(--text2);background:rgba(19,29,43,.7)}
+.workspace-repo-badge.active{color:var(--success);border-color:rgba(71,192,123,.45);background:rgba(71,192,123,.12)}
+.workspace-repo-branch{font-family:var(--mono)}
+.workspace-repo-meta{display:block;color:var(--text2);margin-top:3px}
+.workspace-repo-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.workspace-repo-actions .btn{padding:4px 8px;font-size:11px}
+.workspace-repo-actions select{min-width:150px;max-width:180px}
+.workspace-repo-actions .btn-danger{padding:4px 7px}
 .diag-card{
   margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg)
 }
@@ -888,11 +912,14 @@ body.mode-medium .easy-only{display:none}
   .git-commit-meta{grid-template-columns:1fr}
   .git-remote-meta{grid-template-columns:1fr}
   .git-remote-add-grid{grid-template-columns:1fr}
+  .workspace-repo-toolbar{align-items:stretch}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
   .git-sync-widget{width:100%;max-width:100%;min-width:0}
   .git-sync-widget-grid{grid-template-columns:1fr}
+  .workspace-repo-actions{flex-direction:column;align-items:stretch}
+  .workspace-repo-actions select{min-width:0;max-width:none;width:100%}
   #toast-stack{right:12px;bottom:12px}
   .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal{max-height:88vh}
   .science-cards{grid-template-columns:1fr}
@@ -1055,6 +1082,34 @@ body.mode-medium .easy-only{display:none}
         <input type="text" id="repo-path" placeholder="C:\path\to\your\repo" oninput="validateRepo()" title="Full path to your git repository">
         <button class="btn" onclick="openBrowse('repo-path')" title="Browse for folder">Browse</button>
         <span class="repo-status" id="repo-status" aria-live="polite"></span>
+      </div>
+      <div class="workspace-repo-card">
+        <div class="workspace-repo-head">
+          <strong>Multi-Repo Workspace</strong>
+          <button class="btn" type="button" id="workspace-repo-refresh-btn" onclick="refreshWorkspaceReposNow()">Refresh</button>
+        </div>
+        <div class="workspace-repo-toolbar">
+          <input type="text" id="workspace-repo-path" placeholder="Add local git repo path" oninput="_syncWorkspaceControls()">
+          <button class="btn" type="button" onclick="openBrowse('workspace-repo-path')" title="Browse for folder">Browse</button>
+          <button class="btn btn-success" type="button" id="workspace-repo-add-btn" onclick="addWorkspaceRepoFromInput()">Add Repo</button>
+        </div>
+        <div class="workspace-repo-list">
+          <table class="workspace-repo-table">
+            <thead>
+              <tr>
+                <th>Repository</th>
+                <th>Branch / Sync</th>
+                <th>Remote Settings</th>
+                <th>Recent Runs</th>
+                <th>Quick Actions</th>
+              </tr>
+            </thead>
+            <tbody id="workspace-repo-body">
+              <tr><td colspan="5" style="color:var(--text2)">No workspace repos added yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="workspace-repo-status" id="workspace-repo-status" data-tone="muted">Use Add Repo to start tracking multiple repositories.</div>
       </div>
     </div>
     <div class="diag-card">
@@ -2777,6 +2832,8 @@ let gitSyncGithubRepoUrl = '';
 let gitSyncRefreshTimer = null;
 let gitSyncPollTimer = null;
 const GIT_SYNC_POLL_INTERVAL_MS = 20000;
+let workspaceState = null;
+let workspaceBusy = false;
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
 
@@ -3960,6 +4017,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   startWatchdogAlertPolling();
   switchTab('chain');
   _syncGitSyncButtonState();
+  refreshWorkspaceRepos({ silent: true, includeBranches: true });
   scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
   if (gitSyncPollTimer) clearInterval(gitSyncPollTimer);
   gitSyncPollTimer = setInterval(() => {
@@ -4050,6 +4108,443 @@ function _activeRepoPathForGitSync() {
     return pipeRepo || chainRepo;
   }
   return chainRepo || pipeRepo;
+}
+
+function _workspaceRepoPathKey(repoPath) {
+  return String(repoPath || '').trim().toLowerCase();
+}
+
+function _sameRepoPath(a, b) {
+  const left = _workspaceRepoPathKey(a);
+  const right = _workspaceRepoPathKey(b);
+  if (!left || !right) return false;
+  return left === right;
+}
+
+function _workspaceRepoSelectId(repoPath) {
+  const text = String(repoPath || '');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = (hash * 16777619) >>> 0;
+  }
+  return 'workspace-branch-select-' + hash.toString(16);
+}
+
+function _setWorkspaceStatus(text, tone = 'muted') {
+  const el = document.getElementById('workspace-repo-status');
+  if (!el) return;
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
+  el.textContent = String(text || '');
+}
+
+function _workspaceBranchOptionsHtml(entry) {
+  const branches = entry && typeof entry.branches === 'object' ? entry.branches : {};
+  const current = String(branches.current_branch || '').trim();
+  const local = Array.isArray(branches.local_branches)
+    ? branches.local_branches.map(v => String(v || '').trim()).filter(Boolean)
+    : [];
+  const remote = Array.isArray(branches.remote_branches)
+    ? branches.remote_branches.map(v => String(v || '').trim()).filter(Boolean)
+    : [];
+
+  if (!local.length && !remote.length) {
+    return '<option value="">No branches</option>';
+  }
+
+  let html = '<option value="">Select branch...</option>';
+  if (local.length) {
+    html += '<optgroup label="Local branches">';
+    local.forEach(branch => {
+      const value = _gitSyncBranchValue('local', branch);
+      const label = branch === current ? (branch + ' (current)') : branch;
+      html += '<option value="' + esc(value) + '">' + esc(label) + '</option>';
+    });
+    html += '</optgroup>';
+  }
+  if (remote.length) {
+    html += '<optgroup label="Remote branches">';
+    remote.forEach(branch => {
+      const value = _gitSyncBranchValue('remote', branch);
+      html += '<option value="' + esc(value) + '">' + esc(branch) + '</option>';
+    });
+    html += '</optgroup>';
+  }
+  return html;
+}
+
+function _workspaceRunSummaryLabel(recentRuns) {
+  const payload = recentRuns && typeof recentRuns === 'object' ? recentRuns : {};
+  const latest = payload.latest && typeof payload.latest === 'object' ? payload.latest : null;
+  if (!latest) {
+    return {
+      text: String(payload.message || 'No recent runs'),
+      title: String(payload.message || 'No recent runs available for this repository.'),
+    };
+  }
+  const finished = String(latest.finished_at || '').trim();
+  const when = finished ? finished.replace('T', ' ').replace('Z', ' UTC') : 'unknown time';
+  const scope = String(latest.scope || 'run').trim() || 'run';
+  const duration = Number(latest.duration_seconds || 0);
+  const durationLabel = Number.isFinite(duration) && duration > 0 ? (duration.toFixed(1) + 's') : 'n/a';
+  const tokens = Number(latest.token_usage || 0);
+  const tokenLabel = Number.isFinite(tokens) && tokens > 0 ? String(tokens) : 'n/a';
+  const testsSummary = String(latest.tests_summary || '').trim() || 'tests n/a';
+  const text = scope + ' | ' + when + ' | ' + testsSummary;
+  const title = [
+    'Scope: ' + scope,
+    'Finished: ' + when,
+    'Duration: ' + durationLabel,
+    'Tokens: ' + tokenLabel,
+    'Tests: ' + testsSummary,
+    'Stop reason: ' + String(latest.stop_reason || 'n/a'),
+  ].join('\n');
+  return { text, title };
+}
+
+function _renderWorkspaceRepoRows(payload) {
+  const tbody = document.getElementById('workspace-repo-body');
+  if (!tbody) return;
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const repos = Array.isArray(data.repos) ? data.repos : [];
+  const activeRepoPath = String(data.active_repo_path || '').trim();
+
+  if (!repos.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text2)">No workspace repos added yet.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = repos.map(entry => {
+    const repoPath = String(entry && entry.repo_path || '').trim();
+    const name = String(entry && entry.name || '').trim() || repoPath || 'repo';
+    const exists = !!(entry && entry.exists);
+    const available = !!(entry && entry.available);
+    const isActive = _sameRepoPath(activeRepoPath, repoPath);
+    const encodedPath = encodeURIComponent(repoPath);
+    const selectId = _workspaceRepoSelectId(repoPath);
+    const sync = entry && typeof entry.sync === 'object' ? entry.sync : {};
+    const branch = String(sync.branch || '').trim() || 'n/a';
+    const ahead = Number(sync.ahead);
+    const behind = Number(sync.behind);
+    const aheadBehindKnown = Number.isFinite(ahead) && Number.isFinite(behind);
+    const aheadBehind = aheadBehindKnown ? ('ahead ' + ahead + ' / behind ' + behind) : 'no upstream';
+    const dirty = !!sync.dirty;
+    const dirtyLabel = dirty ? 'dirty' : 'clean';
+    const branchTitle = available
+      ? ('Branch: ' + branch + '\n' + aheadBehind + '\nWorktree: ' + dirtyLabel)
+      : (exists ? 'Git metadata unavailable for this repo.' : 'Repository path is missing.');
+
+    const remote = entry && typeof entry.remote_settings === 'object' ? entry.remote_settings : {};
+    const defaultRemote = String(remote.default_remote || '').trim();
+    const remoteNames = Array.isArray(remote.remote_names)
+      ? remote.remote_names.map(v => String(v || '').trim()).filter(Boolean)
+      : [];
+    const remoteLabel = defaultRemote ? defaultRemote : (remoteNames.length ? remoteNames[0] : 'none');
+    const remoteMeta = remoteNames.length ? (remoteNames.length + ' remotes') : 'no remotes';
+    const remoteTitle = defaultRemote
+      ? ('Default remote: ' + defaultRemote + '\nAvailable: ' + remoteNames.join(', '))
+      : (remoteNames.length
+        ? ('Available remotes: ' + remoteNames.join(', '))
+        : 'No remotes configured.');
+
+    const runLabel = _workspaceRunSummaryLabel(entry ? entry.recent_runs : null);
+    const errors = Array.isArray(entry && entry.errors) ? entry.errors : [];
+    const errorText = errors.map(item => String(item || '').trim()).filter(Boolean).join(' | ');
+    const useDisabledAttr = available ? '' : ' data-workspace-disabled="1" disabled';
+    const disabledAttr = available ? '' : ' data-workspace-disabled="1" disabled';
+    const branchOptions = _workspaceBranchOptionsHtml(entry);
+    const badge = isActive
+      ? '<span class="workspace-repo-badge active">active</span>'
+      : '<span class="workspace-repo-badge">workspace</span>';
+
+    return '<tr>'
+      + '<td>'
+      +   '<div class="workspace-repo-main"><strong>' + esc(name) + '</strong>' + badge + '</div>'
+      +   '<code>' + esc(repoPath || 'n/a') + '</code>'
+      +   (errorText ? '<span class="workspace-repo-meta" style="color:var(--danger)">' + esc(errorText) + '</span>' : '')
+      + '</td>'
+      + '<td>'
+      +   '<span class="workspace-repo-branch">' + esc(branch) + '</span>'
+      +   '<span class="workspace-repo-meta" title="' + esc(branchTitle) + '">' + esc(aheadBehind + ' | ' + dirtyLabel) + '</span>'
+      + '</td>'
+      + '<td>'
+      +   '<span class="workspace-repo-branch">' + esc(remoteLabel) + '</span>'
+      +   '<span class="workspace-repo-meta" title="' + esc(remoteTitle) + '">' + esc(remoteMeta) + '</span>'
+      + '</td>'
+      + '<td>'
+      +   '<span class="workspace-repo-meta" title="' + esc(runLabel.title) + '">' + esc(runLabel.text) + '</span>'
+      + '</td>'
+      + '<td><div class="workspace-repo-actions">'
+      +   '<button class="btn" type="button" data-workspace-action="1" onclick="workspaceUseRepo(decodeURIComponent(\'' + encodedPath + '\'))"' + useDisabledAttr + '>Use</button>'
+      +   '<button class="btn" type="button" data-workspace-action="1" onclick="workspaceQuickPull(decodeURIComponent(\'' + encodedPath + '\'))"' + disabledAttr + '>Pull</button>'
+      +   '<button class="btn btn-success" type="button" data-workspace-action="1" onclick="workspaceQuickPush(decodeURIComponent(\'' + encodedPath + '\'))"' + disabledAttr + '>Push</button>'
+      +   '<select id="' + esc(selectId) + '" data-workspace-action="1"' + disabledAttr + '>'
+      +     branchOptions
+      +   '</select>'
+      +   '<button class="btn" type="button" data-workspace-action="1" onclick="workspaceQuickCheckout(decodeURIComponent(\'' + encodedPath + '\'))"' + disabledAttr + '>Checkout</button>'
+      +   '<button class="btn btn-danger" type="button" data-workspace-action="1" onclick="workspaceRemoveRepo(decodeURIComponent(\'' + encodedPath + '\'))">Remove</button>'
+      + '</div></td>'
+      + '</tr>';
+  }).join('');
+}
+
+function _syncWorkspaceControls() {
+  const input = document.getElementById('workspace-repo-path');
+  const addBtn = document.getElementById('workspace-repo-add-btn');
+  const refreshBtn = document.getElementById('workspace-repo-refresh-btn');
+  const hasPath = !!String(input ? input.value : '').trim();
+  const busy = workspaceBusy || !!gitSyncBusyAction;
+  if (addBtn) addBtn.disabled = busy || !hasPath;
+  if (refreshBtn) refreshBtn.disabled = busy;
+  document.querySelectorAll('[data-workspace-action]').forEach(el => {
+    const hardDisabled = String(el.getAttribute('data-workspace-disabled') || '') === '1';
+    el.disabled = busy || hardDisabled;
+  });
+}
+
+async function refreshWorkspaceRepos(opts = {}) {
+  const includeBranches = opts.includeBranches !== false;
+  const recentRunsLimitRaw = Number(opts.recentRunsLimit);
+  const recentRunsLimit = Number.isFinite(recentRunsLimitRaw)
+    ? Math.max(1, Math.floor(recentRunsLimitRaw))
+    : 3;
+  const query = '?include_branches=' + (includeBranches ? '1' : '0')
+    + '&recent_runs_limit=' + encodeURIComponent(String(recentRunsLimit));
+  const response = await api('/api/workspace/repos' + query);
+  if (response.error) {
+    workspaceState = null;
+    _renderWorkspaceRepoRows({ repos: [] });
+    _setWorkspaceStatus('Could not load workspace repos: ' + String(response.error || 'Unknown error'), 'error');
+    if (!opts.silent) toast('Could not load workspace repos: ' + String(response.error || 'Unknown error'), 'error');
+    _syncWorkspaceControls();
+    return;
+  }
+
+  workspaceState = response;
+  _renderWorkspaceRepoRows(response);
+  const total = Number(response.total_repos || 0);
+  const available = Number(response.available_repos || 0);
+  if (!opts.preserveStatus) {
+    if (!total) {
+      _setWorkspaceStatus('No workspace repos configured yet.', 'muted');
+    } else if (available < total) {
+      _setWorkspaceStatus('Workspace loaded: ' + available + '/' + total + ' repos available.', 'warn');
+    } else {
+      _setWorkspaceStatus('Workspace loaded: ' + total + ' repos ready.', 'ok');
+    }
+  }
+  _syncWorkspaceControls();
+}
+
+async function refreshWorkspaceReposNow() {
+  await refreshWorkspaceRepos({ silent: false, includeBranches: true });
+}
+
+async function addWorkspaceRepoFromInput() {
+  if (workspaceBusy) return;
+  const input = document.getElementById('workspace-repo-path');
+  const repoPath = String(input ? input.value : '').trim();
+  if (!repoPath) {
+    toast('Enter a repository path first.', 'warn');
+    _syncWorkspaceControls();
+    return;
+  }
+
+  workspaceBusy = true;
+  _setWorkspaceStatus('Adding repository to workspace...', 'muted');
+  _syncWorkspaceControls();
+  const response = await postJson('/api/workspace/repos/add', {
+    repo_path: repoPath,
+    make_active: false,
+    include_branches: true,
+    recent_runs_limit: 3,
+  });
+  workspaceBusy = false;
+  _syncWorkspaceControls();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setWorkspaceStatus('Add failed: ' + message, 'error');
+    toast('Could not add workspace repo: ' + message, 'error');
+    return;
+  }
+
+  if (input) input.value = '';
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
+  _setWorkspaceStatus(String(response.message || 'Workspace repo added.'), 'ok');
+  toast(String(response.message || 'Workspace repo added.'), 'success');
+}
+
+async function workspaceRemoveRepo(repoPath) {
+  if (workspaceBusy) return;
+  const normalized = String(repoPath || '').trim();
+  if (!normalized) return;
+
+  workspaceBusy = true;
+  _setWorkspaceStatus('Removing repository from workspace...', 'muted');
+  _syncWorkspaceControls();
+  const response = await postJson('/api/workspace/repos/remove', {
+    repo_path: normalized,
+    include_branches: true,
+    recent_runs_limit: 3,
+  });
+  workspaceBusy = false;
+  _syncWorkspaceControls();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setWorkspaceStatus('Remove failed: ' + message, 'error');
+    toast('Could not remove workspace repo: ' + message, 'error');
+    return;
+  }
+
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
+  _setWorkspaceStatus(String(response.message || 'Workspace repo removed.'), 'ok');
+  toast(String(response.message || 'Workspace repo removed.'), 'success');
+}
+
+async function workspaceUseRepo(repoPath) {
+  const normalized = String(repoPath || '').trim();
+  if (!normalized) return;
+
+  const activeTab = _activeMainTabId();
+  if (activeTab === 'pipeline') {
+    const pipeInput = document.getElementById('pipe-repo-path');
+    if (pipeInput) pipeInput.value = normalized;
+    validatePipeRepo();
+    const chainInput = document.getElementById('repo-path');
+    if (chainInput && !String(chainInput.value || '').trim()) {
+      chainInput.value = normalized;
+      validateRepo();
+    }
+  } else {
+    const chainInput = document.getElementById('repo-path');
+    if (chainInput) chainInput.value = normalized;
+    validateRepo();
+    const pipeInput = document.getElementById('pipe-repo-path');
+    if (pipeInput && !String(pipeInput.value || '').trim()) {
+      pipeInput.value = normalized;
+      validatePipeRepo();
+    }
+  }
+
+  const response = await postJson('/api/workspace/repos/activate', {
+    repo_path: normalized,
+    add_if_missing: true,
+    include_branches: true,
+    recent_runs_limit: 3,
+  });
+  if (response.error) {
+    toast('Could not set active workspace repo: ' + String(response.error || 'Unknown error'), 'error');
+  }
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
+  _setWorkspaceStatus('Active workspace repo: ' + normalized, 'ok');
+  scheduleGitSyncRefresh({ repoPath: normalized, delayMs: 0, silent: true, force: true });
+}
+
+async function _workspaceRunGitQuickAction(actionKey, repoPath, payload = {}) {
+  if (workspaceBusy) return;
+  const normalized = String(repoPath || '').trim();
+  if (!normalized) return;
+
+  const actions = {
+    pull: {
+      endpoint: '/api/git/sync/pull',
+      running: 'Running quick pull...',
+      fallback: 'Pull completed.',
+      failure: 'Quick pull failed: ',
+    },
+    push: {
+      endpoint: '/api/git/sync/push',
+      running: 'Running quick push...',
+      fallback: 'Push completed.',
+      failure: 'Quick push failed: ',
+    },
+    checkout: {
+      endpoint: '/api/git/sync/checkout',
+      running: 'Running quick checkout...',
+      fallback: 'Checkout completed.',
+      failure: 'Quick checkout failed: ',
+    },
+  };
+  const action = actions[actionKey];
+  if (!action) return;
+
+  workspaceBusy = true;
+  _setWorkspaceStatus(action.running, 'muted');
+  _syncWorkspaceControls();
+  const body = Object.assign({ repo_path: normalized }, payload || {});
+  const response = await postJson(action.endpoint, body);
+  workspaceBusy = false;
+  _syncWorkspaceControls();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setWorkspaceStatus(action.failure + message, 'error');
+    toast(action.failure + message, 'error');
+    const recovery = Array.isArray(response.recovery_steps) ? response.recovery_steps : [];
+    if (recovery.length) {
+      toast('Recovery: ' + recovery.join(' | '), 'info');
+    }
+    await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
+    return;
+  }
+
+  const currentActiveRepo = _activeRepoPathForGitSync();
+  if (_sameRepoPath(currentActiveRepo, normalized)) {
+    if (response.sync) {
+      gitSyncState = response.sync;
+      _renderGitSyncState(response.sync);
+    }
+    if (response.branches) {
+      gitSyncBranchState = response.branches;
+      _renderGitSyncBranchOptions(response.branches, {
+        preferredBranch: String(response.sync && response.sync.branch || '').trim(),
+      });
+    }
+    if (actionKey === 'push') {
+      const pullRequest = (response && typeof response.pull_request === 'object' && response.pull_request)
+        ? response.pull_request
+        : null;
+      const pullRequestUrl = String(
+        (pullRequest && pullRequest.url) || response.pull_request_url || ''
+      ).trim();
+      _setGitSyncPullRequestUrl(pullRequestUrl);
+    }
+    scheduleGitSyncRefresh({ repoPath: normalized, delayMs: 0, silent: true, force: true });
+  }
+
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
+  const message = String(response.message || action.fallback);
+  _setWorkspaceStatus(message, 'ok');
+  toast(message, 'success');
+}
+
+async function workspaceQuickPull(repoPath) {
+  await _workspaceRunGitQuickAction('pull', repoPath);
+}
+
+async function workspaceQuickPush(repoPath) {
+  const setUpstreamCheckbox = document.getElementById('git-sync-set-upstream');
+  const setUpstream = !!(setUpstreamCheckbox && setUpstreamCheckbox.checked);
+  await _workspaceRunGitQuickAction('push', repoPath, { set_upstream: setUpstream });
+}
+
+async function workspaceQuickCheckout(repoPath) {
+  const normalized = String(repoPath || '').trim();
+  if (!normalized) return;
+  const select = document.getElementById(_workspaceRepoSelectId(normalized));
+  const branchTarget = _parseGitSyncBranchValue(select ? select.value : '');
+  if (!branchTarget) {
+    toast('Select a branch first.', 'warn');
+    return;
+  }
+  await _workspaceRunGitQuickAction('checkout', normalized, {
+    branch: branchTarget.branch,
+    branch_type: branchTarget.branch_type,
+    allow_dirty: _gitSyncAllowDirtySwitchEnabled(),
+  });
 }
 
 function _setGitSyncIndicator(text, tone = 'muted', title = '') {
@@ -4294,6 +4789,7 @@ function _syncGitSyncButtonState() {
   if (allowDirty) allowDirty.disabled = disabled;
   _syncGitRemoteControls();
   _syncGitCommitControls();
+  _syncWorkspaceControls();
 }
 
 function _renderGitSyncState(sync) {
@@ -4617,6 +5113,7 @@ async function _runGitSyncAction(actionKey) {
       toast('Recovery: ' + recoverySteps.join(' | '), 'info');
     }
     await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
     return;
   }
 
@@ -4661,6 +5158,7 @@ async function _runGitSyncAction(actionKey) {
   if (_isGitCommitModalOpen()) {
     await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
   }
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
 
   toast(String(response.message || action.successFallback), 'success');
 }
@@ -4786,6 +5284,7 @@ async function gitSyncSwitchBranch() {
       toast('Recovery: ' + recoverySteps.join(' | '), 'info');
     }
     await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
     return;
   }
 
@@ -4805,6 +5304,7 @@ async function gitSyncSwitchBranch() {
   if (_isGitCommitModalOpen()) {
     await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
   }
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
 
   toast(String(response.message || 'Branch switched.'), 'success');
 }
@@ -4849,6 +5349,7 @@ async function gitSyncCreateBranch() {
       toast('Recovery: ' + recoverySteps.join(' | '), 'info');
     }
     await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
     return;
   }
 
@@ -4870,6 +5371,7 @@ async function gitSyncCreateBranch() {
     await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
   }
   _syncGitSyncButtonState();
+  await refreshWorkspaceRepos({ silent: true, includeBranches: true, preserveStatus: true });
 
   toast(String(response.message || 'Branch created.'), 'success');
 }
