@@ -3977,6 +3977,103 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
     }
 
 
+def _git_ref_exists(repo: Path, ref_name: str) -> bool:
+    """Return True when a git ref exists in the repository."""
+    probe = _run_git_sync_command(repo, "show-ref", "--verify", "--quiet", ref_name)
+    return probe.returncode == 0
+
+
+def _git_sync_branch_choices_payload(repo: Path) -> dict[str, object]:
+    """Return local/remote branch choices plus current branch metadata."""
+    status = _git_sync_status_payload(repo)
+    current_branch = str(status.get("branch") or "").strip() or "HEAD"
+
+    local_result = _run_git_sync_command(
+        repo,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+    )
+    if local_result.returncode != 0:
+        raise RuntimeError(_extract_git_process_error(local_result, "git for-each-ref refs/heads failed"))
+
+    local_seen: set[str] = set()
+    for raw_line in str(local_result.stdout or "").splitlines():
+        branch = raw_line.strip()
+        if branch:
+            local_seen.add(branch)
+    local_branches = sorted(local_seen, key=lambda item: item.casefold())
+
+    remote_result = _run_git_sync_command(
+        repo,
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/remotes",
+    )
+    if remote_result.returncode != 0:
+        raise RuntimeError(
+            _extract_git_process_error(remote_result, "git for-each-ref refs/remotes failed")
+        )
+
+    remote_seen: set[str] = set()
+    for raw_line in str(remote_result.stdout or "").splitlines():
+        branch = raw_line.strip()
+        if not branch:
+            continue
+        if branch == "HEAD" or branch.endswith("/HEAD"):
+            continue
+        remote_seen.add(branch)
+    remote_branches = sorted(remote_seen, key=lambda item: item.casefold())
+
+    return {
+        "repo_path": str(repo),
+        "current_branch": current_branch,
+        "detached_head": current_branch == "HEAD",
+        "local_branches": local_branches,
+        "remote_branches": remote_branches,
+        "sync": status,
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
+def _git_sync_dirty_recovery_steps(*, action: str) -> list[str]:
+    """Return dirty-worktree recovery guidance for branch operations."""
+    return [
+        "Commit or stash your local changes before switching branch context.",
+        "Use Stash + Pull in the header (or run `git stash push --include-untracked`) and retry.",
+        f"If you intentionally need to {action} with local edits, enable 'allow dirty switch' and retry.",
+    ]
+
+
+def _git_sync_dirty_guardrail_response(
+    *,
+    repo: Path,
+    status_payload: dict[str, object],
+    action: str,
+) -> tuple[Response, int]:
+    """Build a consistent dirty-worktree guardrail response payload."""
+    staged = int(status_payload.get("staged_changes") or 0)
+    unstaged = int(status_payload.get("unstaged_changes") or 0)
+    untracked = int(status_payload.get("untracked_changes") or 0)
+    detail = f"staged {staged}, unstaged {unstaged}, untracked {untracked}"
+    return (
+        jsonify(
+            {
+                "error": (
+                    "Branch operation blocked because the worktree is dirty "
+                    f"({detail}). Commit/stash/discard changes first, or enable allow_dirty."
+                ),
+                "error_type": "dirty_worktree",
+                "repo_path": str(repo),
+                "action": action,
+                "recovery_steps": _git_sync_dirty_recovery_steps(action=action),
+                "sync": status_payload,
+            }
+        ),
+        409,
+    )
+
+
 def _list_git_remote_branches(remote_url: str) -> tuple[list[str], str]:
     """Return (branches, default_branch) for a git remote."""
     symref = subprocess.run(
@@ -4217,6 +4314,193 @@ def api_git_sync_status():
         return jsonify({"error": "Git sync status timed out."}), 504
     except RuntimeError as exc:
         return jsonify({"error": f"Could not read git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/branches")
+def api_git_sync_branches():
+    """Return local + remote branch choices for branch switching UI."""
+    repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        return jsonify(_git_sync_branch_choices_payload(repo))
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git branch query timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not read branch list: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/checkout", methods=["POST"])
+def api_git_sync_checkout():
+    """Checkout a selected local branch or create tracking from a remote branch."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    requested_branch = str(data.get("branch") or "").strip()
+    requested_branch_type = str(data.get("branch_type") or "").strip().lower()
+    allow_dirty = _safe_bool(data.get("allow_dirty"), default=False)
+
+    if not requested_branch:
+        return jsonify({"error": "branch is required."}), 400
+    if not _valid_clone_branch_name(requested_branch):
+        return jsonify({"error": f"Invalid branch name: {requested_branch}"}), 400
+    if requested_branch_type not in {"", "local", "remote"}:
+        return jsonify({"error": f"Invalid branch_type: {requested_branch_type}"}), 400
+
+    try:
+        status_before = _git_sync_status_payload(repo)
+        if bool(status_before.get("dirty")) and not allow_dirty:
+            return _git_sync_dirty_guardrail_response(
+                repo=repo,
+                status_payload=status_before,
+                action="switch branches",
+            )
+
+        local_exists = _git_ref_exists(repo, f"refs/heads/{requested_branch}")
+        remote_exists = _git_ref_exists(repo, f"refs/remotes/{requested_branch}")
+        branch_type = requested_branch_type
+        if not branch_type:
+            if local_exists:
+                branch_type = "local"
+            elif remote_exists:
+                branch_type = "remote"
+            else:
+                return jsonify({"error": f"Branch not found: {requested_branch}"}), 404
+
+        checkout_args: list[str]
+        created_tracking_branch = False
+        effective_branch = requested_branch
+
+        if branch_type == "local":
+            if not local_exists:
+                return jsonify({"error": f"Local branch not found: {requested_branch}"}), 404
+            checkout_args = ["checkout", requested_branch]
+        else:
+            if not remote_exists:
+                return jsonify({"error": f"Remote branch not found: {requested_branch}"}), 404
+            if "/" not in requested_branch:
+                return jsonify({"error": f"Remote branch must include remote prefix: {requested_branch}"}), 400
+            local_branch = requested_branch.split("/", 1)[1].strip()
+            if not local_branch or not _valid_clone_branch_name(local_branch):
+                return jsonify({"error": f"Invalid local branch derived from {requested_branch}"}), 400
+            effective_branch = local_branch
+            if _git_ref_exists(repo, f"refs/heads/{local_branch}"):
+                checkout_args = ["checkout", local_branch]
+            else:
+                checkout_args = ["checkout", "--track", "-b", local_branch, requested_branch]
+                created_tracking_branch = True
+
+        checkout_result = _run_git_sync_command(repo, *checkout_args)
+        if checkout_result.returncode != 0:
+            detail = _extract_git_process_error(checkout_result, f"git {' '.join(checkout_args)} failed")
+            return jsonify({"error": f"Git checkout failed: {detail}"}), 502
+
+        status_after = _git_sync_status_payload(repo)
+        branches = _git_sync_branch_choices_payload(repo)
+        active_branch = str(status_after.get("branch") or "").strip() or effective_branch
+        if branch_type == "remote" and created_tracking_branch:
+            message = f"Checked out remote branch {requested_branch} as local {active_branch}."
+        elif branch_type == "remote":
+            message = f"Switched to local branch {active_branch} (tracking {requested_branch})."
+        else:
+            message = f"Switched to branch {active_branch}."
+
+        return jsonify(
+            {
+                "status": "checked_out",
+                "repo_path": str(repo),
+                "requested_branch": requested_branch,
+                "branch_type": branch_type,
+                "branch": active_branch,
+                "created_tracking_branch": created_tracking_branch,
+                "allow_dirty": allow_dirty,
+                "message": message,
+                "stdout": _truncate_command_output(checkout_result.stdout),
+                "stderr": _truncate_command_output(checkout_result.stderr),
+                "sync": status_after,
+                "branches": branches,
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git checkout timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/branch/create", methods=["POST"])
+def api_git_sync_branch_create():
+    """Create and checkout a new branch from HEAD or an explicit start point."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    branch_name = str(data.get("branch_name") or data.get("branch") or "").strip()
+    start_point = str(data.get("start_point") or "").strip()
+    allow_dirty = _safe_bool(data.get("allow_dirty"), default=False)
+
+    if not branch_name:
+        return jsonify({"error": "branch_name is required."}), 400
+    if not _valid_clone_branch_name(branch_name):
+        return jsonify({"error": f"Invalid branch name: {branch_name}"}), 400
+    if start_point.startswith("-") or any(ch.isspace() for ch in start_point):
+        return jsonify({"error": f"Invalid start_point: {start_point}"}), 400
+
+    try:
+        status_before = _git_sync_status_payload(repo)
+        if bool(status_before.get("dirty")) and not allow_dirty:
+            return _git_sync_dirty_guardrail_response(
+                repo=repo,
+                status_payload=status_before,
+                action="create a branch",
+            )
+
+        if _git_ref_exists(repo, f"refs/heads/{branch_name}"):
+            return jsonify({"error": f"Local branch already exists: {branch_name}"}), 409
+
+        create_args: list[str] = ["checkout", "-b", branch_name]
+        if start_point:
+            create_args.append(start_point)
+
+        create_result = _run_git_sync_command(repo, *create_args)
+        if create_result.returncode != 0:
+            detail = _extract_git_process_error(create_result, f"git {' '.join(create_args)} failed")
+            return jsonify({"error": f"Git branch creation failed: {detail}"}), 502
+
+        status_after = _git_sync_status_payload(repo)
+        branches = _git_sync_branch_choices_payload(repo)
+        message = (
+            f"Created and switched to branch {branch_name} from {start_point}."
+            if start_point
+            else f"Created and switched to branch {branch_name}."
+        )
+        return jsonify(
+            {
+                "status": "branch_created",
+                "repo_path": str(repo),
+                "branch": branch_name,
+                "start_point": start_point,
+                "allow_dirty": allow_dirty,
+                "message": message,
+                "stdout": _truncate_command_output(create_result.stdout),
+                "stderr": _truncate_command_output(create_result.stderr),
+                "sync": status_after,
+                "branches": branches,
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git branch creation timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

@@ -83,6 +83,13 @@ header{
 .header-doc-links .btn{padding:5px 9px;font-size:12px}
 .git-sync-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(7,11,17,.55)}
 .git-sync-controls .btn{padding:5px 10px;font-size:12px}
+.git-sync-controls select,.git-sync-controls input[type="text"]{
+  font-size:12px;
+  min-height:30px;
+  border-radius:8px;
+}
+.git-sync-branch-select{min-width:170px;max-width:240px}
+.git-sync-branch-input{min-width:135px;width:160px}
 .git-sync-option{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);padding:0 2px;white-space:nowrap}
 .git-sync-option input[type="checkbox"]{margin-right:0}
 .git-sync-indicator{font-size:11px;color:var(--text2);padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--bg);white-space:nowrap;min-height:24px;display:inline-flex;align-items:center;max-width:320px;overflow:hidden;text-overflow:ellipsis}
@@ -840,6 +847,29 @@ body.mode-medium .easy-only{display:none}
         set upstream
       </label>
       <button class="btn btn-warning" id="git-sync-stash-pull-btn" type="button" onclick="gitSyncStashAndPull()">Stash + Pull</button>
+      <select
+        id="git-sync-branch-select"
+        class="git-sync-branch-select"
+        title="Switch branches (local + remote)"
+        onchange="_syncGitSyncButtonState()"
+      >
+        <option value="">Switch branch...</option>
+      </select>
+      <button class="btn" id="git-sync-branch-refresh-btn" type="button" onclick="refreshGitSyncBranchesNow()">Branches</button>
+      <button class="btn" id="git-sync-branch-switch-btn" type="button" onclick="gitSyncSwitchBranch()">Switch</button>
+      <input
+        type="text"
+        id="git-sync-branch-create-name"
+        class="git-sync-branch-input"
+        placeholder="new/branch"
+        title="Create and checkout a new branch"
+        oninput="_syncGitSyncButtonState()"
+      >
+      <button class="btn" id="git-sync-branch-create-btn" type="button" onclick="gitSyncCreateBranch()">Create Branch</button>
+      <label class="git-sync-option" for="git-sync-allow-dirty-switch" title="Allow branch switch/create even when local changes are present.">
+        <input id="git-sync-allow-dirty-switch" type="checkbox">
+        allow dirty switch
+      </label>
       <span class="git-sync-indicator" id="git-sync-indicator" data-tone="muted" title="Select a repository path to view sync status">No repo selected</span>
     </div>
     <button class="btn" type="button" onclick="showGithubAuthModal()">GitHub Auth</button>
@@ -2322,6 +2352,7 @@ let watchdogMigrationSuggestions = [];
 let githubAuthState = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 let gitSyncState = null;
+let gitSyncBranchState = null;
 let gitSyncBusyAction = '';
 let gitSyncRefreshTimer = null;
 let gitSyncPollTimer = null;
@@ -3536,6 +3567,101 @@ function _setGitSyncIndicator(text, tone = 'muted', title = '') {
   el.title = String(title || text || '');
 }
 
+function _gitSyncBranchValue(branchType, branchName) {
+  const type = String(branchType || '').trim().toLowerCase();
+  const branch = String(branchName || '').trim();
+  if (!branch || (type !== 'local' && type !== 'remote')) return '';
+  return type + ':' + branch;
+}
+
+function _parseGitSyncBranchValue(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return null;
+  const idx = value.indexOf(':');
+  if (idx <= 0) return null;
+  const branchType = value.slice(0, idx).trim().toLowerCase();
+  const branch = value.slice(idx + 1).trim();
+  if (!branch || (branchType !== 'local' && branchType !== 'remote')) return null;
+  return { branch_type: branchType, branch };
+}
+
+function _clearGitSyncBranchOptions(placeholder = 'Switch branch...') {
+  const selectEl = document.getElementById('git-sync-branch-select');
+  if (!selectEl) return;
+  selectEl.innerHTML = '';
+  const option = document.createElement('option');
+  option.value = '';
+  option.textContent = String(placeholder || 'Switch branch...');
+  selectEl.appendChild(option);
+  selectEl.value = '';
+}
+
+function _renderGitSyncBranchOptions(payload, opts = {}) {
+  const selectEl = document.getElementById('git-sync-branch-select');
+  if (!selectEl) return;
+
+  const previousSelection = String(selectEl.value || '').trim();
+  const localBranches = Array.isArray(payload && payload.local_branches)
+    ? payload.local_branches.map(v => String(v || '').trim()).filter(Boolean)
+    : [];
+  const remoteBranches = Array.isArray(payload && payload.remote_branches)
+    ? payload.remote_branches.map(v => String(v || '').trim()).filter(Boolean)
+    : [];
+  const currentBranch = String(payload && payload.current_branch || '').trim();
+  const preferredBranch = String(opts.preferredBranch || '').trim();
+
+  selectEl.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Switch branch...';
+  selectEl.appendChild(placeholder);
+
+  const optionValues = new Set();
+  if (localBranches.length) {
+    const localGroup = document.createElement('optgroup');
+    localGroup.label = 'Local branches';
+    localBranches.forEach(branch => {
+      const option = document.createElement('option');
+      option.value = _gitSyncBranchValue('local', branch);
+      option.textContent = branch === currentBranch ? branch + ' (current)' : branch;
+      localGroup.appendChild(option);
+      optionValues.add(option.value);
+    });
+    selectEl.appendChild(localGroup);
+  }
+
+  if (remoteBranches.length) {
+    const remoteGroup = document.createElement('optgroup');
+    remoteGroup.label = 'Remote branches';
+    remoteBranches.forEach(branch => {
+      const option = document.createElement('option');
+      option.value = _gitSyncBranchValue('remote', branch);
+      option.textContent = branch;
+      remoteGroup.appendChild(option);
+      optionValues.add(option.value);
+    });
+    selectEl.appendChild(remoteGroup);
+  }
+
+  const candidateValues = [];
+  if (preferredBranch) candidateValues.push(_gitSyncBranchValue('local', preferredBranch));
+  if (previousSelection) candidateValues.push(previousSelection);
+  if (currentBranch) candidateValues.push(_gitSyncBranchValue('local', currentBranch));
+  const selectedValue = candidateValues.find(value => optionValues.has(value)) || '';
+  selectEl.value = selectedValue;
+}
+
+function _currentGitSyncBranchTarget() {
+  const selectEl = document.getElementById('git-sync-branch-select');
+  if (!selectEl) return null;
+  return _parseGitSyncBranchValue(selectEl.value);
+}
+
+function _gitSyncAllowDirtySwitchEnabled() {
+  const allowDirty = document.getElementById('git-sync-allow-dirty-switch');
+  return !!(allowDirty && allowDirty.checked);
+}
+
 function _syncGitSyncButtonState() {
   const hasRepoPath = !!_activeRepoPathForGitSync();
   const disabled = !hasRepoPath || !!gitSyncBusyAction;
@@ -3545,6 +3671,19 @@ function _syncGitSyncButtonState() {
   });
   const setUpstream = document.getElementById('git-sync-set-upstream');
   if (setUpstream) setUpstream.disabled = disabled;
+  const branchRefreshBtn = document.getElementById('git-sync-branch-refresh-btn');
+  if (branchRefreshBtn) branchRefreshBtn.disabled = disabled;
+  const branchSelect = document.getElementById('git-sync-branch-select');
+  if (branchSelect) branchSelect.disabled = disabled;
+  const branchSwitchBtn = document.getElementById('git-sync-branch-switch-btn');
+  if (branchSwitchBtn) branchSwitchBtn.disabled = disabled || !_currentGitSyncBranchTarget();
+  const branchInput = document.getElementById('git-sync-branch-create-name');
+  const branchName = String(branchInput ? branchInput.value : '').trim();
+  if (branchInput) branchInput.disabled = disabled;
+  const branchCreateBtn = document.getElementById('git-sync-branch-create-btn');
+  if (branchCreateBtn) branchCreateBtn.disabled = disabled || !branchName;
+  const allowDirty = document.getElementById('git-sync-allow-dirty-switch');
+  if (allowDirty) allowDirty.disabled = disabled;
 }
 
 function _renderGitSyncState(sync) {
@@ -3604,6 +3743,8 @@ async function refreshGitSyncStatus(opts = {}) {
   const repoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
   if (!repoPath) {
     gitSyncState = null;
+    gitSyncBranchState = null;
+    _clearGitSyncBranchOptions();
     _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
     _syncGitSyncButtonState();
     return;
@@ -3630,7 +3771,57 @@ async function refreshGitSyncStatus(opts = {}) {
 
   gitSyncState = response;
   _renderGitSyncState(response);
+  await refreshGitSyncBranches({
+    repoPath,
+    silent: true,
+    force: !!opts.force,
+    preferredBranch: String(response.branch || '').trim(),
+  });
   _syncGitSyncButtonState();
+}
+
+async function refreshGitSyncBranches(opts = {}) {
+  const repoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (!repoPath) {
+    gitSyncBranchState = null;
+    _clearGitSyncBranchOptions();
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  if (gitSyncBusyAction && !opts.force) {
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  const response = await api('/api/git/sync/branches?repo_path=' + encodeURIComponent(repoPath));
+  const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (repoPath !== currentRepoPath) {
+    return;
+  }
+
+  if (response.error) {
+    gitSyncBranchState = null;
+    const message = String(response.error || 'Unknown error');
+    _clearGitSyncBranchOptions('Branch list unavailable');
+    if (!opts.silent) toast('Could not load branch options: ' + message, 'error');
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  gitSyncBranchState = response;
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  }
+  _renderGitSyncBranchOptions(response, {
+    preferredBranch: String(opts.preferredBranch || '').trim(),
+  });
+  _syncGitSyncButtonState();
+}
+
+async function refreshGitSyncBranchesNow() {
+  await refreshGitSyncBranches({ silent: false, force: true });
 }
 
 async function _runGitSyncAction(actionKey) {
@@ -3709,6 +3900,14 @@ async function _runGitSyncAction(actionKey) {
   } else {
     await refreshGitSyncStatus({ repoPath, silent: true, force: true });
   }
+  if (response.branches) {
+    gitSyncBranchState = response.branches;
+    _renderGitSyncBranchOptions(response.branches, {
+      preferredBranch: String(response.sync && response.sync.branch || '').trim(),
+    });
+  } else {
+    await refreshGitSyncBranches({ repoPath, silent: true, force: true });
+  }
 
   toast(String(response.message || action.successFallback), 'success');
 }
@@ -3727,6 +3926,134 @@ async function gitSyncPush() {
 
 async function gitSyncStashAndPull() {
   await _runGitSyncAction('stash_pull');
+}
+
+async function gitSyncSwitchBranch() {
+  if (gitSyncBusyAction) return;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+    return;
+  }
+
+  const target = _currentGitSyncBranchTarget();
+  if (!target) {
+    toast('Select a branch first.', 'warn');
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  const currentBranch = String((gitSyncState && gitSyncState.branch) || '').trim();
+  if (target.branch_type === 'local' && currentBranch && target.branch === currentBranch) {
+    toast('Already on branch ' + currentBranch + '.', 'info');
+    return;
+  }
+
+  const allowDirty = _gitSyncAllowDirtySwitchEnabled();
+  const running = target.branch_type === 'remote'
+    ? 'Checking out remote branch...'
+    : 'Switching branch...';
+  gitSyncBusyAction = 'checkout_branch';
+  _syncGitSyncButtonState();
+  _setGitSyncIndicator(running, 'muted', running);
+
+  const response = await postJson('/api/git/sync/checkout', {
+    repo_path: repoPath,
+    branch: target.branch,
+    branch_type: target.branch_type,
+    allow_dirty: allowDirty,
+  });
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitSyncIndicator(message, 'error', message);
+    toast('Branch switch failed: ' + message, 'error');
+    const recoverySteps = Array.isArray(response.recovery_steps) ? response.recovery_steps : [];
+    if (recoverySteps.length) {
+      toast('Recovery: ' + recoverySteps.join(' | '), 'info');
+    }
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    return;
+  }
+
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  }
+  if (response.branches) {
+    gitSyncBranchState = response.branches;
+    _renderGitSyncBranchOptions(response.branches, {
+      preferredBranch: String(response.sync && response.sync.branch || '').trim(),
+    });
+  } else {
+    await refreshGitSyncBranches({ repoPath, silent: true, force: true });
+  }
+
+  toast(String(response.message || 'Branch switched.'), 'success');
+}
+
+async function gitSyncCreateBranch() {
+  if (gitSyncBusyAction) return;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+    return;
+  }
+
+  const branchInput = document.getElementById('git-sync-branch-create-name');
+  const branchName = String(branchInput ? branchInput.value : '').trim();
+  if (!branchName) {
+    toast('Enter a branch name first.', 'warn');
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  const allowDirty = _gitSyncAllowDirtySwitchEnabled();
+  const running = 'Creating branch and checking it out...';
+  gitSyncBusyAction = 'create_branch';
+  _syncGitSyncButtonState();
+  _setGitSyncIndicator(running, 'muted', running);
+
+  const response = await postJson('/api/git/sync/branch/create', {
+    repo_path: repoPath,
+    branch_name: branchName,
+    allow_dirty: allowDirty,
+  });
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitSyncIndicator(message, 'error', message);
+    toast('Branch creation failed: ' + message, 'error');
+    const recoverySteps = Array.isArray(response.recovery_steps) ? response.recovery_steps : [];
+    if (recoverySteps.length) {
+      toast('Recovery: ' + recoverySteps.join(' | '), 'info');
+    }
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    return;
+  }
+
+  if (branchInput) branchInput.value = '';
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  }
+  if (response.branches) {
+    gitSyncBranchState = response.branches;
+    _renderGitSyncBranchOptions(response.branches, {
+      preferredBranch: String(response.sync && response.sync.branch || '').trim(),
+    });
+  } else {
+    await refreshGitSyncBranches({ repoPath, silent: true, force: true });
+  }
+  _syncGitSyncButtonState();
+
+  toast(String(response.message || 'Branch created.'), 'success');
 }
 
 function syncTodoWishlistRepoFromMain() {

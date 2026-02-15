@@ -1880,6 +1880,22 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert "data-phase-test-policy" in html
 
 
+def test_index_includes_git_branch_switcher_controls(client):
+    resp = client.get("/")
+    html = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert 'id="git-sync-branch-select"' in html
+    assert 'id="git-sync-branch-refresh-btn"' in html
+    assert 'onclick="refreshGitSyncBranchesNow()"' in html
+    assert 'onclick="gitSyncSwitchBranch()"' in html
+    assert 'id="git-sync-branch-create-name"' in html
+    assert 'onclick="gitSyncCreateBranch()"' in html
+    assert "/api/git/sync/branches?repo_path=" in html
+    assert "/api/git/sync/checkout" in html
+    assert "/api/git/sync/branch/create" in html
+    assert "allow dirty switch" in html
+
+
 def test_owner_feature_dreams_helpers_default_template_and_open_item_detection(tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     path = gui_app_module._feature_dreams_path(repo)
@@ -2257,6 +2273,130 @@ def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path
     assert dirty_data
     assert dirty_data["dirty"] is True
     assert dirty_data["untracked_changes"] >= 1
+
+
+def test_git_sync_branches_lists_local_and_remote_choices(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-branches")
+    _run_git("checkout", "-b", "feature/local-only", cwd=local)
+    _run_git("checkout", "main", cwd=local)
+
+    resp = client.get("/api/git/sync/branches", query_string={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["current_branch"] == "main"
+    assert "main" in data["local_branches"]
+    assert "feature/local-only" in data["local_branches"]
+    assert "origin/main" in data["remote_branches"]
+    assert "origin/dev" in data["remote_branches"]
+    assert not any(branch.endswith("/HEAD") for branch in data["remote_branches"])
+
+
+def test_git_sync_checkout_remote_branch_creates_tracking_branch(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-checkout-remote")
+
+    resp = client.post(
+        "/api/git/sync/checkout",
+        json={
+            "repo_path": str(local),
+            "branch": "origin/dev",
+            "branch_type": "remote",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "checked_out"
+    assert data["branch"] == "dev"
+    assert data["created_tracking_branch"] is True
+    assert data["sync"]["branch"] == "dev"
+    assert data["sync"]["tracking_branch"] == "origin/dev"
+
+    upstream = _run_git(
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+        cwd=local,
+    ).stdout
+    assert upstream.strip() == "origin/dev"
+
+
+def test_git_sync_checkout_blocks_dirty_worktree_without_allow_dirty(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-checkout-dirty")
+    (local / "DIRTY_BRANCH_SWITCH.txt").write_text("dirty branch switch\n", encoding="utf-8")
+
+    resp = client.post(
+        "/api/git/sync/checkout",
+        json={
+            "repo_path": str(local),
+            "branch": "origin/dev",
+            "branch_type": "remote",
+            "allow_dirty": False,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert data["error_type"] == "dirty_worktree"
+    assert isinstance(data["recovery_steps"], list)
+    assert data["sync"]["dirty"] is True
+
+
+def test_git_sync_branch_create_creates_and_switches_branch(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-branch-create")
+
+    resp = client.post(
+        "/api/git/sync/branch/create",
+        json={
+            "repo_path": str(local),
+            "branch_name": "feature/sync-branch-create",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "branch_created"
+    assert data["branch"] == "feature/sync-branch-create"
+    assert data["sync"]["branch"] == "feature/sync-branch-create"
+
+    ref = _run_git(
+        "rev-parse",
+        "--verify",
+        "refs/heads/feature/sync-branch-create",
+        cwd=local,
+    ).stdout
+    assert ref.strip()
+
+
+def test_git_sync_branch_create_blocks_dirty_worktree_without_allow_dirty(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-branch-create-dirty")
+    (local / "DIRTY_BRANCH_CREATE.txt").write_text("dirty branch create\n", encoding="utf-8")
+
+    resp = client.post(
+        "/api/git/sync/branch/create",
+        json={
+            "repo_path": str(local),
+            "branch_name": "feature/dirty-create",
+            "allow_dirty": False,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert data["error_type"] == "dirty_worktree"
+    assert isinstance(data["recovery_steps"], list)
+    assert data["sync"]["dirty"] is True
 
 
 def test_git_sync_fetch_then_pull_updates_behind_count(client, tmp_path: Path):
