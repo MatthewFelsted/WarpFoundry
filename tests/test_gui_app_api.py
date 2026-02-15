@@ -667,6 +667,57 @@ def test_system_restart_spawns_replacement_server_with_checkpoint(
     assert "terminated" in observed
 
 
+def test_pipeline_resume_state_reports_checkpoint_payload(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    checkpoint = repo / ".codex_manager" / "state" / "pipeline_resume.json"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "repo_path": str(repo.resolve()),
+                "config": {"mode": "dry-run"},
+                "resume_cycle": 3,
+                "resume_phase_index": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/resume-state",
+        query_string={"repo_path": str(repo)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["exists"] is True
+    assert data["resume_ready"] is True
+    assert data["resume_cycle"] == 3
+    assert data["resume_phase_index"] == 2
+    assert data["saved_at_epoch_ms"] > 0
+    assert Path(data["checkpoint_path"]).resolve() == checkpoint.resolve()
+
+
+def test_pipeline_resume_state_clear_deletes_checkpoint(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    checkpoint = repo / ".codex_manager" / "state" / "pipeline_resume.json"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text("{}", encoding="utf-8")
+
+    resp = client.post(
+        "/api/pipeline/resume-state/clear",
+        json={"repo_path": str(repo)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "cleared"
+    assert data["removed"] is True
+    assert checkpoint.exists() is False
+
+
 def test_model_watchdog_status_endpoint_returns_watchdog_payload(client, monkeypatch):
     class _WatchdogStub:
         def status(self):
@@ -1405,6 +1456,13 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert 'onclick="implementNextDreamedFeature()"' in html
     assert "async function implementNextDreamedFeature()" in html
     assert "_implementNextDreamPrompt(" in html
+    assert 'id="pipe-resume-card"' in html
+    assert 'onclick="resumePipelineFromCheckpoint()"' in html
+    assert 'onclick="startFreshPipelineRun()"' in html
+    assert "async function resumePipelineFromCheckpoint()" in html
+    assert "async function startFreshPipelineRun()" in html
+    assert "/api/pipeline/resume-state?repo_path=" in html
+    assert "/api/pipeline/resume-state/clear" in html
 
 
 def test_owner_feature_dreams_helpers_default_template_and_open_item_detection(tmp_path: Path):

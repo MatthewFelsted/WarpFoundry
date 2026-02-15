@@ -841,6 +841,74 @@ def _feature_dreams_path(repo: Path) -> Path:
     return repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md"
 
 
+def _pipeline_resume_checkpoint_path(repo: Path) -> Path:
+    return repo / ".codex_manager" / "state" / "pipeline_resume.json"
+
+
+def _pipeline_resume_summary(repo: Path) -> dict[str, object]:
+    checkpoint = _pipeline_resume_checkpoint_path(repo)
+    payload: dict[str, object] = {
+        "exists": checkpoint.is_file(),
+        "checkpoint_path": str(checkpoint.resolve()),
+        "resume_ready": False,
+        "resume_cycle": 0,
+        "resume_phase_index": 0,
+        "repo_path": str(repo.resolve()),
+        "saved_at_epoch_ms": 0,
+    }
+    if not checkpoint.is_file():
+        return payload
+
+    try:
+        payload["saved_at_epoch_ms"] = int(checkpoint.stat().st_mtime * 1000)
+    except OSError:
+        payload["saved_at_epoch_ms"] = 0
+
+    try:
+        raw = json.loads(_read_text_utf8_resilient(checkpoint))
+    except Exception as exc:
+        payload["error"] = f"Could not parse checkpoint: {exc}"
+        return payload
+
+    if not isinstance(raw, dict):
+        payload["error"] = "Checkpoint payload must be a JSON object."
+        return payload
+
+    checkpoint_repo_path = str(raw.get("repo_path") or "").strip()
+    if checkpoint_repo_path:
+        payload["checkpoint_repo_path"] = checkpoint_repo_path
+    try:
+        resume_cycle = int(raw.get("resume_cycle") or 1)
+        resume_phase_index = int(raw.get("resume_phase_index") or 0)
+    except (TypeError, ValueError):
+        payload["error"] = "Checkpoint resume fields are invalid."
+        return payload
+
+    payload["resume_cycle"] = max(1, resume_cycle)
+    payload["resume_phase_index"] = max(0, resume_phase_index)
+
+    config_payload = raw.get("config")
+    if not isinstance(config_payload, dict):
+        payload["error"] = "Checkpoint missing pipeline config."
+        return payload
+
+    if checkpoint_repo_path:
+        try:
+            checkpoint_repo_resolved = str(Path(checkpoint_repo_path).expanduser().resolve())
+        except Exception:
+            checkpoint_repo_resolved = checkpoint_repo_path
+        payload["checkpoint_repo_path"] = checkpoint_repo_resolved
+        if checkpoint_repo_resolved != str(repo.resolve()):
+            payload["error"] = (
+                "Checkpoint repo does not match selected repository "
+                f"({checkpoint_repo_resolved})."
+            )
+            return payload
+
+    payload["resume_ready"] = True
+    return payload
+
+
 def _default_todo_wishlist_markdown(project_name: str) -> str:
     name = str(project_name or "Project").strip() or "Project"
     return (
@@ -3290,6 +3358,50 @@ def api_pipeline_phases():
             }
         )
     return jsonify(phases)
+
+
+@app.route("/api/pipeline/resume-state")
+def api_pipeline_resume_state():
+    """Return whether a repository has a resumable pipeline checkpoint."""
+    repo_path_raw = str(request.args.get("repo_path") or "").strip()
+    if not repo_path_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+
+    repo_path = Path(repo_path_raw).expanduser().resolve()
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_path_raw}"}), 400
+
+    return jsonify(_pipeline_resume_summary(repo_path))
+
+
+@app.route("/api/pipeline/resume-state/clear", methods=["POST"])
+def api_pipeline_resume_state_clear():
+    """Delete a repository's pipeline resume checkpoint if present."""
+    data = request.get_json(silent=True) or {}
+    repo_path_raw = str(data.get("repo_path") or "").strip()
+    if not repo_path_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+
+    repo_path = Path(repo_path_raw).expanduser().resolve()
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_path_raw}"}), 400
+
+    checkpoint = _pipeline_resume_checkpoint_path(repo_path)
+    removed = False
+    try:
+        if checkpoint.is_file():
+            checkpoint.unlink(missing_ok=True)
+            removed = True
+    except OSError as exc:
+        return jsonify({"error": f"Could not clear checkpoint: {exc}"}), 500
+
+    return jsonify(
+        {
+            "status": "cleared",
+            "removed": removed,
+            "checkpoint_path": str(checkpoint.resolve()),
+        }
+    )
 
 
 @app.route("/api/pipeline/start", methods=["POST"])

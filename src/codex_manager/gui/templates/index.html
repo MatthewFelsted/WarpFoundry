@@ -636,6 +636,12 @@ body.mode-medium .easy-only{display:none}
 #pipeline-config{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px}
 #pipeline-exec > *{margin-bottom:16px}
 #pipeline-exec > *:last-child{margin-bottom:0}
+.resume-card{display:flex;flex-direction:column;gap:8px}
+.resume-card.hidden{display:none}
+.resume-card-title{font-size:13px;font-weight:700;color:var(--text)}
+.resume-card-sub{font-size:12px;color:var(--text2);line-height:1.45}
+.resume-card-meta{font-size:11px;color:var(--text3);line-height:1.4}
+.resume-card-actions{display:flex;gap:8px;flex-wrap:wrap}
 .phase-list{display:flex;flex-direction:column;gap:4px}
 .phase-item{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);transition:all .15s;overflow:hidden}
 .phase-item:hover{background:var(--surface2)}
@@ -1703,6 +1709,18 @@ body.mode-medium .easy-only{display:none}
       <button class="btn btn-success" id="pipe-btn-start" onclick="startPipeline()">&#9654; Start Pipeline</button>
       <button class="btn btn-warning" id="pipe-btn-pause" onclick="pausePipeline()" disabled>&#9208; Pause</button>
       <button class="btn btn-danger"  id="pipe-btn-stop"  onclick="stopPipeline()"  disabled>&#9209; Stop</button>
+    </div>
+  </div>
+
+  <div class="state-card warning resume-card hidden" id="pipe-resume-card" aria-live="polite">
+    <div class="resume-card-title">Resume last run</div>
+    <div class="resume-card-sub" id="pipe-resume-summary">
+      A resumable pipeline checkpoint is available for this repository.
+    </div>
+    <div class="resume-card-meta" id="pipe-resume-meta"></div>
+    <div class="resume-card-actions">
+      <button class="btn btn-warning" type="button" id="pipe-resume-btn" onclick="resumePipelineFromCheckpoint()">Resume</button>
+      <button class="btn" type="button" id="pipe-start-fresh-btn" onclick="startFreshPipelineRun()">Start fresh</button>
     </div>
   </div>
 
@@ -5934,6 +5952,15 @@ function switchTab(tabId) {
   if (tabId === 'pipeline' && !pipelinePhases.length) {
     loadPipelinePhases();
   }
+  if (tabId === 'pipeline') {
+    const repoPath = String(document.getElementById('pipe-repo-path').value || '').trim();
+    if (repoPath) {
+      schedulePipelineResumeRefresh(repoPath, { delayMs: 0, silent: true });
+    } else {
+      pipelineResumeState = null;
+      renderPipelineResumeCard();
+    }
+  }
 }
 
 /* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */
@@ -5960,6 +5987,8 @@ const PHASE_ICONS = {
 let pipelinePhases = [];
 let pipelineSSE = null;
 let pipelinePollTimer = null;
+let pipelineResumeRefreshTimer = null;
+let pipelineResumeState = null;
 
 const pipeConfig = {
   repo_path: '',
@@ -6333,7 +6362,12 @@ function validatePipeRepo() {
   const path = document.getElementById('pipe-repo-path').value.trim();
   pipeConfig.repo_path = path;
   scheduleDiagnosticsRefresh('pipeline');
-  if (!path) { document.getElementById('pipe-repo-status').textContent = ''; return; }
+  if (!path) {
+    document.getElementById('pipe-repo-status').textContent = '';
+    pipelineResumeState = null;
+    renderPipelineResumeCard();
+    return;
+  }
   pipeRepoTimeout = setTimeout(async () => {
     try {
       const r = await postJson('/api/validate-repo', {path});
@@ -6343,11 +6377,155 @@ function validatePipeRepo() {
       else if (r.exists)  { el.textContent = '\u26a0\ufe0f'; el.title = 'Not a git repo'; }
       else                { el.textContent = '\u274c'; el.title = 'Path not found'; }
       maybeAutoEnableVectorMemory('pipeline', r);
+      schedulePipelineResumeRefresh(path, { delayMs: 0, silent: true });
     } catch(e) {}
   }, 400);
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Pipeline Execution Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
+
+function schedulePipelineResumeRefresh(repoPath, opts = {}) {
+  if (pipelineResumeRefreshTimer) {
+    clearTimeout(pipelineResumeRefreshTimer);
+    pipelineResumeRefreshTimer = null;
+  }
+  const normalizedRepoPath = String(repoPath || pipeConfig.repo_path || '').trim();
+  if (!normalizedRepoPath) {
+    pipelineResumeState = null;
+    renderPipelineResumeCard();
+    return;
+  }
+  const delayRaw = Number(opts.delayMs);
+  const delayMs = Number.isFinite(delayRaw) ? Math.max(0, Math.floor(delayRaw)) : 300;
+  pipelineResumeRefreshTimer = setTimeout(() => {
+    pipelineResumeRefreshTimer = null;
+    refreshPipelineResumeState({
+      repoPath: normalizedRepoPath,
+      silent: opts.silent !== false,
+    });
+  }, delayMs);
+}
+
+async function refreshPipelineResumeState(opts = {}) {
+  const repoPath = String(
+    opts.repoPath || pipeConfig.repo_path || document.getElementById('pipe-repo-path').value || ''
+  ).trim();
+  if (!repoPath) {
+    pipelineResumeState = null;
+    renderPipelineResumeCard();
+    return;
+  }
+  const resp = await api('/api/pipeline/resume-state?repo_path=' + encodeURIComponent(repoPath));
+  const currentRepoPath = String(document.getElementById('pipe-repo-path').value || '').trim();
+  if (currentRepoPath && currentRepoPath !== repoPath) return;
+  if (resp && resp.error) {
+    if (!opts.silent) toast(resp.error, 'error');
+    pipelineResumeState = null;
+    renderPipelineResumeCard();
+    return;
+  }
+  pipelineResumeState = resp && typeof resp === 'object' ? resp : null;
+  renderPipelineResumeCard();
+}
+
+function renderPipelineResumeCard() {
+  const card = document.getElementById('pipe-resume-card');
+  if (!card) return;
+  const summaryEl = document.getElementById('pipe-resume-summary');
+  const metaEl = document.getElementById('pipe-resume-meta');
+  const resumeBtn = document.getElementById('pipe-resume-btn');
+  const freshBtn = document.getElementById('pipe-start-fresh-btn');
+  const repoPath = String(pipeConfig.repo_path || '').trim();
+  const state = (pipelineResumeState && typeof pipelineResumeState === 'object')
+    ? pipelineResumeState
+    : null;
+  const hasCheckpoint = !!(state && state.exists);
+  if (!repoPath || !hasCheckpoint || pipeRunning || pipePaused) {
+    card.classList.add('hidden');
+    return;
+  }
+
+  const ready = !!state.resume_ready;
+  const cycle = Number(state.resume_cycle || 0);
+  const phaseIndex = Number(state.resume_phase_index || 0);
+  const savedAtEpochMs = Number(state.saved_at_epoch_ms || 0);
+  const errorText = String(state.error || '').trim();
+  const details = [];
+  if (cycle > 0) details.push('Cycle ' + cycle);
+  if (phaseIndex >= 0) details.push('Phase index ' + phaseIndex);
+  if (savedAtEpochMs > 0) details.push('Saved ' + new Date(savedAtEpochMs).toLocaleString());
+  if (errorText) details.push(errorText);
+
+  if (summaryEl) {
+    summaryEl.textContent = ready
+      ? 'A resumable pipeline checkpoint is available for this repository.'
+      : 'A checkpoint was found, but it cannot be resumed safely.';
+  }
+  if (metaEl) metaEl.textContent = details.join(' | ');
+  if (resumeBtn) {
+    resumeBtn.disabled = !ready;
+    resumeBtn.title = ready
+      ? 'Restart and continue from the saved checkpoint.'
+      : (errorText || 'Checkpoint is not resumable.');
+  }
+  if (freshBtn) {
+    freshBtn.disabled = false;
+  }
+  card.classList.remove('hidden');
+}
+
+async function resumePipelineFromCheckpoint() {
+  const state = (pipelineResumeState && typeof pipelineResumeState === 'object')
+    ? pipelineResumeState
+    : {};
+  const checkpointPath = String(state.checkpoint_path || '').trim();
+  if (!checkpointPath) {
+    toast('No resume checkpoint found for this repository.', 'error');
+    return;
+  }
+  if (!state.resume_ready) {
+    toast(String(state.error || 'Checkpoint is not resumable.'), 'error');
+    return;
+  }
+  await requestServerRestart(checkpointPath, { auto: false });
+}
+
+async function clearPipelineResumeCheckpoint(opts = {}) {
+  const repoPath = String(
+    opts.repoPath || pipeConfig.repo_path || document.getElementById('pipe-repo-path').value || ''
+  ).trim();
+  if (!repoPath) return false;
+  const resp = await postJson('/api/pipeline/resume-state/clear', { repo_path: repoPath });
+  if (resp.error) {
+    if (!opts.silent) toast(resp.error, 'error');
+    return false;
+  }
+  if (!opts.silent && resp.removed) {
+    toast('Cleared pipeline resume checkpoint.', 'info');
+  }
+  pipelineResumeState = null;
+  await refreshPipelineResumeState({ repoPath, silent: true });
+  return true;
+}
+
+async function startFreshPipelineRun() {
+  if (pipeRunning || pipePaused) {
+    toast('Pipeline is already running.', 'info');
+    return;
+  }
+  const repoPath = String(document.getElementById('pipe-repo-path').value || '').trim();
+  if (!repoPath) {
+    toast('Set a repository path first', 'error');
+    return;
+  }
+  const hasCheckpoint = !!(pipelineResumeState && pipelineResumeState.exists);
+  if (hasCheckpoint) {
+    const cleared = await clearPipelineResumeCheckpoint({ repoPath, silent: true });
+    if (!cleared) return;
+    toast('Starting a fresh run (resume checkpoint cleared).', 'info');
+  }
+  await startPipeline();
+}
 
 async function startPipeline() {
   // Sync all config from UI inputs (consistent with chain builder's startChain)
@@ -6453,6 +6631,7 @@ async function startPipeline() {
   pipeRunning = true;
   pipePaused = false;
   renderActivityHeartbeats();
+  renderPipelineResumeCard();
   document.getElementById('pipe-progress-last-log').textContent = 'Last log: waiting for first message...';
   renderStopGuidance('pipe-stop-guidance', null, false);
   document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card loading">Connecting to live log stream...</div>';
@@ -6463,6 +6642,7 @@ async function startPipeline() {
     pipeRunning = false;
     pipePaused = false;
     renderActivityHeartbeats();
+    renderPipelineResumeCard();
     document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card error">Could not start pipeline. Check diagnostics and configuration.</div>';
     document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
     toast(resp.error, 'error');
@@ -6500,6 +6680,7 @@ function setPipeControlsRunning(running) {
   document.getElementById('pipe-btn-start').disabled = running;
   document.getElementById('pipe-btn-pause').disabled = !running;
   document.getElementById('pipe-btn-stop').disabled  = !running;
+  renderPipelineResumeCard();
 }
 
 function connectPipeSSE() {
@@ -6559,6 +6740,7 @@ async function pollPipeStatus() {
       clearInterval(pipelinePollTimer);
       pipelinePollTimer = null;
       if (pipelineSSE) { pipelineSSE.close(); pipelineSSE = null; }
+      schedulePipelineResumeRefresh(pipeConfig.repo_path, { delayMs: 0, silent: true });
     }
   } catch(e) {}
 }
@@ -6575,6 +6757,17 @@ async function maybeHandlePipelineSelfRestart(statusPayload) {
     await requestServerRestart(checkpointPath, { auto: true });
     return;
   }
+
+  pipelineResumeState = {
+    exists: true,
+    resume_ready: true,
+    checkpoint_path: checkpointPath,
+    resume_cycle: Number(statusPayload.resume_cycle || 1),
+    resume_phase_index: Number(statusPayload.resume_phase_index || 0),
+    repo_path: String(pipeConfig.repo_path || ''),
+    saved_at_epoch_ms: Date.now(),
+  };
+  renderPipelineResumeCard();
 
   if (selfRestartNoticeCheckpoint !== checkpointPath) {
     selfRestartNoticeCheckpoint = checkpointPath;
