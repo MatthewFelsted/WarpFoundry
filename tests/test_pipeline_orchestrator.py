@@ -528,6 +528,7 @@ def test_quoted_test_command_is_parsed(monkeypatch, tmp_path: Path):
             PhaseConfig(
                 phase=PipelinePhase.IDEATION,
                 iterations=1,
+                test_policy="full",
                 custom_prompt="noop",
             )
         ],
@@ -537,6 +538,108 @@ def test_quoted_test_command_is_parsed(monkeypatch, tmp_path: Path):
     assert _SpyEvaluator.instances
     assert _SpyEvaluator.instances[0].skip_tests is False
     assert _SpyEvaluator.instances[0].test_cmd == ["pytest", "-k", "slow suite", "-q"]
+
+
+def test_smoke_policy_uses_smoke_test_command(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _SpyEvaluator.instances.clear()
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="pytest -q",
+        smoke_test_cmd="pytest -q -m smoke",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                test_policy="smoke",
+                custom_prompt="noop",
+            )
+        ],
+    )
+    PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert _SpyEvaluator.instances
+    assert _SpyEvaluator.instances[0].skip_tests is False
+    assert _SpyEvaluator.instances[0].test_cmd == ["pytest", "-q", "-m", "smoke"]
+
+
+def test_smoke_policy_falls_back_to_full_test_command(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _SpyEvaluator.instances.clear()
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="pytest -q",
+        smoke_test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                test_policy="smoke",
+                custom_prompt="noop",
+            )
+        ],
+    )
+    PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert _SpyEvaluator.instances
+    assert _SpyEvaluator.instances[0].skip_tests is False
+    assert _SpyEvaluator.instances[0].test_cmd == ["pytest", "-q"]
+
+
+def test_skip_policy_overrides_configured_test_commands(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _SpyEvaluator.instances.clear()
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="pytest -q",
+        smoke_test_cmd="pytest -q -m smoke",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.TESTING,
+                iterations=1,
+                test_policy="skip",
+                custom_prompt="noop",
+            )
+        ],
+    )
+    PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert _SpyEvaluator.instances
+    assert _SpyEvaluator.instances[0].skip_tests is True
+    assert _SpyEvaluator.instances[0].test_cmd is None
 
 
 def test_implementation_phase_noop_is_validation_failure(monkeypatch, tmp_path: Path):

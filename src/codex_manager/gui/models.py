@@ -15,6 +15,7 @@ DependencyInstallPolicy = Literal["disallow", "project_only", "allow_system"]
 ImageProvider = Literal["openai", "google"]
 VectorMemoryBackend = Literal["chroma"]
 DeepResearchProviders = Literal["openai", "google", "both"]
+TestPolicy = Literal["skip", "smoke", "full"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -171,6 +172,7 @@ class PipelinePhaseGUI(BaseModel):
     iterations: int = 1
     agent: str = "codex"
     on_failure: str = "skip"  # "skip" | "retry" | "abort"
+    test_policy: TestPolicy | None = None  # "skip" | "smoke" | "full"
     custom_prompt: str = ""  # if non-empty, overrides catalog prompt for this phase
 
 
@@ -199,6 +201,7 @@ class PipelineGUIConfig(BaseModel):
     stop_on_convergence: bool = True
 
     # Advanced settings (consistent with ChainConfig)
+    smoke_test_cmd: str = ""  # optional quick validation command (e.g. pytest -m smoke)
     test_cmd: str = ""  # empty = skip tests; set to e.g. "python -m pytest -q" for code repos
     codex_binary: str = "codex"
     claude_binary: str = "claude"

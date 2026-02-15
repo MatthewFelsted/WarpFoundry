@@ -3299,6 +3299,7 @@ def api_pipeline_phases():
         SCIENCE_PHASES,
         SELF_IMPROVEMENT_PHASES,
         PipelinePhase,
+        default_test_policy_for_phase,
     )
 
     # Load prompt catalog for phase descriptions and prompt text
@@ -3348,6 +3349,7 @@ def api_pipeline_phases():
                 "key": key,
                 "name": key.replace("_", " ").title(),
                 "default_iterations": DEFAULT_ITERATIONS.get(phase, 1),
+                "default_test_policy": default_test_policy_for_phase(phase),
                 "log_file": PHASE_LOG_FILES.get(phase, ""),
                 "is_science": is_science,
                 "is_deep_research": is_deep_research,
@@ -3440,6 +3442,7 @@ def api_pipeline_start():
                     iterations=pg.iterations,
                     agent=pg.agent,
                     on_failure=pg.on_failure,
+                    test_policy=pg.test_policy,
                     custom_prompt=pg.custom_prompt,
                 )
             )
@@ -3462,6 +3465,7 @@ def api_pipeline_start():
         cua_provider=gui_config.cua_provider,
         cua_target_url=gui_config.cua_target_url,
         cua_task=gui_config.cua_task,
+        smoke_test_cmd=gui_config.smoke_test_cmd,
         test_cmd=gui_config.test_cmd,
         codex_binary=gui_config.codex_binary,
         claude_binary=gui_config.claude_binary,

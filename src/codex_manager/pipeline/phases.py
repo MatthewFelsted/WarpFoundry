@@ -22,6 +22,7 @@ DependencyInstallPolicy = Literal["disallow", "project_only", "allow_system"]
 ImageProvider = Literal["openai", "google"]
 VectorMemoryBackend = Literal["chroma"]
 DeepResearchProviders = Literal["openai", "google", "both"]
+TestPolicy = Literal["skip", "smoke", "full"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -90,6 +91,33 @@ DEFAULT_ITERATIONS: dict[PipelinePhase, int] = {
     PipelinePhase.ANALYZE: 1,  # Analyze once
 }
 
+# Default per-phase test policy.
+# skip: do not run tests for this phase
+# smoke: run quick checks (falls back to full command if smoke command is unset)
+# full: run full validation command
+DEFAULT_TEST_POLICY: dict[PipelinePhase, TestPolicy] = {
+    PipelinePhase.IDEATION: "skip",
+    PipelinePhase.PRIORITIZATION: "skip",
+    PipelinePhase.IMPLEMENTATION: "smoke",
+    PipelinePhase.TESTING: "full",
+    PipelinePhase.DEBUGGING: "smoke",
+    PipelinePhase.COMMIT: "smoke",
+    PipelinePhase.DEEP_RESEARCH: "skip",
+    PipelinePhase.APPLY_UPGRADES_AND_RESTART: "smoke",
+    PipelinePhase.PROGRESS_REVIEW: "skip",
+    PipelinePhase.VISUAL_TEST: "smoke",
+    PipelinePhase.THEORIZE: "skip",
+    PipelinePhase.EXPERIMENT: "smoke",
+    PipelinePhase.SKEPTIC: "smoke",
+    PipelinePhase.ANALYZE: "skip",
+}
+
+
+def default_test_policy_for_phase(phase: PipelinePhase) -> TestPolicy:
+    """Return the default test policy for a phase."""
+    return DEFAULT_TEST_POLICY.get(phase, "skip")
+
+
 # Default phase execution order
 DEFAULT_PHASE_ORDER: list[PipelinePhase] = [
     PipelinePhase.IDEATION,
@@ -133,8 +161,15 @@ class PhaseConfig(BaseModel):
     iterations: int = 1
     agent: str = "codex"  # "codex" | "claude_code" | "auto"
     on_failure: str = "skip"  # "skip" | "retry" | "abort"
+    test_policy: TestPolicy | None = None  # "skip" | "smoke" | "full"
     max_retries: int = 2
     custom_prompt: str = ""  # if non-empty, overrides catalog prompt for this phase
+
+    @model_validator(mode="after")
+    def _default_test_policy(self) -> PhaseConfig:
+        if not self.test_policy:
+            self.test_policy = default_test_policy_for_phase(self.phase)
+        return self
 
     @classmethod
     def defaults_for(
@@ -148,6 +183,7 @@ class PhaseConfig(BaseModel):
             phase=phase,
             iterations=DEFAULT_ITERATIONS.get(phase, 1),
             agent=agent,
+            test_policy=default_test_policy_for_phase(phase),
         )
 
 
@@ -193,6 +229,7 @@ class PipelineConfig(BaseModel):
     self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_phase: int = 0
+    smoke_test_cmd: str = "python -m pytest -q -m smoke"
     test_cmd: str = "python -m pytest -q"
 
     # Phase configuration

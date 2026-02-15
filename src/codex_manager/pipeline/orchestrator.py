@@ -57,6 +57,7 @@ from codex_manager.ledger import KnowledgeLedger
 from codex_manager.memory.vector_store import ProjectVectorMemory
 from codex_manager.pipeline.phases import (
     PHASE_LOG_FILES,
+    PhaseConfig,
     PhaseResult,
     PipelineConfig,
     PipelinePhase,
@@ -1754,8 +1755,8 @@ class PipelineOrchestrator:
             )
         runners["auto"] = runners["codex"]
 
-        test_cmd = parse_test_command(config.test_cmd)
-        evaluator = RepoEvaluator(test_cmd=test_cmd, skip_tests=(test_cmd is None))
+        full_test_cmd = parse_test_command(config.test_cmd)
+        smoke_test_cmd = parse_test_command(config.smoke_test_cmd)
 
         # Initialize brain
         brain = BrainManager(
@@ -2167,10 +2168,30 @@ class PipelineOrchestrator:
                             "instead of repeating expensive research."
                         )
 
+                    phase_test_policy = self._normalized_test_policy(
+                        getattr(phase_cfg, "test_policy", "skip")
+                    )
+                    phase_evaluator = self._build_phase_evaluator(
+                        phase=phase,
+                        phase_cfg=phase_cfg,
+                        full_test_cmd=full_test_cmd,
+                        smoke_test_cmd=smoke_test_cmd,
+                        timeout_seconds=config.timeout_per_phase,
+                    )
+                    if phase_test_policy in {"smoke", "full"} and phase_evaluator.skip_tests:
+                        self._log(
+                            "warn",
+                            (
+                                f"  Phase '{phase.value}' requested {phase_test_policy} tests, "
+                                "but no matching command is configured; tests will be skipped."
+                            ),
+                        )
+
                     self._log(
                         "info",
                         f"Phase: {phase.value} "
-                        f"({phase_cfg.iterations} iteration{'s' if phase_cfg.iterations > 1 else ''})",
+                        f"({phase_cfg.iterations} iteration{'s' if phase_cfg.iterations > 1 else ''}) "
+                        f"| test policy: {phase_test_policy}",
                     )
 
                     for iteration in range(1, phase_cfg.iterations + 1):
@@ -2190,7 +2211,7 @@ class PipelineOrchestrator:
                         science_baseline_clean = False
                         science_hypothesis: dict[str, str] | None = None
                         if self._is_science_phase(phase):
-                            science_baseline_eval = evaluator.evaluate(repo)
+                            science_baseline_eval = phase_evaluator.evaluate(repo)
                             science_baseline_clean = is_clean(repo)
                             preferred_hypothesis_id = (
                                 science_latest_hypothesis_id
@@ -2291,7 +2312,7 @@ class PipelineOrchestrator:
 
                             result = self._execute_phase(
                                 runner,
-                                evaluator,
+                                phase_evaluator,
                                 repo,
                                 config,
                                 phase,
@@ -2514,7 +2535,7 @@ class PipelineOrchestrator:
                                     )
                                     followup_result = self._execute_phase(
                                         runner,
-                                        evaluator,
+                                        phase_evaluator,
                                         repo,
                                         config,
                                         phase,
@@ -2901,6 +2922,42 @@ class PipelineOrchestrator:
     # ------------------------------------------------------------------
     # Phase execution
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalized_test_policy(raw_policy: object) -> str:
+        policy = str(raw_policy or "skip").strip().lower()
+        if policy in {"skip", "smoke", "full"}:
+            return policy
+        return "skip"
+
+    def _build_phase_evaluator(
+        self,
+        *,
+        phase: PipelinePhase,
+        phase_cfg: PhaseConfig,
+        full_test_cmd: list[str] | None,
+        smoke_test_cmd: list[str] | None,
+        timeout_seconds: int,
+    ) -> RepoEvaluator:
+        policy = self._normalized_test_policy(getattr(phase_cfg, "test_policy", "skip"))
+        selected_cmd: list[str] | None = None
+        if policy == "full":
+            selected_cmd = full_test_cmd
+        elif policy == "smoke":
+            selected_cmd = smoke_test_cmd if smoke_test_cmd is not None else full_test_cmd
+            if smoke_test_cmd is None and full_test_cmd is not None:
+                self._log(
+                    "info",
+                    (
+                        f"  Phase '{phase.value}' uses smoke policy; "
+                        "falling back to full validation command."
+                    ),
+                )
+        return RepoEvaluator(
+            test_cmd=selected_cmd,
+            timeout=timeout_seconds,
+            skip_tests=(selected_cmd is None),
+        )
 
     def _execute_phase(
         self,

@@ -1465,6 +1465,11 @@ body.mode-medium .easy-only{display:none}
           <div class="field-help">Runs after each phase to catch regressions early.</div>
         </div>
         <div class="form-row">
+          <label>Smoke Test Command (optional) <span class="help-icon" title="Used by phases set to the smoke test policy. Falls back to Validation Command when empty.">?</span></label>
+          <input type="text" id="pipe-smoke-test-cmd" value="" placeholder="e.g. python -m pytest -q -m smoke">
+          <div class="field-help">Quick test command for implementation/debugging phases configured as smoke.</div>
+        </div>
+        <div class="form-row">
           <label>Permission Profile <span class="help-icon" title="Pick a preset. Most users should use Recommended.">?</span></label>
           <select id="pipe-codex-permission-profile" onchange="setPermissionProfile('pipeline', this.value)">
             <option value="safe">Recommended: Safe Repo Access</option>
@@ -6011,6 +6016,7 @@ const pipeConfig = {
   strict_token_budget: false,
   stop_on_convergence: true,
   // Advanced settings (consistent with chain builder)
+  smoke_test_cmd: '',
   test_cmd: '',
   codex_binary: 'codex',
   codex_reasoning_effort: 'xhigh',
@@ -6079,6 +6085,7 @@ function applyPipeConfigToUi() {
   document.getElementById('pipe-local-only').checked = !!pipeConfig.local_only;
   document.getElementById('pipe-auto-commit').checked = pipeConfig.auto_commit !== false;
   document.getElementById('pipe-commit-freq').value = pipeConfig.commit_frequency || 'per_phase';
+  document.getElementById('pipe-smoke-test-cmd').value = pipeConfig.smoke_test_cmd || '';
   document.getElementById('pipe-test-cmd').value = pipeConfig.test_cmd || '';
   document.getElementById('pipe-codex-bin').value = pipeConfig.codex_binary || 'codex';
   document.getElementById('pipe-claude-bin').value = pipeConfig.claude_binary || 'claude';
@@ -6141,6 +6148,7 @@ function renderPipelinePhases() {
     const desc = p.description || '';
     const prompt = _phasePromptOverrides[p.key] || p.prompt || '';
     const isCustom = !!_phasePromptOverrides[p.key];
+    const defaultTestPolicy = (p.default_test_policy || 'skip');
 
     return '<div class="phase-item" data-phase="' + p.key + '">'
       // Header row (clickable to expand)
@@ -6172,7 +6180,7 @@ function renderPipelinePhases() {
         ? '<button onclick="resetPhasePrompt(\'' + p.key + '\')" style="margin-top:4px;font-size:11px;padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text2);cursor:pointer" title="Revert to catalog default">Reset to default</button>'
         : '')
       +   '</div>'
-      // Meta row: agent, on-failure, log file
+      // Meta row: agent, on-failure, test policy, log file
       +   '<div class="phase-meta-row">'
       +     '<div class="form-row">'
       +       '<label>Agent</label>'
@@ -6187,6 +6195,14 @@ function renderPipelinePhases() {
       +         '<option value="skip">Skip</option>'
       +         '<option value="retry">Retry</option>'
       +         '<option value="abort">Abort</option>'
+      +       '</select>'
+      +     '</div>'
+      +     '<div class="form-row">'
+      +       '<label>Tests</label>'
+      +       '<select data-phase-test-policy="' + p.key + '">'
+      +         '<option value="skip"' + (defaultTestPolicy === 'skip' ? ' selected' : '') + '>Skip</option>'
+      +         '<option value="smoke"' + (defaultTestPolicy === 'smoke' ? ' selected' : '') + '>Smoke</option>'
+      +         '<option value="full"' + (defaultTestPolicy === 'full' ? ' selected' : '') + '>Full</option>'
       +       '</select>'
       +     '</div>'
       +     '<div class="form-row">'
@@ -6548,6 +6564,7 @@ async function startPipeline() {
   pipeConfig.cua_task               = document.getElementById('pipe-cua-task').value.trim();
   pipeConfig.auto_commit            = document.getElementById('pipe-auto-commit').checked;
   pipeConfig.commit_frequency       = document.getElementById('pipe-commit-freq').value;
+  pipeConfig.smoke_test_cmd         = document.getElementById('pipe-smoke-test-cmd').value.trim();
   pipeConfig.test_cmd               = document.getElementById('pipe-test-cmd').value.trim();
   pipeConfig.codex_binary           = document.getElementById('pipe-codex-bin').value.trim();
   pipeConfig.codex_reasoning_effort = document.getElementById('pipe-codex-reasoning-effort').value;
@@ -6616,10 +6633,12 @@ async function startPipeline() {
     const iter = parseInt(el.querySelector('.phase-iter').value) || 1;
     const agentSel = el.querySelector('[data-phase-agent]');
     const failSel = el.querySelector('[data-phase-on-failure]');
+    const testPolicySel = el.querySelector('[data-phase-test-policy]');
     const agent = agentSel ? agentSel.value : pipeConfig.agent;
     const on_failure = failSel ? failSel.value : 'skip';
+    const test_policy = testPolicySel ? testPolicySel.value : 'skip';
     const custom_prompt = _phasePromptOverrides[key] || '';
-    phases.push({ phase: key, enabled, iterations: iter, agent, on_failure, custom_prompt });
+    phases.push({ phase: key, enabled, iterations: iter, agent, on_failure, test_policy, custom_prompt });
   });
   pipeConfig.phases = phases;
 

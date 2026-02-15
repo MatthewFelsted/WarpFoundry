@@ -65,6 +65,7 @@ def _pipeline_payload(repo_path: Path, **overrides):
                 "iterations": 1,
                 "agent": "codex",
                 "on_failure": "skip",
+                "test_policy": "skip",
                 "custom_prompt": "",
             }
         ],
@@ -233,6 +234,7 @@ def test_pipeline_start_rejects_invalid_phase_key(client, monkeypatch, tmp_path:
                 "iterations": 1,
                 "agent": "codex",
                 "on_failure": "skip",
+                "test_policy": "skip",
                 "custom_prompt": "",
             }
         ],
@@ -242,6 +244,32 @@ def test_pipeline_start_rejects_invalid_phase_key(client, monkeypatch, tmp_path:
     assert resp.status_code == 400
     assert data
     assert "Invalid pipeline phase(s): not_a_real_phase" in data["error"]
+
+
+def test_pipeline_start_rejects_invalid_phase_test_policy(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            repo,
+            phases=[
+                {
+                    "phase": "ideation",
+                    "enabled": True,
+                    "iterations": 1,
+                    "agent": "codex",
+                    "on_failure": "skip",
+                    "test_policy": "aggressive",
+                    "custom_prompt": "",
+                }
+            ],
+        ),
+    )
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data
+    assert "Invalid config" in data["error"]
+    assert "test_policy" in data["error"]
 
 
 def test_pipeline_start_requires_danger_confirmation_when_bypass_enabled(client, tmp_path: Path):
@@ -289,6 +317,18 @@ def test_pipeline_phases_api_places_science_before_implementation(client):
     assert "theorize" in keys
     assert "implementation" in keys
     assert keys.index("theorize") < keys.index("implementation")
+
+
+def test_pipeline_phases_api_returns_default_test_policies(client):
+    resp = client.get("/api/pipeline/phases")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert isinstance(data, list)
+    by_key = {str(item.get("key", "")): item for item in data}
+    assert by_key["ideation"]["default_test_policy"] == "skip"
+    assert by_key["testing"]["default_test_policy"] == "full"
+    assert by_key["implementation"]["default_test_policy"] == "smoke"
 
 
 def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
@@ -421,6 +461,7 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
 
     payload = _pipeline_payload(
         repo,
+        smoke_test_cmd="python -m pytest -q -m smoke",
         allow_path_creation=False,
         dependency_install_policy="allow_system",
         image_generation_enabled=True,
@@ -447,6 +488,7 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
 
     config = captured["config"]
     assert config.allow_path_creation is False
+    assert config.smoke_test_cmd == "python -m pytest -q -m smoke"
     assert config.dependency_install_policy == "allow_system"
     assert config.image_generation_enabled is True
     assert config.image_provider == "openai"
@@ -461,6 +503,8 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
     assert config.deep_research_dedupe is True
     assert config.self_improvement_enabled is True
     assert config.self_improvement_auto_restart is True
+    assert config.phases
+    assert config.phases[0].test_policy == "skip"
 
 
 def test_foundation_prompt_improve_endpoint_returns_payload(client, monkeypatch):
@@ -1463,6 +1507,9 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert "async function startFreshPipelineRun()" in html
     assert "/api/pipeline/resume-state?repo_path=" in html
     assert "/api/pipeline/resume-state/clear" in html
+    assert 'id="pipe-smoke-test-cmd"' in html
+    assert "default_test_policy" in html
+    assert "data-phase-test-policy" in html
 
 
 def test_owner_feature_dreams_helpers_default_template_and_open_item_detection(tmp_path: Path):
