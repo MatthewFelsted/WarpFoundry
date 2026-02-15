@@ -1667,7 +1667,7 @@ def _append_general_request_history(
     source: str,
     model: str = "",
 ) -> dict[str, object]:
-    now = datetime.utcnow().isoformat() + "Z"
+    now = _utc_now_iso_z()
     normalized_status = _normalize_general_request_status(status)
     entry: dict[str, object] = {
         "id": f"gr-{int(time.time() * 1000)}",
@@ -1923,7 +1923,7 @@ def _load_decision_board(repo: Path) -> dict[str, object]:
 def _save_decision_board(repo: Path, payload: dict[str, object]) -> dict[str, object]:
     out = dict(payload)
     out["version"] = 1
-    out["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    out["updated_at"] = _utc_now_iso_z()
     out["repo_path"] = str(repo)
     cards = out.get("cards")
     if not isinstance(cards, list):
@@ -2031,7 +2031,7 @@ def _save_governance_policy(data: dict[str, object]) -> dict[str, str]:
             current[key] = _normalize_domain_csv(data.get(key, ""))
     payload: dict[str, object] = {
         "version": 1,
-        "updated_at": datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": _utc_now_iso_z(),
     }
     payload.update({key: current.get(key, "") for key in _GOVERNANCE_ENV_KEYS})
     _write_json_file_atomic(_GOVERNANCE_POLICY_PATH, payload)
@@ -2743,7 +2743,7 @@ def _write_foundation_artifacts(
     """Write foundational planning artifacts into the new repository."""
     root = project_path / ".codex_manager" / "foundation"
     root.mkdir(parents=True, exist_ok=True)
-    now = datetime.utcnow().isoformat() + "Z"
+    now = _utc_now_iso_z()
 
     prompt_path = root / "FOUNDATIONAL_PROMPT.md"
     prompt_path.write_text(
@@ -2841,7 +2841,7 @@ def _load_legal_review_state(project_path: Path) -> dict[str, object]:
 def _save_legal_review_state(project_path: Path, payload: dict[str, object]) -> dict[str, object]:
     state = dict(payload)
     state["version"] = 1
-    state["updated_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    state["updated_at"] = _utc_now_iso_z()
     path = _legal_review_state_path(project_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -2865,7 +2865,7 @@ def _upsert_legal_review_state(
     status, publish_ready = _legal_review_status(required=required, approved=approved)
     approved_at = str(existing.get("approved_at") or "").strip()
     if approved and not approved_at:
-        approved_at = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        approved_at = _utc_now_iso_z()
     if not approved:
         approved_at = ""
     out: dict[str, object] = {
@@ -2921,7 +2921,7 @@ def _write_licensing_packaging_artifacts(
     """Write licensing/commercial planning artifacts for a new project."""
     strategy_key = _normalize_licensing_strategy(strategy)
     strategy_label = _LICENSING_STRATEGIES[strategy_key]
-    now = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    now = _utc_now_iso_z()
     docs_dir = project_path / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
     business_dir = project_path / ".codex_manager" / "business"
@@ -3077,7 +3077,7 @@ def _write_foundation_bootstrap_status(
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "version": 1,
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": _utc_now_iso_z(),
         "status": status,
         "detail": detail,
         "project_path": str(project_path),
@@ -3104,7 +3104,7 @@ def _update_bootstrap_request(
         return
     payload = _read_json_file(req_path)
     payload["status"] = status
-    payload["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    payload["updated_at"] = _utc_now_iso_z()
     if detail:
         payload["detail"] = detail
     if extra:
@@ -3957,7 +3957,7 @@ def api_owner_decision_board_decision():
             continue
         row["decision"] = decision
         row["owner_prompt"] = owner_prompt
-        row["decided_at"] = datetime.utcnow().isoformat() + "Z"
+        row["decided_at"] = _utc_now_iso_z()
         updated = True
         break
     if not updated:

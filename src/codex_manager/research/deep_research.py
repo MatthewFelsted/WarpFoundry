@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,10 +123,8 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             json.dump(payload, handle, indent=2, sort_keys=True)
         tmp_path.replace(path)
     finally:
-        try:
+        with suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def _extract_urls(text: str) -> list[str]:
@@ -228,7 +227,7 @@ def _retry_call(
     for index in range(max_attempts):
         try:
             return fn()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last_error = exc
             if index >= max_attempts - 1:
                 break
@@ -675,7 +674,7 @@ def run_native_deep_research(
                     error=f"Unsupported deep research provider: {provider}",
                 )
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             results.append(_provider_result(provider, ok=False, error=str(exc)))
 
     successful = [item for item in results if item.ok and item.summary]

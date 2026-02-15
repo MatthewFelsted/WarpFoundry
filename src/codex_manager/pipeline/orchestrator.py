@@ -1280,10 +1280,8 @@ class PipelineOrchestrator:
             if str(trial.get("rollback_action", "")).strip().lower() == "reverted":
                 rollback_count += 1
             usage = trial.get("usage") or {}
-            try:
+            with suppress(Exception):
                 trial_tokens += int(usage.get("total_tokens", 0) or 0)
-            except Exception:
-                pass
 
         action_items = list(self._science_action_items)
         if not action_items and self._science_latest_analysis_text:

@@ -2293,7 +2293,7 @@ class ChainExecutor:
             save_screenshots=True,
         )
 
-        self._log("info", f"CUA: {provider.value} â†’ {target_url or '(no URL)'}")
+        self._log("info", f"CUA: {provider.value} -> {target_url or '(no URL)'}")
         self._log("info", f"CUA task: {task[:120]}...")
 
         step_ref = f"loop{loop_num}:step{step_idx}:visual_test"
@@ -2312,12 +2312,12 @@ class ChainExecutor:
                 self._log("info", f"CUA found {len(result.observations)} observations:")
                 for obs in result.observations[:10]:
                     icon = {
-                        "critical": "ðŸ”´",
-                        "major": "ðŸŸ ",
-                        "minor": "ðŸŸ¡",
-                        "cosmetic": "âšª",
-                        "positive": "ðŸŸ¢",
-                    }.get(obs.severity, "â€¢")
+                        "critical": "[CRIT]",
+                        "major": "[MAJOR]",
+                        "minor": "[MINOR]",
+                        "cosmetic": "[COSMETIC]",
+                        "positive": "[POSITIVE]",
+                    }.get(obs.severity, "*")
                     self._log("info", f"  {icon} [{obs.severity}] {obs.element}: {obs.actual[:80]}")
 
             if result.summary:
@@ -2416,7 +2416,7 @@ class ChainExecutor:
         self.state.current_step_name = f"Parallel batch ({len(enabled_steps)} steps)"
         self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
 
-        # Map step id â†’ original index in config.steps
+        # Map step id -> original index in config.steps
         step_index_map = {s.id: i for i, s in enumerate(config.steps)}
 
         futures_map: dict[object, tuple[int, TaskStep]] = {}
@@ -2427,7 +2427,7 @@ class ChainExecutor:
                 runner = runners.get(agent_key, runners["codex"])
                 self._log(
                     "info",
-                    f"  Dispatching: {step.name or step.job_type} â†’ {runner.name}",
+                    f"  Dispatching: {step.name or step.job_type} -> {runner.name}",
                 )
                 fut = pool.submit(
                     self._execute_step,
@@ -2463,7 +2463,7 @@ class ChainExecutor:
 
                 self._log(
                     "info" if result.success else "warn",
-                    f"  Completed: {result.step_name} [{result.agent_used}] â€” "
+                    f"  Completed: {result.step_name} [{result.agent_used}] - "
                     f"{'OK' if result.success else 'FAIL'}",
                 )
                 self.state.results.append(result)
@@ -2481,10 +2481,7 @@ class ChainExecutor:
                 self.state.elapsed_seconds = time.monotonic() - start_time
                 if self._check_strict_token_budget(config):
                     return True
-        if self._consume_stop_after_step_request(context="parallel batch"):
-            return True
-
-        return False  # no abort in parallel mode (all steps attempted)
+        return self._consume_stop_after_step_request(context="parallel batch")
 
     # ------------------------------------------------------------------
     # Ledger context for steps

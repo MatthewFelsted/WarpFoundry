@@ -237,7 +237,7 @@ class CodexRunner(AgentRunner):
             extra_args=extra_args,
         )[:-1]
         try:
-            estimated = len(subprocess.list2cmdline(base_cmd + [prompt]))
+            estimated = len(subprocess.list2cmdline([*base_cmd, prompt]))
         except Exception:
             estimated = sum(len(part) for part in base_cmd) + len(prompt) + len(base_cmd) + 1
 

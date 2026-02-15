@@ -88,3 +88,36 @@ def test_execute_streaming_json_command_limits_captured_output(tmp_path: Path) -
     assert '"i": 23' in result.raw_lines[0]
     assert '"i": 29' in result.raw_lines[-1]
     assert result.stderr_lines == []
+
+
+def test_execute_streaming_json_command_writes_stdin_text(tmp_path: Path) -> None:
+    script = (
+        "import json\n"
+        "import sys\n"
+        "payload = sys.stdin.read().strip()\n"
+        "print(json.dumps({'stdin': payload}), flush=True)\n"
+    )
+    cmd = [sys.executable, "-c", script]
+
+    def _parse_line(line: str) -> CodexEvent:
+        payload = json.loads(line)
+        return CodexEvent(
+            kind=EventKind.AGENT_MESSAGE,
+            raw=payload,
+            text=str(payload.get("stdin", "")),
+        )
+
+    result = execute_streaming_json_command(
+        cmd=cmd,
+        cwd=tmp_path,
+        env=dict(os.environ),
+        timeout_seconds=10,
+        parse_stdout_line=_parse_line,
+        process_name="test-runner",
+        stdin_text="hello from stdin",
+    )
+
+    assert result.exit_code == 0
+    assert result.timed_out is False
+    assert len(result.events) == 1
+    assert result.events[0].text == "hello from stdin"

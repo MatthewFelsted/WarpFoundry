@@ -57,8 +57,9 @@ body.modal-open{overflow:hidden}
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Header Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 header{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   justify-content:space-between;
+  flex-wrap:wrap;
   gap:10px 18px;
   padding:10px 18px;
   min-height:62px;
@@ -70,18 +71,42 @@ header{
   z-index:100;
   overflow:visible
 }
-.header-brand{display:flex;align-items:center;gap:14px;min-width:0;flex-wrap:wrap}
-.header-shortcuts{display:flex;gap:4px;align-items:center}
-.header-shortcuts .btn{padding:5px 10px;font-size:12px}
+.header-brand{display:flex;align-items:center;gap:14px;min-width:0;flex:1 1 420px;flex-wrap:wrap}
+.header-workspace-links{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.header-workspace-links .btn{padding:5px 10px;font-size:12px}
 .logo{font-size:19px;font-weight:700;letter-spacing:.1px;white-space:nowrap}
 .logo span{color:var(--accent2);filter:drop-shadow(0 0 8px rgba(110,199,255,.42))}
-.header-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;min-width:0;flex-wrap:wrap;justify-content:flex-end}
+.header-actions{display:flex;gap:8px;align-items:flex-start;flex:1 1 560px;min-width:0;flex-wrap:wrap;justify-content:flex-end}
 .header-actions select,.header-actions button{font-size:13px}
 #difficulty-mode-toggle{flex-shrink:0;position:relative;z-index:2}
 .header-actions select{min-width:120px;max-width:180px}
-.header-doc-links{display:flex;gap:6px;align-items:center}
+.header-doc-links{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .header-doc-links .btn{padding:5px 9px;font-size:12px}
-.git-sync-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(7,11,17,.55)}
+.git-sync-drawer{position:relative;display:flex;align-items:center;flex-shrink:0}
+.git-sync-drawer-toggle{padding:5px 10px;font-size:12px;white-space:nowrap}
+.git-sync-controls{
+  position:absolute;
+  right:0;
+  top:calc(100% + 8px);
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  width:min(980px, calc(100vw - 36px));
+  max-height:62vh;
+  overflow:auto;
+  padding:8px;
+  border:1px solid var(--border-soft);
+  border-radius:var(--radius-lg);
+  background:linear-gradient(180deg, rgba(11,18,28,.98), rgba(8,13,22,.96));
+  box-shadow:var(--shadow-md);
+  z-index:180;
+}
+.git-sync-drawer.open .git-sync-drawer-toggle{
+  border-color:var(--accent);
+  color:var(--accent2);
+}
+.git-sync-controls[hidden]{display:none}
 .git-sync-controls .btn{padding:5px 10px;font-size:12px}
 .git-sync-controls select,.git-sync-controls input[type="text"]{
   font-size:12px;
@@ -121,13 +146,13 @@ header{
 .docs-content{padding:14px 16px;flex:1;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.55}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Layout Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
-main{display:grid;grid-template-columns:minmax(360px,420px) minmax(0,1fr);flex:1;overflow:hidden}
+main{display:grid;grid-template-columns:minmax(360px,420px) minmax(0,1fr);flex:1;overflow:hidden;min-height:0}
 .panel{overflow-y:auto;padding:20px}
-#chain-panel{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px}
-#exec-panel{overflow-x:hidden;overflow-y:auto;padding:20px}
+#chain-panel{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px;min-height:0}
+#exec-panel{overflow-x:hidden;overflow-y:auto;padding:20px;min-height:0}
 #exec-panel > *{margin-bottom:16px}
 #exec-panel > *:last-child{margin-bottom:0}
-#pipeline-exec{overflow-x:hidden;overflow-y:auto}
+#pipeline-exec{overflow-x:hidden;overflow-y:auto;min-height:0}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Shared UI Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 h2{font-size:15px;font-weight:700;letter-spacing:.2px;color:var(--text2);margin-bottom:6px}
@@ -825,13 +850,13 @@ body.mode-medium .easy-only{display:none}
 .tab-nav button:hover{color:var(--text)}
 .tab-nav button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .tab-nav button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
-.tab-content{display:none}
-.tab-content.active{display:grid}
+.tab-content{display:none;min-height:0}
+.tab-content.active{display:grid;min-height:0}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Pipeline Panel Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
-#pipeline-view{grid-template-columns:minmax(360px,420px) minmax(0,1fr);flex:1;overflow:hidden}
+#pipeline-view{grid-template-columns:minmax(360px,420px) minmax(0,1fr);flex:1;overflow:hidden;min-height:0}
 .pipeline-panel{overflow-y:auto;padding:20px}
-#pipeline-config{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px}
+#pipeline-config{border-right:1px solid var(--border-soft);display:flex;flex-direction:column;gap:16px;min-height:0}
 #pipeline-exec > *{margin-bottom:16px}
 #pipeline-exec > *:last-child{margin-bottom:0}
 .resume-card{display:flex;flex-direction:column;gap:8px}
@@ -892,6 +917,7 @@ body.mode-medium .easy-only{display:none}
   header{padding:10px 14px}
   .header-brand{width:100%}
   .header-actions{width:100%;justify-content:flex-start}
+  .git-sync-controls{width:min(940px, calc(100vw - 28px))}
   .header-doc-links{order:2}
 }
 @media(max-width:980px){
@@ -904,9 +930,19 @@ body.mode-medium .easy-only{display:none}
   .recipe-grid{grid-template-columns:1fr}
   .run-plan-grid{grid-template-columns:1fr}
   .exec-controls{flex-wrap:wrap}
+  .header-actions{align-items:stretch}
   .header-doc-links{width:100%;flex-wrap:wrap}
+  .header-workspace-links{width:100%}
+  .header-workspace-links .btn{flex:1 1 180px}
   .tab-nav{width:100%}
   .mode-toggle{min-width:200px}
+  .git-sync-drawer{width:100%}
+  .git-sync-controls{
+    position:static;
+    width:100%;
+    max-height:none;
+    margin-top:6px;
+  }
   .science-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
   .science-grid{grid-template-columns:1fr}
   .git-commit-meta{grid-template-columns:1fr}
@@ -954,7 +990,7 @@ body.mode-medium .easy-only{display:none}
       <button id="tab-chain" class="active" data-tab="chain" role="tab" tabindex="0" aria-selected="true" aria-controls="chain-view" onclick="switchTab('chain')">Chain Builder</button>
       <button id="tab-pipeline" data-tab="pipeline" role="tab" tabindex="-1" aria-selected="false" aria-controls="pipeline-view" onclick="switchTab('pipeline')">Pipeline</button>
     </div>
-    <div class="header-shortcuts">
+    <div class="header-workspace-links">
       <button type="button" class="btn" onclick="showTodoWishlistModal()">To-Do / Wishlist</button>
       <button type="button" class="btn" onclick="showFeatureDreamsModal()">Feature Dreams</button>
       <button type="button" class="btn" onclick="showGeneralRequestModal()">General Request</button>
@@ -967,7 +1003,17 @@ body.mode-medium .easy-only{display:none}
       <button type="button" data-mode="medium" onclick="applyMode('medium')" title="Customize: build and tweak steps">Customize</button>
       <button type="button" data-mode="expert" onclick="applyMode('expert')" title="Expert: full control">Expert</button>
     </div>
-    <div class="git-sync-controls">
+    <div class="git-sync-drawer" id="git-sync-drawer">
+      <button
+        class="btn git-sync-drawer-toggle"
+        id="git-sync-drawer-toggle"
+        type="button"
+        onclick="toggleGitSyncDrawer()"
+        aria-expanded="false"
+        aria-controls="git-sync-controls"
+        title="Show or hide Git sync controls"
+      >Git Sync</button>
+      <div class="git-sync-controls" id="git-sync-controls" hidden>
       <button class="btn" id="git-sync-fetch-btn" type="button" onclick="gitSyncFetch()">Fetch</button>
       <button class="btn" id="git-sync-pull-btn" type="button" onclick="gitSyncPull()">Pull</button>
       <button class="btn btn-success" id="git-sync-push-btn" type="button" onclick="gitSyncPush()">Push</button>
@@ -1035,6 +1081,7 @@ body.mode-medium .easy-only{display:none}
           <span class="git-sync-widget-item"><span class="git-sync-widget-key">Default Branch</span><span class="git-sync-widget-value" id="git-sync-widget-github-default-branch">n/a</span></span>
         </div>
         <span class="git-sync-indicator" id="git-sync-indicator" data-tone="muted" title="Select a repository path to view sync status">No repo selected</span>
+      </div>
       </div>
     </div>
     <button class="btn" type="button" onclick="showGithubAuthModal()">GitHub Auth</button>
@@ -2836,6 +2883,7 @@ let workspaceState = null;
 let workspaceBusy = false;
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
+const GIT_SYNC_DRAWER_STORAGE_KEY = 'cm_git_sync_open';
 
 const RECIPES_PAYLOAD = {{ recipes_payload | tojson }};
 const RECIPES = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.recipes) || {};
@@ -2927,6 +2975,47 @@ function applyProgramNameLabels() {
   document.querySelectorAll('.program-name-slot').forEach(el => {
     el.textContent = label;
   });
+}
+
+function setGitSyncDrawerOpen(open, opts = {}) {
+  const drawer = document.getElementById('git-sync-drawer');
+  const panel = document.getElementById('git-sync-controls');
+  const toggle = document.getElementById('git-sync-drawer-toggle');
+  if (!drawer || !panel || !toggle) return;
+
+  const isOpen = !!open;
+  const shouldPersist = opts.persist !== false;
+  drawer.classList.toggle('open', isOpen);
+  panel.hidden = !isOpen;
+  toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+
+  if (shouldPersist && typeof localStorage !== 'undefined') {
+    localStorage.setItem(GIT_SYNC_DRAWER_STORAGE_KEY, isOpen ? '1' : '0');
+  }
+}
+
+function toggleGitSyncDrawer(forceOpen) {
+  const drawer = document.getElementById('git-sync-drawer');
+  if (!drawer) return;
+  const currentOpen = drawer.classList.contains('open');
+  const nextOpen = typeof forceOpen === 'boolean' ? forceOpen : !currentOpen;
+  setGitSyncDrawerOpen(nextOpen);
+}
+
+function initGitSyncDrawer() {
+  const savedOpen = typeof localStorage !== 'undefined'
+    && localStorage.getItem(GIT_SYNC_DRAWER_STORAGE_KEY) === '1';
+  setGitSyncDrawerOpen(!!savedOpen, { persist: false });
+
+  if (document.body && !document.body.dataset.gitSyncDrawerBound) {
+    document.body.dataset.gitSyncDrawerBound = '1';
+    document.addEventListener('click', (event) => {
+      const drawer = document.getElementById('git-sync-drawer');
+      if (!drawer || !drawer.classList.contains('open')) return;
+      if (drawer.contains(event.target)) return;
+      setGitSyncDrawerOpen(false);
+    });
+  }
 }
 
 function _closeOverlay(overlayId) {
@@ -3993,6 +4082,7 @@ function initMainTabKeyboardNav() {
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 document.addEventListener('DOMContentLoaded', async () => {
   applyProgramNameLabels();
+  initGitSyncDrawer();
   try {
     presets = await api('/api/presets');
   } catch(e) { console.warn('Could not load presets', e); }
@@ -4059,6 +4149,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   _syncModalOpenState();
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    setGitSyncDrawerOpen(false);
     closeRunPlanModal({ action: 'cancel' });
     closeScienceDashboardModal();
     closePermissionsHelpModal();
