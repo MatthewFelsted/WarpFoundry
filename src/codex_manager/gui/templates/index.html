@@ -487,14 +487,14 @@ body.mode-medium .easy-only{display:none}
 .new-project-card details .form-row{margin-top:10px}
 .new-project-card .creation-result{margin-top:12px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--success);display:none}
 
-#todo-wishlist-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
-#todo-wishlist-overlay.hidden{display:none}
-.todo-wishlist-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.todo-wishlist-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
-.todo-wishlist-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
-.todo-wishlist-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
-.todo-wishlist-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
-.todo-wishlist-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#todo-wishlist-overlay,#feature-dreams-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
+#todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden{display:none}
+.todo-wishlist-card,.feature-dreams-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.todo-wishlist-card h2,.feature-dreams-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.todo-wishlist-card .subtitle,.feature-dreams-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.todo-wishlist-card .actions,.feature-dreams-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.todo-wishlist-card .status,.feature-dreams-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
+.todo-wishlist-card .inline-actions,.feature-dreams-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Help tooltip Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .help-icon{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;background:var(--border);color:var(--text2);font-size:10px;font-weight:700;cursor:help;margin-left:4px;vertical-align:middle}
@@ -744,6 +744,7 @@ body.mode-medium .easy-only{display:none}
     </div>
     <div class="header-shortcuts">
       <button type="button" class="btn" onclick="showTodoWishlistModal()">To-Do / Wishlist</button>
+      <button type="button" class="btn" onclick="showFeatureDreamsModal()">Feature Dreams</button>
       <button type="button" class="btn btn-success" onclick="startTodoWishlistAutopilot()">Implement To-Do</button>
     </div>
   </div>
@@ -1834,6 +1835,56 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- Feature Dreams modal -->
+<div id="feature-dreams-overlay" class="hidden" onclick="if(event.target===this)hideFeatureDreamsModal()">
+  <div class="feature-dreams-card" role="dialog" aria-modal="true" aria-labelledby="feature-dreams-title">
+    <h2 id="feature-dreams-title">Feature Dreams Workspace</h2>
+    <p class="subtitle">Capture feature ideas in priority order and refine the list with AI suggestions.</p>
+
+    <div class="form-row">
+      <label>Repository Path</label>
+      <div class="repo-row">
+        <input type="text" id="feature-dreams-repo" placeholder="C:\path\to\your\repo">
+        <button class="btn" type="button" onclick="syncFeatureDreamsRepoFromMain()">Use Current Repo</button>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>Feature Dreams (markdown checklist)</label>
+      <textarea id="feature-dreams-content" rows="18" placeholder="- [ ] [S] Add onboarding assistant&#10;- [ ] [M] Add release digest panel"></textarea>
+      <div class="field-help">Use <code>- [ ]</code> for open items, <code>- [x]</code> for completed items, and effort tags like <code>[S]</code>/<code>[M]</code>/<code>[L]</code>.</div>
+    </div>
+
+    <details>
+      <summary>AI Suggestion (optional)</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label>Extra context for AI</label>
+        <textarea id="feature-dreams-context" rows="4" placeholder="What product direction, user outcomes, or constraints should shape feature prioritization?"></textarea>
+      </div>
+      <div class="form-row">
+        <label>Suggestion Model</label>
+        <select id="feature-dreams-model">
+          <option value="gpt-5.2">GPT-5.2</option>
+          <option value="claude-opus-4-6">Claude Opus 4.6</option>
+          <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
+          <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast</option>
+        </select>
+      </div>
+      <div class="inline-actions">
+        <button class="btn" type="button" onclick="suggestFeatureDreams()">Suggest with AI</button>
+        <button class="btn" type="button" onclick="appendFeatureDreamsSuggestion()">Append Suggestion</button>
+      </div>
+      <div class="status" id="feature-dreams-suggest-status"></div>
+    </details>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideFeatureDreamsModal()">Close</button>
+      <button class="btn" type="button" onclick="loadFeatureDreams()">Load</button>
+      <button class="btn btn-primary" type="button" onclick="saveFeatureDreams()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Project modal -->
 <div id="new-project-overlay" class="hidden">
   <div class="new-project-card" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
@@ -2073,6 +2124,7 @@ const _modalOverlayIds = [
   'browse-overlay',
   'new-project-overlay',
   'todo-wishlist-overlay',
+  'feature-dreams-overlay',
   'onboarding-overlay',
 ];
 
@@ -3044,6 +3096,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeReadOnlyWarningModal('cancel');
     closeDocsModal();
     hideTodoWishlistModal();
+    hideFeatureDreamsModal();
     hideNewProjectModal();
     browseClose();
   });
@@ -3222,6 +3275,142 @@ async function startTodoWishlistAutopilot() {
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ New Project Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
+/* -- Feature Dreams workspace -- */
+let lastFeatureDreamsSuggestion = '';
+
+function syncFeatureDreamsRepoFromMain() {
+  const repo = _activeRepoPath();
+  const input = document.getElementById('feature-dreams-repo');
+  if (input) input.value = repo;
+  return repo;
+}
+
+function _setFeatureDreamsStatus(text, tone = 'muted') {
+  const el = document.getElementById('feature-dreams-suggest-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+async function showFeatureDreamsModal() {
+  syncFeatureDreamsRepoFromMain();
+  const area = document.getElementById('feature-dreams-content');
+  if (area) area.value = '';
+  lastFeatureDreamsSuggestion = '';
+  _setFeatureDreamsStatus('');
+  _openOverlay('feature-dreams-overlay', '#feature-dreams-repo');
+  await loadFeatureDreams();
+}
+
+function hideFeatureDreamsModal() {
+  _closeOverlay('feature-dreams-overlay');
+}
+
+async function loadFeatureDreams() {
+  const repo = String(document.getElementById('feature-dreams-repo').value || '').trim();
+  if (!repo) {
+    _setFeatureDreamsStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  _setFeatureDreamsStatus('Loading feature dreams...', 'muted');
+  try {
+    const resp = await api('/api/owner/feature-dreams?repo_path=' + encodeURIComponent(repo));
+    if (resp.error) {
+      _setFeatureDreamsStatus(resp.error, 'error');
+      return;
+    }
+    const area = document.getElementById('feature-dreams-content');
+    if (area) area.value = String(resp.content || '').trim();
+    _setFeatureDreamsStatus(resp.exists ? 'Loaded existing feature dreams file.' : 'Loaded starter template.', 'ok');
+  } catch (e) {
+    _setFeatureDreamsStatus('Could not load feature dreams.', 'error');
+  }
+}
+
+async function saveFeatureDreams() {
+  const repo = String(document.getElementById('feature-dreams-repo').value || '').trim();
+  const content = String(document.getElementById('feature-dreams-content').value || '').trim();
+  if (!repo) {
+    _setFeatureDreamsStatus('Set a repository path first.', 'warn');
+    return false;
+  }
+  try {
+    const resp = await postJson('/api/owner/feature-dreams/save', {
+      repo_path: repo,
+      content: content,
+    });
+    if (resp.error) {
+      _setFeatureDreamsStatus(resp.error, 'error');
+      return false;
+    }
+    _setFeatureDreamsStatus('Saved feature dreams.', 'ok');
+    toast('Feature dreams saved.', 'success');
+    return true;
+  } catch (e) {
+    _setFeatureDreamsStatus('Could not save feature dreams.', 'error');
+    return false;
+  }
+}
+
+async function suggestFeatureDreams() {
+  const repo = String(document.getElementById('feature-dreams-repo').value || '').trim();
+  if (!repo) {
+    _setFeatureDreamsStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const existing = String(document.getElementById('feature-dreams-content').value || '').trim();
+  const ownerContext = String(document.getElementById('feature-dreams-context').value || '').trim();
+  const model = String(document.getElementById('feature-dreams-model').value || 'gpt-5.2').trim() || 'gpt-5.2';
+  _setFeatureDreamsStatus('Generating suggestions...', 'muted');
+  try {
+    const resp = await postJson('/api/owner/feature-dreams/suggest', {
+      repo_path: repo,
+      existing_markdown: existing,
+      owner_context: ownerContext,
+      model: model,
+    });
+    if (resp.error) {
+      _setFeatureDreamsStatus(resp.error, 'error');
+      return;
+    }
+    lastFeatureDreamsSuggestion = String(resp.content || '').trim();
+    if (!lastFeatureDreamsSuggestion) {
+      _setFeatureDreamsStatus('AI returned an empty suggestion.', 'warn');
+      return;
+    }
+    document.getElementById('feature-dreams-content').value = lastFeatureDreamsSuggestion;
+    const warning = String(resp.warning || '').trim();
+    if (warning) {
+      _setFeatureDreamsStatus(warning, 'warn');
+      toast(warning, 'info');
+    } else {
+      _setFeatureDreamsStatus('AI suggestion applied to the editor.', 'ok');
+    }
+  } catch (e) {
+    _setFeatureDreamsStatus('AI suggestion failed.', 'error');
+  }
+}
+
+function appendFeatureDreamsSuggestion() {
+  const area = document.getElementById('feature-dreams-content');
+  const suggestion = String(lastFeatureDreamsSuggestion || '').trim();
+  if (!area || !suggestion) {
+    _setFeatureDreamsStatus('No suggestion to append yet. Click "Suggest with AI" first.', 'warn');
+    return;
+  }
+  const existing = String(area.value || '').trim();
+  area.value = existing ? (existing + '\n\n' + suggestion) : suggestion;
+  _setFeatureDreamsStatus('Appended latest suggestion to the editor.', 'ok');
+}
+
 function showNewProjectModal() {
   document.getElementById('np-result').style.display = 'none';
   document.getElementById('np-create-btn').disabled = false;
@@ -5465,6 +5654,17 @@ function resetTodoWishlistForm() {
   hideTodoWishlistModal();
 }
 
+function resetFeatureDreamsForm() {
+  const repo = _activeRepoPath();
+  document.getElementById('feature-dreams-repo').value = repo;
+  document.getElementById('feature-dreams-content').value = '';
+  document.getElementById('feature-dreams-context').value = '';
+  document.getElementById('feature-dreams-model').value = 'gpt-5.2';
+  lastFeatureDreamsSuggestion = '';
+  _setFeatureDreamsStatus('', 'muted');
+  hideFeatureDreamsModal();
+}
+
 async function clearEverything() {
   const running = chainRunning || chainPaused || pipeRunning || pipePaused;
   const proceed = confirm(
@@ -5511,6 +5711,7 @@ async function clearEverything() {
   resetExecutionPanelsToDefaults();
   resetNewProjectForm();
   resetTodoWishlistForm();
+  resetFeatureDreamsForm();
   closeRunPlanModal({ action: 'cancel' });
   closePermissionsHelpModal();
   closeReadOnlyWarningModal('cancel');
