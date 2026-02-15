@@ -793,6 +793,78 @@ def test_github_auth_test_endpoint_uses_saved_pat(client, monkeypatch, tmp_path:
     assert meta["last_test_at"]
 
 
+def test_github_auth_test_endpoint_returns_pat_scope_troubleshooting(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", tmp_path / "github_auth.json")
+    monkeypatch.setattr(gui_app_module, "_github_secret_get", lambda _key: "ghp_saved_token")
+    monkeypatch.setattr(
+        gui_app_module,
+        "_github_test_pat",
+        lambda _token: {
+            "ok": False,
+            "message": (
+                "GitHub denied this PAT (403 Forbidden). "
+                "Resource not accessible by personal access token"
+            ),
+        },
+    )
+
+    resp = client.post(
+        "/api/github/auth/test",
+        json={
+            "auth_method": "https",
+            "use_saved": True,
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is False
+    troubleshooting = data["troubleshooting"]
+    assert troubleshooting["auth_method"] == "https"
+    checks = troubleshooting["checks"]
+    assert isinstance(checks, list)
+    pat_scope = next(check for check in checks if check["key"] == "pat_scopes")
+    assert pat_scope["status"] == "action_required"
+    assert "Contents: Read and write" in pat_scope["detail"]
+
+
+def test_github_auth_test_endpoint_returns_ssh_known_hosts_and_key_permissions_guidance(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", tmp_path / "github_auth.json")
+    monkeypatch.setattr(
+        gui_app_module,
+        "_github_test_ssh_key",
+        lambda _key: {
+            "ok": False,
+            "message": "Host key verification failed.",
+            "output": "Host key verification failed.",
+        },
+    )
+
+    resp = client.post(
+        "/api/github/auth/test",
+        json={
+            "auth_method": "ssh",
+            "use_saved": False,
+            "ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nkey\n-----END OPENSSH PRIVATE KEY-----",
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is False
+    troubleshooting = data["troubleshooting"]
+    assert troubleshooting["auth_method"] == "ssh"
+    checks = troubleshooting["checks"]
+    assert isinstance(checks, list)
+    check_keys = {check.get("key") for check in checks}
+    assert "ssh_known_hosts" in check_keys
+    assert "ssh_key_permissions" in check_keys
+
+
 def test_github_auth_test_endpoint_requires_credentials(client, monkeypatch, tmp_path: Path):
     monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", tmp_path / "github_auth.json")
     monkeypatch.setattr(gui_app_module, "_github_secret_get", lambda _key: "")
@@ -2952,6 +3024,14 @@ def test_git_sync_push_reports_auth_failures_with_recovery_steps(client, monkeyp
     assert "authentication/authorization" in data["error"]
     assert isinstance(data["recovery_steps"], list)
     assert any("GitHub Auth" in step for step in data["recovery_steps"])
+    assert any("scopes" in step.lower() for step in data["recovery_steps"])
+    assert any("known_hosts" in step.lower() for step in data["recovery_steps"])
+    assistant = data["auth_troubleshooting"]
+    assert assistant["title"] == "Credential Troubleshooting Assistant"
+    assert assistant["auth_method"] == "https"
+    checks = assistant["checks"]
+    assert isinstance(checks, list)
+    assert any(check.get("key") == "pat_scopes" for check in checks)
 
 
 def test_git_sync_push_reports_non_fast_forward_with_recovery_steps(client, monkeypatch, tmp_path: Path):

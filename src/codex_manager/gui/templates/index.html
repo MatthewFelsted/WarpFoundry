@@ -606,6 +606,23 @@ body.mode-medium .easy-only{display:none}
 .github-auth-card details{margin-top:8px;border:1px solid var(--border);border-radius:var(--radius);padding:10px}
 .github-auth-card details summary{cursor:pointer;font-size:12px;color:var(--text2);font-weight:600}
 .github-auth-card .meta{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5}
+.github-auth-troubleshooting{margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg)}
+.github-auth-troubleshooting.hidden{display:none}
+.github-auth-troubleshooting h3{font-size:13px;margin-bottom:6px}
+.github-auth-troubleshooting .summary{font-size:12px;color:var(--text2);line-height:1.45;margin-bottom:8px}
+.github-auth-troubleshooting ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.github-auth-troubleshooting li{border:1px solid var(--border);border-radius:var(--radius);padding:8px;background:rgba(18,25,35,.55)}
+.github-auth-troubleshooting .check-title{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--text)}
+.github-auth-troubleshooting .check-detail{font-size:12px;color:var(--text2);line-height:1.45;margin-top:4px}
+.github-auth-troubleshooting .commands{margin-top:5px;font-size:11px;color:var(--text2);line-height:1.4}
+.github-auth-troubleshooting .commands code{display:block;margin-top:4px}
+.github-auth-troubleshooting .status-badge{font-size:10px;border-radius:999px;padding:2px 7px;border:1px solid var(--border)}
+.github-auth-troubleshooting .status-ok{color:var(--success);border-color:rgba(71,192,123,.45);background:rgba(71,192,123,.12)}
+.github-auth-troubleshooting .status-action_required{color:var(--danger);border-color:rgba(232,106,106,.45);background:rgba(232,106,106,.12)}
+.github-auth-troubleshooting .status-review{color:var(--warning);border-color:rgba(223,170,88,.45);background:rgba(223,170,88,.12)}
+.github-auth-troubleshooting .next-steps{margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.github-auth-troubleshooting .next-steps strong{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.2px}
+.github-auth-troubleshooting .next-steps ol{margin:6px 0 0 18px;padding:0;color:var(--text2);font-size:12px;line-height:1.4}
 
 #git-commit-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2250;display:flex;align-items:center;justify-content:center;padding:24px}
 #git-commit-overlay.hidden{display:none}
@@ -2350,6 +2367,7 @@ body.mode-medium .easy-only{display:none}
 
     <div class="meta" id="github-auth-meta">Loading current GitHub auth settings...</div>
     <div class="status" id="github-auth-status"></div>
+    <div class="github-auth-troubleshooting hidden" id="github-auth-troubleshooting"></div>
 
     <div class="actions">
       <button class="btn" type="button" onclick="hideGithubAuthModal()">Close</button>
@@ -2605,6 +2623,7 @@ let watchdogAlertsMutedUntil = 0;
 let watchdogAlertDigest = '';
 let watchdogMigrationSuggestions = [];
 let githubAuthState = null;
+let githubAuthTroubleshooting = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 let gitSyncState = null;
 let gitSyncBranchState = null;
@@ -2982,6 +3001,67 @@ function _setGithubAuthStatus(text, tone = 'muted') {
   else el.style.color = 'var(--text2)';
 }
 
+function _githubTroubleshootingStatusLabel(status) {
+  if (status === 'ok') return 'OK';
+  if (status === 'action_required') return 'Action required';
+  return 'Review';
+}
+
+function _setGithubAuthTroubleshooting(payload) {
+  const container = document.getElementById('github-auth-troubleshooting');
+  if (!container) return;
+  const data = payload && typeof payload === 'object' ? payload : null;
+  githubAuthTroubleshooting = data;
+  if (!data || data.available === false) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  const title = String(data.title || 'Credential Troubleshooting Assistant').trim();
+  const summary = String(data.summary || '').trim();
+  const checks = Array.isArray(data.checks) ? data.checks : [];
+  const nextSteps = Array.isArray(data.next_steps) ? data.next_steps : [];
+
+  const checksHtml = checks.length
+    ? ('<ul>'
+      + checks.map((rawCheck) => {
+        const check = rawCheck && typeof rawCheck === 'object' ? rawCheck : {};
+        const label = String(check.label || check.key || 'Check').trim() || 'Check';
+        const statusRaw = String(check.status || 'review').trim().toLowerCase();
+        const status = ['ok', 'action_required', 'review'].includes(statusRaw) ? statusRaw : 'review';
+        const detail = String(check.detail || '').trim();
+        const commands = Array.isArray(check.commands) ? check.commands : [];
+        const commandsHtml = commands.length
+          ? ('<div class="commands"><strong>Try:</strong>'
+            + commands.map((command) => '<code>' + esc(String(command || '')) + '</code>').join('')
+            + '</div>')
+          : '';
+        return ''
+          + '<li>'
+          + '<div class="check-title"><span class="status-badge status-' + escAttr(status) + '">'
+          + esc(_githubTroubleshootingStatusLabel(status))
+          + '</span><span>' + esc(label) + '</span></div>'
+          + (detail ? ('<div class="check-detail">' + esc(detail) + '</div>') : '')
+          + commandsHtml
+          + '</li>';
+      }).join('')
+      + '</ul>')
+    : '<div class="summary">No targeted checks were returned for this failure.</div>';
+
+  const nextStepsHtml = nextSteps.length
+    ? ('<div class="next-steps"><strong>Recommended next steps</strong><ol>'
+      + nextSteps.map((step) => '<li>' + esc(String(step || '')) + '</li>').join('')
+      + '</ol></div>')
+    : '';
+
+  container.classList.remove('hidden');
+  container.innerHTML = ''
+    + '<h3>' + esc(title) + '</h3>'
+    + (summary ? ('<div class="summary">' + esc(summary) + '</div>') : '')
+    + checksHtml
+    + nextStepsHtml;
+}
+
 function _githubAuthMetaText(state) {
   const payload = state || {};
   const storage = payload.secure_storage_available
@@ -3029,6 +3109,7 @@ async function loadGithubAuthSettings(opts = {}) {
     if (clearPat) clearPat.checked = false;
     if (clearSsh) clearSsh.checked = false;
     if (metaEl) metaEl.textContent = _githubAuthMetaText(githubAuthState);
+    if (!opts.preserveTroubleshooting) _setGithubAuthTroubleshooting(null);
     syncGithubAuthForm();
     if (!opts.silent) _setGithubAuthStatus('GitHub auth settings loaded.', 'ok');
   } catch (err) {
@@ -3041,7 +3122,8 @@ async function loadGithubAuthSettings(opts = {}) {
 function showGithubAuthModal() {
   _openOverlay('github-auth-overlay', '#github-auth-method');
   _setGithubAuthStatus('');
-  loadGithubAuthSettings({ silent: true });
+  _setGithubAuthTroubleshooting(githubAuthTroubleshooting);
+  loadGithubAuthSettings({ silent: true, preserveTroubleshooting: true });
 }
 
 function hideGithubAuthModal() {
@@ -3074,6 +3156,7 @@ async function saveGithubAuthSettings() {
     githubAuthState = (resp && resp.settings) ? resp.settings : null;
     const metaEl = document.getElementById('github-auth-meta');
     if (metaEl && githubAuthState) metaEl.textContent = _githubAuthMetaText(githubAuthState);
+    _setGithubAuthTroubleshooting(null);
     _setGithubAuthStatus('GitHub auth settings saved.', 'ok');
     toast('GitHub auth settings saved.', 'success');
   } catch (err) {
@@ -3098,6 +3181,7 @@ async function testGithubAuthConnection() {
   try {
     const resp = await postJson('/api/github/auth/test', payload);
     const message = String((resp && (resp.message || resp.error)) || 'No response details.');
+    _setGithubAuthTroubleshooting((resp && resp.troubleshooting) ? resp.troubleshooting : null);
     if (resp && resp.ok) {
       _setGithubAuthStatus(message, 'ok');
       toast('GitHub connection test passed.', 'success');
@@ -3105,7 +3189,7 @@ async function testGithubAuthConnection() {
       _setGithubAuthStatus(message, 'error');
       toast('GitHub connection test failed: ' + message, 'error');
     }
-    await loadGithubAuthSettings({ silent: true });
+    await loadGithubAuthSettings({ silent: true, preserveTroubleshooting: true });
   } catch (err) {
     const message = (err && err.message) ? err.message : String(err);
     _setGithubAuthStatus('GitHub connection test failed: ' + message, 'error');
@@ -4372,6 +4456,15 @@ async function _runGitSyncAction(actionKey) {
     const message = String(response.error || 'Unknown error');
     _setGitSyncIndicator(message, 'error', message);
     toast(action.failurePrefix + message, 'error');
+    if (actionKey === 'push' && response && typeof response.auth_troubleshooting === 'object') {
+      _setGithubAuthTroubleshooting(response.auth_troubleshooting);
+      const summary = String(response.auth_troubleshooting.summary || '').trim();
+      if (summary) {
+        toast('Credential assistant: ' + summary, 'info');
+      } else {
+        toast('Credential assistant updated in GitHub Auth modal.', 'info');
+      }
+    }
     const recoverySteps = Array.isArray(response.recovery_steps) ? response.recovery_steps : [];
     if (recoverySteps.length) {
       toast('Recovery: ' + recoverySteps.join(' | '), 'info');

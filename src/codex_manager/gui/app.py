@@ -2099,6 +2099,185 @@ def _github_test_ssh_key(private_key: str) -> dict[str, object]:
             known_hosts_path.unlink(missing_ok=True)
 
 
+def _github_remote_transport(remote_url: str) -> str:
+    """Return ``https``/``ssh`` for GitHub remotes, else empty string."""
+    raw = str(remote_url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    if parsed.scheme and parsed.netloc:
+        host = str(parsed.hostname or parsed.netloc).strip().lower()
+        if host != "github.com":
+            return ""
+        scheme = str(parsed.scheme or "").strip().lower()
+        if scheme in {"http", "https"}:
+            return "https"
+        if scheme == "ssh":
+            return "ssh"
+        return ""
+    if "://" not in raw and ":" in raw:
+        left, right = raw.split(":", 1)
+        if "@" in left and right.strip():
+            host = left.split("@", 1)[1].strip().lower()
+            if host == "github.com":
+                return "ssh"
+    return ""
+
+
+def _github_auth_troubleshooting_assistant(
+    *,
+    auth_method: str,
+    ok: bool,
+    message: str,
+    output: str = "",
+    context: str = "",
+    remote_url: str = "",
+) -> dict[str, object]:
+    """Return structured troubleshooting guidance for GitHub credential failures."""
+
+    method = _normalize_github_auth_method(auth_method)
+    if not method:
+        method = _github_remote_transport(remote_url)
+    combined = f"{message}\n{output}".lower()
+    if not method:
+        if "git@github.com" in combined or "publickey" in combined or "ssh" in combined:
+            method = "ssh"
+        elif "https://github.com" in combined or "token" in combined:
+            method = "https"
+    if method not in _GITHUB_AUTH_METHODS:
+        method = "https"
+
+    pat_scope_issue = any(
+        token in combined
+        for token in (
+            "403",
+            "forbidden",
+            "insufficient",
+            "scope",
+            "resource not accessible",
+            "not authorized",
+            "permission to",
+            "repository not found",
+        )
+    )
+    known_hosts_issue = any(
+        token in combined
+        for token in (
+            "host key verification failed",
+            "remote host identification has changed",
+            "strict host key checking",
+            "known_hosts",
+            "offending",
+            "no matching host key",
+        )
+    )
+    key_permission_issue = any(
+        token in combined
+        for token in (
+            "permissions are too open",
+            "bad permissions",
+            "unprotected private key file",
+            "load key",
+            "permission denied (publickey)",
+            "invalid format",
+        )
+    )
+
+    checks: list[dict[str, object]] = []
+    next_steps: list[str] = []
+    summary = "Last GitHub credential check succeeded."
+    if method == "https":
+        status = "ok" if ok else ("action_required" if pat_scope_issue else "review")
+        detail = (
+            "Use a PAT that can write to the repository. Classic PATs need 'repo'; "
+            "fine-grained PATs need repository access with Contents: Read and write "
+            "and Pull requests: Read and write."
+        )
+        if not ok and pat_scope_issue:
+            detail += " Current failure suggests missing scope/repository access."
+        checks.append(
+            {
+                "key": "pat_scopes",
+                "label": "PAT scopes",
+                "status": status,
+                "detail": detail,
+                "commands": [
+                    "Update token scopes in GitHub Settings > Developer settings > Personal access tokens.",
+                    "Save the updated PAT in GitHub Auth Setup, then rerun Test Connection.",
+                ],
+            }
+        )
+        if not ok:
+            summary = (
+                "GitHub rejected PAT authentication. Verify PAT scopes/repository access and retest."
+            )
+            next_steps.extend(
+                [
+                    "Ensure the PAT can write to this repository (classic: repo; fine-grained: Contents + Pull requests write).",
+                    "Save the PAT in GitHub Auth Setup and rerun Test Connection.",
+                ]
+            )
+    else:
+        known_hosts_status = "ok" if ok else ("action_required" if known_hosts_issue else "review")
+        key_perm_status = "ok" if ok else ("action_required" if key_permission_issue else "review")
+        checks.extend(
+            [
+                {
+                    "key": "ssh_known_hosts",
+                    "label": "SSH known_hosts",
+                    "status": known_hosts_status,
+                    "detail": (
+                        "Trust github.com in your known_hosts file. If host keys changed, remove the "
+                        "stale entry and reconnect to refresh the host key."
+                    ),
+                    "commands": [
+                        "ssh-keygen -R github.com",
+                        "ssh -T git@github.com",
+                    ],
+                },
+                {
+                    "key": "ssh_key_permissions",
+                    "label": "SSH key permissions",
+                    "status": key_perm_status,
+                    "detail": (
+                        "Private key files must be readable only by your account. OpenSSH rejects keys "
+                        "with overly broad file permissions."
+                    ),
+                    "commands": [
+                        "chmod 600 ~/.ssh/id_ed25519 (or equivalent ACL restrictions on Windows).",
+                        "ssh-add ~/.ssh/id_ed25519",
+                    ],
+                },
+            ]
+        )
+        if not ok:
+            summary = (
+                "GitHub rejected SSH authentication. Verify known_hosts trust and key permissions, then retest."
+            )
+            next_steps.extend(
+                [
+                    "Refresh github.com host trust (ssh-keygen -R github.com, then ssh -T git@github.com).",
+                    "Ensure your private key permissions are restricted and the key is loaded in your SSH agent.",
+                ]
+            )
+
+    if not ok and context == "git_push":
+        next_steps.append("Retry push after fixes from the Git sync header controls.")
+    elif not ok and context == "github_auth_test":
+        next_steps.append("After changes, run Test Connection again from GitHub Auth Setup.")
+
+    return {
+        "available": True,
+        "ok": bool(ok),
+        "auth_method": method,
+        "context": str(context or "").strip() or "github_auth",
+        "title": "Credential Troubleshooting Assistant",
+        "summary": summary,
+        "checks": checks,
+        "next_steps": next_steps,
+    }
+
+
 def _run_github_auth_test(data: dict[str, object]) -> tuple[dict[str, object], int]:
     """Resolve credentials (inline or saved) and run GitHub connectivity test."""
     meta = _read_github_auth_meta()
@@ -2120,6 +2299,12 @@ def _run_github_auth_test(data: dict[str, object]) -> tuple[dict[str, object], i
                     "ok": False,
                     "auth_method": auth_method,
                     "message": "Provide a GitHub PAT or save one first.",
+                    "troubleshooting": _github_auth_troubleshooting_assistant(
+                        auth_method=auth_method,
+                        ok=False,
+                        message="Provide a GitHub PAT or save one first.",
+                        context="github_auth_test",
+                    ),
                 },
                 400,
             )
@@ -2137,6 +2322,12 @@ def _run_github_auth_test(data: dict[str, object]) -> tuple[dict[str, object], i
                     "ok": False,
                     "auth_method": auth_method,
                     "message": "Provide an SSH private key or save one first.",
+                    "troubleshooting": _github_auth_troubleshooting_assistant(
+                        auth_method=auth_method,
+                        ok=False,
+                        message="Provide an SSH private key or save one first.",
+                        context="github_auth_test",
+                    ),
                 },
                 400,
             )
@@ -2146,7 +2337,16 @@ def _run_github_auth_test(data: dict[str, object]) -> tuple[dict[str, object], i
     meta["last_test_ok"] = bool(result.get("ok"))
     _write_github_auth_meta(meta)
 
-    payload = {"auth_method": auth_method}
+    payload = {
+        "auth_method": auth_method,
+        "troubleshooting": _github_auth_troubleshooting_assistant(
+            auth_method=auth_method,
+            ok=bool(result.get("ok")),
+            message=str(result.get("message") or ""),
+            output=str(result.get("output") or ""),
+            context="github_auth_test",
+        ),
+    }
     payload.update(result)
     return payload, 200
 
@@ -4062,7 +4262,8 @@ def _git_push_recovery_steps(*, error_type: str, remote: str, branch: str) -> li
     if error_type == "auth":
         return [
             "Verify credentials in the GitHub Auth modal and rerun Test connection.",
-            "For HTTPS remotes use a PAT with repo write access; for SSH remotes verify your key is loaded and authorized on GitHub.",
+            "HTTPS/PAT: confirm scopes/repository access (classic token: repo; fine-grained token: Contents + Pull requests write).",
+            "SSH: refresh github.com known_hosts trust and ensure private key permissions are restricted before retrying.",
             f"Retry push after fixing auth: {push_cmd}",
         ]
     if error_type == "non_fast_forward":
@@ -5841,24 +6042,35 @@ def api_git_sync_push():
             detail = _extract_git_process_error(push_result, f"git {' '.join(push_args)} failed")
             error_type = _classify_git_push_failure(push_result)
             status_code, label = _git_push_error_status_and_label(error_type)
-            return (
-                jsonify(
-                    {
-                        "error": f"Git push failed ({label}): {detail}",
-                        "error_type": error_type,
-                        "repo_path": str(repo),
-                        "remote": remote,
-                        "branch": branch,
-                        "set_upstream": set_upstream,
-                        "recovery_steps": _git_push_recovery_steps(
-                            error_type=error_type,
-                            remote=remote,
-                            branch=branch,
-                        ),
-                        "stdout": _truncate_command_output(push_result.stdout),
-                        "stderr": _truncate_command_output(push_result.stderr),
-                    }
+            stdout_text = _truncate_command_output(push_result.stdout)
+            stderr_text = _truncate_command_output(push_result.stderr)
+            payload: dict[str, object] = {
+                "error": f"Git push failed ({label}): {detail}",
+                "error_type": error_type,
+                "repo_path": str(repo),
+                "remote": remote,
+                "branch": branch,
+                "set_upstream": set_upstream,
+                "recovery_steps": _git_push_recovery_steps(
+                    error_type=error_type,
+                    remote=remote,
+                    branch=branch,
                 ),
+                "stdout": stdout_text,
+                "stderr": stderr_text,
+            }
+            if error_type == "auth":
+                remote_url = _git_remote_url(repo, remote)
+                payload["auth_troubleshooting"] = _github_auth_troubleshooting_assistant(
+                    auth_method=_github_remote_transport(remote_url),
+                    ok=False,
+                    message=detail,
+                    output="\n".join(part for part in [stderr_text, stdout_text] if part).strip(),
+                    context="git_push",
+                    remote_url=remote_url,
+                )
+            return (
+                jsonify(payload),
                 status_code,
             )
 
