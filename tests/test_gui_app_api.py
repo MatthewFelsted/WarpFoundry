@@ -1398,6 +1398,9 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert 'id="feature-dreams-overlay"' in html
     assert 'id="feature-dreams-model"' in html
     assert "/api/owner/feature-dreams/suggest" in html
+    assert 'onclick="saveAndStartFeatureDreamAutopilot()"' in html
+    assert "async function startFeatureDreamAutopilot()" in html
+    assert "selectRecipe('feature_dream_autopilot')" in html
 
 
 def test_owner_feature_dreams_helpers_default_template_and_open_item_detection(tmp_path: Path):

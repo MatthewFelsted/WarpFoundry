@@ -942,9 +942,12 @@ body.mode-medium .easy-only{display:none}
       </div>
     </div>
     <div class="form-row" style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:12px">
-      <label style="margin-bottom:6px"><input type="checkbox" id="brain-enabled" onchange="toggleBrain()"> <strong style="color:var(--purple)">Enable Brain</strong> - AI thinks before Codex acts</label>
+      <label style="margin-bottom:6px"><input type="checkbox" id="brain-enabled" onchange="toggleBrain()"> <strong style="color:var(--warning)">Enable Brain (Experimental)</strong> - OFF by default</label>
+      <p style="font-size:11px;color:var(--warning);margin:4px 0 0 22px">
+        Experimental behavior: can interrupt straightforward runs, request human input, or change loop flow unexpectedly.
+      </p>
       <p style="font-size:11px;color:var(--text2);margin:4px 0 0 22px">
-        Uses a separate AI model to plan prompts, evaluate results, handle errors, and escalate only when necessary.
+        Only enable when you explicitly want planning/evaluation experiments and accept less predictable chain behavior.
       </p>
     </div>
     <div id="brain-options" style="display:none" class="medium-hide">
@@ -1386,10 +1389,13 @@ body.mode-medium .easy-only{display:none}
     <div class="form-row" style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:8px">
       <label style="margin-bottom:4px">
         <input type="checkbox" id="pipe-brain" onchange="togglePipeBrain()">
-        <strong style="color:var(--purple)">Enable Brain</strong> - AI thinks before agents act
+        <strong style="color:var(--warning)">Enable Brain (Experimental)</strong> - OFF by default
       </label>
+      <p style="font-size:11px;color:var(--warning);margin:4px 0 0 22px">
+        Experimental behavior: can interrupt straightforward runs, request human input, or change loop flow unexpectedly.
+      </p>
       <p style="font-size:11px;color:var(--text2);margin:4px 0 0 22px">
-        Uses a separate AI model to plan prompts, evaluate results, handle errors, and escalate only when necessary.
+        Use only when you want to experiment with autonomous planning and can tolerate less predictable pipeline flow.
       </p>
       <div id="pipe-brain-options" style="display:none;margin-top:8px">
         <label>Brain Model</label>
@@ -1881,6 +1887,7 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" type="button" onclick="hideFeatureDreamsModal()">Close</button>
       <button class="btn" type="button" onclick="loadFeatureDreams()">Load</button>
       <button class="btn btn-primary" type="button" onclick="saveFeatureDreams()">Save</button>
+      <button class="btn btn-success" type="button" onclick="saveAndStartFeatureDreamAutopilot()">Save + Implement</button>
     </div>
   </div>
 </div>
@@ -2917,14 +2924,14 @@ function applyMode(mode) {
     config.mode = 'dry-run';
     config.unlimited = true;
     config.stop_on_convergence = true;
-    config.brain_enabled = true;
+    config.brain_enabled = false;
     config.parallel_execution = false;
     if (document.getElementById('mode-toggle')) {
       document.querySelectorAll('#mode-toggle button').forEach(b => { b.classList.toggle('active', b.dataset.mode === 'dry-run'); });
     }
     document.getElementById('unlimited').checked = true;
     toggleUnlimited();
-    document.getElementById('brain-enabled').checked = true;
+    document.getElementById('brain-enabled').checked = false;
     toggleBrain();
     document.getElementById('parallel-exec').checked = false;
   }
@@ -2965,12 +2972,12 @@ function selectRecipe(recipeId) {
   selectedStepId = steps.length ? steps[0].id : null;
   config.unlimited = true;
   config.stop_on_convergence = true;
-  config.brain_enabled = true;
+  config.brain_enabled = false;
   config.parallel_execution = false;
   config.mode = 'dry-run';
   document.getElementById('unlimited').checked = true;
   toggleUnlimited();
-  document.getElementById('brain-enabled').checked = true;
+  document.getElementById('brain-enabled').checked = false;
   toggleBrain();
   document.getElementById('parallel-exec').checked = false;
   if (document.getElementById('mode-toggle')) {
@@ -3409,6 +3416,29 @@ function appendFeatureDreamsSuggestion() {
   const existing = String(area.value || '').trim();
   area.value = existing ? (existing + '\n\n' + suggestion) : suggestion;
   _setFeatureDreamsStatus('Appended latest suggestion to the editor.', 'ok');
+}
+
+async function saveAndStartFeatureDreamAutopilot() {
+  const ok = await saveFeatureDreams();
+  if (!ok) return;
+  hideFeatureDreamsModal();
+  await startFeatureDreamAutopilot();
+}
+
+async function startFeatureDreamAutopilot() {
+  const repoFromModal = String(document.getElementById('feature-dreams-repo') ? document.getElementById('feature-dreams-repo').value : '').trim();
+  const repo = repoFromModal || _activeRepoPath();
+  if (!repo) {
+    toast('Set a repository path first.', 'error');
+    return;
+  }
+  document.getElementById('repo-path').value = repo;
+  config.repo_path = repo;
+  validateRepo();
+  applyMode('easy');
+  selectRecipe('feature_dream_autopilot');
+  switchTab('chain');
+  await startChain();
 }
 
 function showNewProjectModal() {
