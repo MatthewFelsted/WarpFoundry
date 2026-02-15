@@ -71,6 +71,8 @@ header{
   overflow:visible
 }
 .header-brand{display:flex;align-items:center;gap:14px;min-width:0;flex-wrap:wrap}
+.header-shortcuts{display:flex;gap:4px;align-items:center}
+.header-shortcuts .btn{padding:5px 10px;font-size:12px}
 .logo{font-size:19px;font-weight:700;letter-spacing:.1px;white-space:nowrap}
 .logo span{color:var(--accent2);filter:drop-shadow(0 0 8px rgba(110,199,255,.42))}
 .header-actions{display:flex;gap:8px;align-items:center;flex-shrink:0;min-width:0;flex-wrap:wrap;justify-content:flex-end}
@@ -142,6 +144,30 @@ input[type="checkbox"]{accent-color:var(--accent);margin-right:6px;vertical-alig
 .form-row:last-child{margin-bottom:0}
 .form-row-inline{display:flex;gap:12px;align-items:center}
 .form-row-inline > *{flex:1}
+.option-subpanel{
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:rgba(19,29,43,.55);
+  padding:10px;
+  margin-top:8px;
+}
+.option-subpanel.hidden{display:none}
+.scope-note{
+  display:inline-block;
+  font-size:11px;
+  color:var(--accent2);
+  border:1px solid rgba(110,199,255,.45);
+  background:rgba(110,199,255,.08);
+  border-radius:999px;
+  padding:2px 8px;
+  margin-bottom:8px;
+}
+.foundation-tools{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
 
 button:focus-visible,
 input:focus-visible,
@@ -335,6 +361,11 @@ summary:focus-visible{
   background:rgba(255,111,111,.09);
   color:#ffd6d6;
 }
+.state-card.warning{
+  border-color:rgba(223,170,88,.45);
+  background:rgba(223,170,88,.10);
+  color:#ffe7c2;
+}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Results Table Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
@@ -443,7 +474,7 @@ body.mode-medium .easy-only{display:none}
 /* Ã¢â€â‚¬Ã¢â€â‚¬ New Project modal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 #new-project-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px}
 #new-project-overlay.hidden{display:none}
-.new-project-card{max-width:520px;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.new-project-card{max-width:520px;width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 .new-project-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
 .new-project-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:16px}
 .new-project-card .form-row{margin-bottom:12px}
@@ -455,6 +486,15 @@ body.mode-medium .easy-only{display:none}
 .new-project-card details summary{cursor:pointer;font-size:12px;color:var(--text2);font-weight:600}
 .new-project-card details .form-row{margin-top:10px}
 .new-project-card .creation-result{margin-top:12px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--success);display:none}
+
+#todo-wishlist-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
+#todo-wishlist-overlay.hidden{display:none}
+.todo-wishlist-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.todo-wishlist-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.todo-wishlist-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.todo-wishlist-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.todo-wishlist-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
+.todo-wishlist-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Help tooltip Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .help-icon{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;background:var(--border);color:var(--text2);font-size:10px;font-weight:700;cursor:help;margin-left:4px;vertical-align:middle}
@@ -702,6 +742,10 @@ body.mode-medium .easy-only{display:none}
       <button id="tab-chain" class="active" data-tab="chain" role="tab" tabindex="0" aria-selected="true" aria-controls="chain-view" onclick="switchTab('chain')">Chain Builder</button>
       <button id="tab-pipeline" data-tab="pipeline" role="tab" tabindex="-1" aria-selected="false" aria-controls="pipeline-view" onclick="switchTab('pipeline')">Pipeline</button>
     </div>
+    <div class="header-shortcuts">
+      <button type="button" class="btn" onclick="showTodoWishlistModal()">To-Do / Wishlist</button>
+      <button type="button" class="btn btn-success" onclick="startTodoWishlistAutopilot()">Implement To-Do</button>
+    </div>
   </div>
   <div class="header-actions">
     <div class="mode-toggle" id="difficulty-mode-toggle">
@@ -720,6 +764,18 @@ body.mode-medium .easy-only{display:none}
 </header>
 <div id="backend-status-banner" class="state-card error" style="display:none;margin:8px 18px 0 18px">
   Backend connection lost. Waiting to reconnect.
+</div>
+<div id="watchdog-alert-banner" class="state-card warning" style="display:none;margin:8px 18px 0 18px">
+  <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+    <strong>Model Watchdog Alerts</strong>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-success" type="button" id="watchdog-apply-migrations-btn" style="display:none" onclick="applyWatchdogMigrationsFromBanner()">Apply migration suggestions</button>
+      <button class="btn btn-warning" type="button" onclick="runWatchdogNowFromBanner()">Run now</button>
+      <button class="btn" type="button" onclick="openDoc('model_watchdog')">Guide</button>
+      <button class="btn" type="button" onclick="muteWatchdogAlerts(1)">Mute 1h</button>
+    </div>
+  </div>
+  <div id="watchdog-alert-content" style="margin-top:8px;white-space:pre-wrap"></div>
 </div>
 
 <!-- Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â -->
@@ -790,6 +846,14 @@ body.mode-medium .easy-only{display:none}
       <div class="recipe-card" data-recipe="test" onclick="selectRecipe('test')" title="Testing x3 -> Bug Hunting x2 -> Testing x2">
         <div class="recipe-title">Test Coverage</div>
         <div class="recipe-desc">Testing and bug hunting focus</div>
+      </div>
+      <div class="recipe-card" data-recipe="todo_wishlist_autopilot" onclick="selectRecipe('todo_wishlist_autopilot')" title="Create To-Do/Wishlist -> Implement open items until done">
+        <div class="recipe-title">To-Do/Wishlist Autopilot</div>
+        <div class="recipe-desc">Create backlog then implement items until completed</div>
+      </div>
+      <div class="recipe-card" data-recipe="feature_dream_autopilot" onclick="selectRecipe('feature_dream_autopilot')" title="Dream Up Feature List -> Implement features until done">
+        <div class="recipe-title">Feature Dream Autopilot</div>
+        <div class="recipe-desc">Dream up features and implement all open items</div>
       </div>
     </div>
   </div>
@@ -887,7 +951,7 @@ body.mode-medium .easy-only{display:none}
         <label>Brain Model <span style="font-size:10px;color:var(--text2);font-weight:400;margin-left:4px">Expert</span></label>
         <select id="brain-model" title="AI model used for planning and evaluating step results.">
           <optgroup label="OpenAI" class="cloud-model-group">
-            <option value="gpt-5.2">GPT-5.2</option>
+            <option value="gpt-5.3">GPT-5.3</option>
             <option value="gpt-4.1">GPT-4.1</option>
             <option value="gpt-4o">GPT-4o</option>
           </optgroup>
@@ -976,6 +1040,27 @@ body.mode-medium .easy-only{display:none}
           <div class="form-row">
             <label>Image Model</label>
             <input type="text" id="chain-image-model" value="gpt-image-1" placeholder="gpt-image-1 or nano-banana">
+          </div>
+        </div>
+
+        <div class="form-row" style="margin-top:8px">
+          <label><input type="checkbox" id="chain-vector-memory-enabled" onchange="toggleChainVectorMemory()"> Enable per-repo vector memory (ChromaDB)</label>
+          <div class="field-help">Stores high-signal step outcomes for long-term retrieval across chain and pipeline runs.</div>
+        </div>
+        <div id="chain-vector-memory-options" class="option-subpanel hidden">
+          <div class="form-row">
+            <label>Vector Backend</label>
+            <select id="chain-vector-memory-backend">
+              <option value="chroma">ChromaDB</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Collection Name <span style="color:var(--text2)">(optional)</span></label>
+            <input type="text" id="chain-vector-memory-collection" placeholder="defaults to repo folder name">
+          </div>
+          <div class="form-row">
+            <label>Memory Recall Top-K</label>
+            <input type="number" id="chain-vector-memory-top-k" value="8" min="1" max="30">
           </div>
         </div>
       </div>
@@ -1094,6 +1179,16 @@ body.mode-medium .easy-only{display:none}
     </div>
     <div id="chain-output-dir" style="font-size:11px;color:var(--text2);margin-bottom:6px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:100%"></div>
     <div class="log-content" id="chain-output-content" aria-live="polite">Run a chain to generate step output files.</div>
+  </div>
+
+  <div class="chain-outputs-section">
+    <h3>Owner Decision Board (Monetization)</h3>
+    <div class="form-row-inline" style="margin-bottom:8px">
+      <button class="btn" onclick="generateDecisionBoardFromCurrentOutput()">Generate from current output</button>
+      <button class="btn" onclick="loadOwnerDecisionBoard()">Refresh</button>
+    </div>
+    <div id="owner-board-warning" style="font-size:11px;color:var(--warning);margin-bottom:6px;white-space:pre-wrap"></div>
+    <div class="log-content" id="owner-board-content" aria-live="polite">No decision board yet. Generate from a monetization output.</div>
   </div>
 
   <!-- Results -->
@@ -1299,7 +1394,7 @@ body.mode-medium .easy-only{display:none}
         <label>Brain Model</label>
         <select id="pipe-brain-model">
           <optgroup label="OpenAI" class="cloud-model-group">
-            <option value="gpt-5.2">GPT-5.2</option>
+            <option value="gpt-5.3">GPT-5.3</option>
             <option value="gpt-4.1">GPT-4.1</option>
           </optgroup>
           <optgroup label="Anthropic" class="cloud-model-group">
@@ -1404,12 +1499,121 @@ body.mode-medium .easy-only{display:none}
             <input type="text" id="pipe-image-model" value="gpt-image-1" placeholder="gpt-image-1 or nano-banana">
           </div>
         </div>
+
         <div class="form-row" style="margin-top:8px">
+          <label><input type="checkbox" id="pipe-vector-memory-enabled" onchange="togglePipeVectorMemory()"> Enable per-repo vector memory (ChromaDB)</label>
+          <div class="field-help">Stores high-signal notes, phase outcomes, and research artifacts for long-term retrieval.</div>
+        </div>
+        <div id="pipe-vector-memory-options" class="option-subpanel hidden">
+          <div class="form-row">
+            <label>Vector Backend</label>
+            <select id="pipe-vector-memory-backend">
+              <option value="chroma">ChromaDB</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Collection Name <span style="color:var(--text2)">(optional)</span></label>
+            <input type="text" id="pipe-vector-memory-collection" placeholder="defaults to repo folder name">
+          </div>
+          <div class="form-row">
+            <label>Memory Recall Top-K</label>
+            <input type="number" id="pipe-vector-memory-top-k" value="8" min="1" max="30">
+          </div>
+          <div class="field-help">Higher values provide more context, but may increase token usage.</div>
+        </div>
+
+        <div class="form-row" style="margin-top:8px">
+          <label><input type="checkbox" id="pipe-deep-research-enabled" onchange="togglePipeDeepResearch()"> Enable Deep Research phase</label>
+          <div class="field-help">Adds a dedicated research step with cache-aware dedupe and persistent summaries.</div>
+        </div>
+        <div id="pipe-deep-research-options" class="option-subpanel hidden">
+          <div class="form-row">
+            <label>Research Provider Preference</label>
+            <select id="pipe-deep-research-providers">
+              <option value="both">OpenAI + Google</option>
+              <option value="openai">OpenAI only</option>
+              <option value="google">Google only</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Reuse Window (hours)</label>
+            <input type="number" id="pipe-deep-research-max-age-hours" value="168" min="1" max="8760">
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="pipe-deep-research-dedupe" checked> Skip redundant research when recent findings are similar</label>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="pipe-deep-research-native-enabled"> Prefer native provider deep-research APIs</label>
+            <div class="field-help">Uses provider-native web-research calls with retries, quota limits, and budget controls before agent fallback.</div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row">
+              <label>Retry Attempts</label>
+              <input type="number" id="pipe-deep-research-retry-attempts" value="2" min="1" max="6">
+            </div>
+            <div class="form-row">
+              <label>Daily Quota (runs)</label>
+              <input type="number" id="pipe-deep-research-daily-quota" value="8" min="1" max="100">
+            </div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row">
+              <label>Per-Provider Max Tokens</label>
+              <input type="number" id="pipe-deep-research-max-provider-tokens" value="12000" min="512" max="64000" step="128">
+            </div>
+            <div class="form-row">
+              <label>Daily Budget (USD est.)</label>
+              <input type="number" id="pipe-deep-research-budget-usd" value="5.0" min="0" step="0.1">
+            </div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row">
+              <label>OpenAI Deep Research Model</label>
+              <input type="text" id="pipe-deep-research-openai-model" value="gpt-5.3">
+            </div>
+            <div class="form-row">
+              <label>Google Deep Research Model</label>
+              <input type="text" id="pipe-deep-research-google-model" value="gemini-3-pro-preview">
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:8px">
+            <label>Source Governance Policy (global)</label>
+            <div class="field-help">Domain allow/deny lists used for monetization governance checks and deep-research citation filtering.</div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row">
+              <label>General Allowlist Domains</label>
+              <input type="text" id="pipe-governance-research-allowed" placeholder="docs.python.org,openai.com">
+            </div>
+            <div class="form-row">
+              <label>General Blocklist Domains</label>
+              <input type="text" id="pipe-governance-research-blocked" placeholder="example.com,tiktok.com">
+            </div>
+          </div>
+          <div class="form-row-inline">
+            <div class="form-row">
+              <label>Deep Research Allowlist Domains</label>
+              <input type="text" id="pipe-governance-deep-allowed" placeholder="developer.mozilla.org,arxiv.org">
+            </div>
+            <div class="form-row">
+              <label>Deep Research Blocklist Domains</label>
+              <input type="text" id="pipe-governance-deep-blocked" placeholder="example.com,x.com">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn" type="button" onclick="loadGovernancePolicy()">Reload policy</button>
+            <button class="btn btn-primary" type="button" onclick="saveGovernancePolicy()">Save policy</button>
+          </div>
+          <div class="field-help" id="pipe-governance-policy-status"></div>
+        </div>
+
+        <div class="form-row" style="margin-top:10px">
+          <span class="scope-note">For <span class="program-name-slot">this program</span> only</span>
           <label><input type="checkbox" id="pipe-self-improvement-enabled" onchange="togglePipeSelfImprovement()"> Enable self-improvement restart checkpoint phase</label>
-          <div class="field-help">Adds a special phase that writes a resume checkpoint so the server can restart and continue with updated code.</div>
+          <div class="field-help">Adds a special phase that writes a resume checkpoint so this program can restart and continue with updated code.</div>
         </div>
         <div class="form-row">
-          <label><input type="checkbox" id="pipe-self-improvement-auto-restart"> Auto-restart server and auto-resume from checkpoint</label>
+          <label><input type="checkbox" id="pipe-self-improvement-auto-restart"> Auto-restart this program and auto-resume from checkpoint</label>
         </div>
       </div>
 
@@ -1522,6 +1726,7 @@ body.mode-medium .easy-only{display:none}
           <button data-file="TESTPLAN.md" onclick="viewLogFile('TESTPLAN.md')">TESTPLAN</button>
           <button data-file="ERRORS.md" onclick="viewLogFile('ERRORS.md')">ERRORS</button>
           <button data-file="EXPERIMENTS.md" onclick="viewLogFile('EXPERIMENTS.md')">EXPERIMENTS</button>
+          <button data-file="RESEARCH.md" onclick="viewLogFile('RESEARCH.md')">RESEARCH</button>
           <button data-file="SCIENTIST_REPORT.md" onclick="viewLogFile('SCIENTIST_REPORT.md')">SCIENCE REPORT</button>
           <button data-file="PROGRESS.md" onclick="viewLogFile('PROGRESS.md')">PROGRESS</button>
           <button data-file="BRAIN.md" onclick="viewLogFile('BRAIN.md')">BRAIN</button>
@@ -1578,6 +1783,57 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- To-Do / Wishlist modal -->
+<div id="todo-wishlist-overlay" class="hidden" onclick="if(event.target===this)hideTodoWishlistModal()">
+  <div class="todo-wishlist-card" role="dialog" aria-modal="true" aria-labelledby="todo-wishlist-title">
+    <h2 id="todo-wishlist-title">To-Do / Wishlist Workspace</h2>
+    <p class="subtitle">Write your own backlog or let AI generate one, then implement it with one click.</p>
+
+    <div class="form-row">
+      <label>Repository Path</label>
+      <div class="repo-row">
+        <input type="text" id="todo-wishlist-repo" placeholder="C:\path\to\your\repo">
+        <button class="btn" type="button" onclick="syncTodoWishlistRepoFromMain()">Use Current Repo</button>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>To-Do / Wishlist (markdown checklist)</label>
+      <textarea id="todo-wishlist-content" rows="18" placeholder="- [ ] Add feature X&#10;- [ ] Improve Y"></textarea>
+      <div class="field-help">Use <code>- [ ]</code> for open items and <code>- [x]</code> for completed items.</div>
+    </div>
+
+    <details>
+      <summary>AI Suggestion (optional)</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label>Extra context for AI</label>
+        <textarea id="todo-wishlist-context" rows="4" placeholder="What kind of features, priorities, constraints, or timeline do you want?"></textarea>
+      </div>
+      <div class="form-row">
+        <label>Suggestion Model</label>
+        <select id="todo-wishlist-model">
+          <option value="gpt-5.3">GPT-5.3</option>
+          <option value="claude-opus-4-6">Claude Opus 4.6</option>
+          <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
+          <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast</option>
+        </select>
+      </div>
+      <div class="inline-actions">
+        <button class="btn" type="button" onclick="suggestTodoWishlist()">Suggest with AI</button>
+        <button class="btn" type="button" onclick="appendTodoWishlistSuggestion()">Append Suggestion</button>
+      </div>
+      <div class="status" id="todo-wishlist-suggest-status"></div>
+    </details>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideTodoWishlistModal()">Close</button>
+      <button class="btn" type="button" onclick="loadTodoWishlist()">Load</button>
+      <button class="btn btn-primary" type="button" onclick="saveTodoWishlist()">Save</button>
+      <button class="btn btn-success" type="button" onclick="saveAndStartTodoWishlistAutopilot()">Save + Implement</button>
+    </div>
+  </div>
+</div>
+
 <!-- New Project modal -->
 <div id="new-project-overlay" class="hidden">
   <div class="new-project-card" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
@@ -1620,6 +1876,75 @@ body.mode-medium .easy-only{display:none}
       <div class="form-row">
         <label>Remote URL <span style="color:var(--text2)">(optional - GitHub, GitLab, etc.)</span></label>
         <input type="text" id="np-remote" placeholder="https://github.com/you/repo.git">
+      </div>
+    </details>
+
+    <details>
+      <summary>Foundational Prompt &amp; Bootstrap (optional)</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label><input type="checkbox" id="np-foundation-enabled" onchange="toggleFoundationOptions()"> Enable foundational prompt setup</label>
+      </div>
+      <div id="np-foundation-options" class="option-subpanel hidden">
+        <div class="form-row">
+          <label>Foundational Prompt</label>
+          <textarea id="np-foundation-prompt" rows="8" placeholder="Describe what should be built, constraints, priorities, and quality bar..."></textarea>
+        </div>
+        <div class="form-row">
+          <label>Prompt Improvement Assistants</label>
+          <div class="foundation-tools">
+            <label><input type="checkbox" class="np-foundation-assistant" value="codex" checked> Codex</label>
+            <label><input type="checkbox" class="np-foundation-assistant" value="openai"> OpenAI</label>
+            <label><input type="checkbox" class="np-foundation-assistant" value="google"> Google</label>
+            <label><input type="checkbox" class="np-foundation-assistant" value="claude"> Claude</label>
+            <button class="btn" type="button" onclick="improveFoundationalPrompt()">Improve my foundational prompt</button>
+          </div>
+          <div class="field-help" id="np-foundation-status">Choose assistants and click "Improve..." to refine prompt structure.</div>
+        </div>
+        <div class="toggle-row">
+          <label><input type="checkbox" id="np-foundation-generate-docs" checked> Auto-generate foundational docs/plans</label>
+          <label><input type="checkbox" id="np-foundation-bootstrap-once" checked> Mark one-time bootstrap request</label>
+          <label><input type="checkbox" id="np-foundation-bootstrap-autorun" checked> Auto-run one-time bootstrap chain after project creation</label>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Licensing &amp; Commercial Packaging (optional)</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label><input type="checkbox" id="np-licensing-enabled" onchange="toggleLicensingOptions()"> Generate licensing/commercial planning docs</label>
+      </div>
+      <div id="np-licensing-options" class="option-subpanel hidden">
+        <div class="form-row">
+          <label>Strategy</label>
+          <select id="np-licensing-strategy">
+            <option value="oss_only">Open-source only</option>
+            <option value="open_core">Open core (OSS + paid add-ons)</option>
+            <option value="dual_license">Dual license (OSS + commercial)</option>
+            <option value="hosted_service">Hosted service (SaaS/API)</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <label><input type="checkbox" id="np-licensing-commercial" checked> Include pricing-tier planning template</label>
+        </div>
+        <div class="form-row">
+          <label>Owner Contact Email <span style="color:var(--text2)">(optional)</span></label>
+          <input type="text" id="np-licensing-email" placeholder="owner@example.com">
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" id="np-licensing-legal-review-required" checked onchange="toggleLicensingLegalSignoff()"> Require legal-review checkpoint before publishing docs</label>
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" id="np-licensing-legal-signoff"> Mark legal sign-off complete now</label>
+        </div>
+        <div class="form-row">
+          <label>Legal Reviewer <span style="color:var(--text2)">(optional)</span></label>
+          <input type="text" id="np-licensing-legal-reviewer" placeholder="owner or counsel">
+        </div>
+        <div class="form-row">
+          <label>Legal Notes <span style="color:var(--text2)">(optional)</span></label>
+          <input type="text" id="np-licensing-legal-notes" placeholder="Internal sign-off notes">
+        </div>
+        <div class="field-help">Creates draft docs under <code>docs/</code> and profile config under <code>.codex_manager/business/</code>.</div>
       </div>
     </details>
 
@@ -1666,10 +1991,14 @@ const config = {
   image_generation_enabled: false,
   image_provider: 'openai',
   image_model: 'gpt-image-1',
+  vector_memory_enabled: false,
+  vector_memory_backend: 'chroma',
+  vector_memory_collection: '',
+  vector_memory_top_k: 8,
   timeout_per_step: 0,
   parallel_execution: false,
   brain_enabled: false,
-  brain_model: 'gpt-5.2',
+  brain_model: 'gpt-5.3',
   local_only: false,
 };
 const DEFAULT_CHAIN_CONFIG = cloneState(config);
@@ -1700,12 +2029,17 @@ let backendOnline = true;
 let backendLastError = '';
 let pendingServerRestart = null;
 let selfRestartNoticeCheckpoint = '';
+let watchdogAlertsTimer = null;
+let watchdogAlertsMutedUntil = 0;
+let watchdogAlertDigest = '';
+let watchdogMigrationSuggestions = [];
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
 
 const RECIPES_PAYLOAD = {{ recipes_payload | tojson }};
 const RECIPES = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.recipes) || {};
 const DEFAULT_EASY_RECIPE_ID = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.default_recipe_id) || 'autopilot_default';
+const PROGRAM_DISPLAY_NAME = {{ project_display_name | tojson }};
 
 const VALID_CODEX_SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'];
 const VALID_CODEX_APPROVAL_POLICIES = ['untrusted', 'on-failure', 'on-request', 'never'];
@@ -1737,6 +2071,7 @@ const _modalOverlayIds = [
   'readonly-warning-overlay',
   'browse-overlay',
   'new-project-overlay',
+  'todo-wishlist-overlay',
   'onboarding-overlay',
 ];
 
@@ -1779,6 +2114,13 @@ function _openOverlay(overlayId, focusSelector = '') {
   return overlay;
 }
 
+function applyProgramNameLabels() {
+  const label = String(PROGRAM_DISPLAY_NAME || '').trim() || 'this program';
+  document.querySelectorAll('.program-name-slot').forEach(el => {
+    el.textContent = label;
+  });
+}
+
 function _closeOverlay(overlayId) {
   const overlay = document.getElementById(overlayId);
   if (!overlay) return null;
@@ -1814,6 +2156,37 @@ function normalizeCapabilitySettings(cfg) {
   cfg.image_provider = VALID_IMAGE_PROVIDERS.includes(provider) ? provider : 'openai';
   cfg.image_model = String(cfg.image_model || '').trim();
   if (!cfg.image_model) cfg.image_model = DEFAULT_IMAGE_MODEL_BY_PROVIDER[cfg.image_provider];
+
+  cfg.vector_memory_enabled = !!cfg.vector_memory_enabled;
+  cfg.vector_memory_backend = String(cfg.vector_memory_backend || 'chroma').trim().toLowerCase();
+  if (cfg.vector_memory_backend !== 'chroma') cfg.vector_memory_backend = 'chroma';
+  cfg.vector_memory_collection = String(cfg.vector_memory_collection || '').trim();
+  cfg.vector_memory_top_k = Math.min(30, Math.max(1, parseInt(cfg.vector_memory_top_k, 10) || 8));
+
+  cfg.deep_research_enabled = !!cfg.deep_research_enabled;
+  const providers = String(cfg.deep_research_providers || 'both').trim().toLowerCase();
+  cfg.deep_research_providers = ['openai', 'google', 'both'].includes(providers) ? providers : 'both';
+  cfg.deep_research_max_age_hours = Math.min(
+    8760,
+    Math.max(1, parseInt(cfg.deep_research_max_age_hours, 10) || 168),
+  );
+  cfg.deep_research_dedupe = cfg.deep_research_dedupe !== false;
+  cfg.deep_research_native_enabled = !!cfg.deep_research_native_enabled;
+  cfg.deep_research_retry_attempts = Math.min(
+    6,
+    Math.max(1, parseInt(cfg.deep_research_retry_attempts, 10) || 2),
+  );
+  cfg.deep_research_daily_quota = Math.min(
+    100,
+    Math.max(1, parseInt(cfg.deep_research_daily_quota, 10) || 8),
+  );
+  cfg.deep_research_max_provider_tokens = Math.min(
+    64000,
+    Math.max(512, parseInt(cfg.deep_research_max_provider_tokens, 10) || 12000),
+  );
+  cfg.deep_research_budget_usd = Math.max(0, parseFloat(cfg.deep_research_budget_usd) || 5.0);
+  cfg.deep_research_openai_model = String(cfg.deep_research_openai_model || 'gpt-5.3').trim() || 'gpt-5.3';
+  cfg.deep_research_google_model = String(cfg.deep_research_google_model || 'gemini-3-pro-preview').trim() || 'gemini-3-pro-preview';
 }
 
 function syncChainCapabilityControlsFromConfig() {
@@ -1823,7 +2196,12 @@ function syncChainCapabilityControlsFromConfig() {
   document.getElementById('chain-image-generation-enabled').checked = !!config.image_generation_enabled;
   document.getElementById('chain-image-provider').value = config.image_provider;
   document.getElementById('chain-image-model').value = config.image_model || DEFAULT_IMAGE_MODEL_BY_PROVIDER[config.image_provider];
+  document.getElementById('chain-vector-memory-enabled').checked = !!config.vector_memory_enabled;
+  document.getElementById('chain-vector-memory-backend').value = config.vector_memory_backend || 'chroma';
+  document.getElementById('chain-vector-memory-collection').value = config.vector_memory_collection || '';
+  document.getElementById('chain-vector-memory-top-k').value = config.vector_memory_top_k || 8;
   toggleChainImageOptions(false);
+  toggleChainVectorMemory(false);
 }
 
 function syncPipelineCapabilityControlsFromConfig() {
@@ -1833,10 +2211,27 @@ function syncPipelineCapabilityControlsFromConfig() {
   document.getElementById('pipe-image-generation-enabled').checked = !!pipeConfig.image_generation_enabled;
   document.getElementById('pipe-image-provider').value = pipeConfig.image_provider;
   document.getElementById('pipe-image-model').value = pipeConfig.image_model || DEFAULT_IMAGE_MODEL_BY_PROVIDER[pipeConfig.image_provider];
+  document.getElementById('pipe-vector-memory-enabled').checked = !!pipeConfig.vector_memory_enabled;
+  document.getElementById('pipe-vector-memory-backend').value = pipeConfig.vector_memory_backend || 'chroma';
+  document.getElementById('pipe-vector-memory-collection').value = pipeConfig.vector_memory_collection || '';
+  document.getElementById('pipe-vector-memory-top-k').value = pipeConfig.vector_memory_top_k || 8;
+  document.getElementById('pipe-deep-research-enabled').checked = !!pipeConfig.deep_research_enabled;
+  document.getElementById('pipe-deep-research-providers').value = pipeConfig.deep_research_providers || 'both';
+  document.getElementById('pipe-deep-research-max-age-hours').value = pipeConfig.deep_research_max_age_hours || 168;
+  document.getElementById('pipe-deep-research-dedupe').checked = pipeConfig.deep_research_dedupe !== false;
+  document.getElementById('pipe-deep-research-native-enabled').checked = !!pipeConfig.deep_research_native_enabled;
+  document.getElementById('pipe-deep-research-retry-attempts').value = pipeConfig.deep_research_retry_attempts || 2;
+  document.getElementById('pipe-deep-research-daily-quota').value = pipeConfig.deep_research_daily_quota || 8;
+  document.getElementById('pipe-deep-research-max-provider-tokens').value = pipeConfig.deep_research_max_provider_tokens || 12000;
+  document.getElementById('pipe-deep-research-budget-usd').value = pipeConfig.deep_research_budget_usd || 5.0;
+  document.getElementById('pipe-deep-research-openai-model').value = pipeConfig.deep_research_openai_model || 'gpt-5.3';
+  document.getElementById('pipe-deep-research-google-model').value = pipeConfig.deep_research_google_model || 'gemini-3-pro-preview';
   document.getElementById('pipe-self-improvement-enabled').checked = !!pipeConfig.self_improvement_enabled;
   document.getElementById('pipe-self-improvement-auto-restart').checked = !!pipeConfig.self_improvement_auto_restart;
   document.getElementById('pipe-self-improvement-auto-restart').disabled = !pipeConfig.self_improvement_enabled;
   togglePipeImageOptions(false);
+  togglePipeVectorMemory(false);
+  togglePipeDeepResearch(false);
 }
 
 function toggleChainImageOptions(syncConfig = true) {
@@ -1859,6 +2254,16 @@ function onChainImageProviderChanged() {
   normalizeCapabilitySettings(config);
 }
 
+function toggleChainVectorMemory(syncConfig = true) {
+  const enabled = document.getElementById('chain-vector-memory-enabled').checked;
+  const panel = document.getElementById('chain-vector-memory-options');
+  panel.classList.toggle('hidden', !enabled);
+  if (syncConfig) {
+    config.vector_memory_enabled = enabled;
+    normalizeCapabilitySettings(config);
+  }
+}
+
 function togglePipeImageOptions(syncConfig = true) {
   const enabled = document.getElementById('pipe-image-generation-enabled').checked;
   document.getElementById('pipe-image-options').style.display = enabled ? '' : 'none';
@@ -1877,6 +2282,105 @@ function onPipeImageProviderChanged() {
   }
   pipeConfig.image_model = modelInput.value.trim();
   normalizeCapabilitySettings(pipeConfig);
+}
+
+function togglePipeVectorMemory(syncConfig = true) {
+  const enabled = document.getElementById('pipe-vector-memory-enabled').checked;
+  const panel = document.getElementById('pipe-vector-memory-options');
+  panel.classList.toggle('hidden', !enabled);
+  if (syncConfig) {
+    pipeConfig.vector_memory_enabled = enabled;
+    normalizeCapabilitySettings(pipeConfig);
+  }
+}
+
+function togglePipeDeepResearch(syncConfig = true) {
+  const enabled = document.getElementById('pipe-deep-research-enabled').checked;
+  const panel = document.getElementById('pipe-deep-research-options');
+  panel.classList.toggle('hidden', !enabled);
+  if (syncConfig) {
+    pipeConfig.deep_research_enabled = enabled;
+    normalizeCapabilitySettings(pipeConfig);
+  }
+  renderPipelinePhases();
+}
+
+function _normalizeDomainCsv(value) {
+  const tokens = String(value || '')
+    .toLowerCase()
+    .split(/[\s,;]+/)
+    .map(chunk => chunk.trim().replace(/^\./, ''))
+    .filter(Boolean);
+  return Array.from(new Set(tokens)).join(',');
+}
+
+function _setGovernancePolicyStatus(text, tone = 'muted') {
+  const el = document.getElementById('pipe-governance-policy-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') el.style.color = 'var(--success)';
+  else if (tone === 'warn') el.style.color = 'var(--warning)';
+  else if (tone === 'error') el.style.color = 'var(--danger)';
+  else el.style.color = 'var(--text2)';
+}
+
+function _applyGovernancePolicyToUi(policy) {
+  const payload = policy || {};
+  const map = {
+    research_allowed_domains: 'pipe-governance-research-allowed',
+    research_blocked_domains: 'pipe-governance-research-blocked',
+    deep_research_allowed_domains: 'pipe-governance-deep-allowed',
+    deep_research_blocked_domains: 'pipe-governance-deep-blocked',
+  };
+  Object.keys(map).forEach(key => {
+    const el = document.getElementById(map[key]);
+    if (!el) return;
+    el.value = _normalizeDomainCsv(payload[key] || '');
+  });
+}
+
+function _readGovernancePolicyFromUi() {
+  return {
+    research_allowed_domains: _normalizeDomainCsv(document.getElementById('pipe-governance-research-allowed').value),
+    research_blocked_domains: _normalizeDomainCsv(document.getElementById('pipe-governance-research-blocked').value),
+    deep_research_allowed_domains: _normalizeDomainCsv(document.getElementById('pipe-governance-deep-allowed').value),
+    deep_research_blocked_domains: _normalizeDomainCsv(document.getElementById('pipe-governance-deep-blocked').value),
+  };
+}
+
+async function loadGovernancePolicy(opts = {}) {
+  try {
+    const resp = await api('/api/governance/source-policy');
+    if (resp.error) throw new Error(resp.error);
+    _applyGovernancePolicyToUi(resp);
+    if (!opts.silent) {
+      _setGovernancePolicyStatus('Governance policy loaded.', 'ok');
+    } else {
+      _setGovernancePolicyStatus('Governance policy loaded from server.', 'muted');
+    }
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setGovernancePolicyStatus('Could not load policy: ' + message, 'error');
+    if (!opts.silent) {
+      toast('Could not load governance policy: ' + message, 'error');
+    }
+  }
+}
+
+async function saveGovernancePolicy() {
+  const payload = _readGovernancePolicyFromUi();
+  try {
+    const resp = await postJson('/api/governance/source-policy', payload);
+    if (resp.error) throw new Error(resp.error);
+    const saved = (resp && resp.policy) ? resp.policy : payload;
+    _applyGovernancePolicyToUi(saved);
+    _setGovernancePolicyStatus('Governance policy saved.', 'ok');
+    toast('Governance source policy saved', 'success');
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setGovernancePolicyStatus('Could not save policy: ' + message, 'error');
+    toast('Could not save governance policy: ' + message, 'error');
+  }
 }
 
 function togglePipeSelfImprovement() {
@@ -2474,6 +2978,7 @@ function initMainTabKeyboardNav() {
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Init Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 document.addEventListener('DOMContentLoaded', async () => {
+  applyProgramNameLabels();
   try {
     presets = await api('/api/presets');
   } catch(e) { console.warn('Could not load presets', e); }
@@ -2495,6 +3000,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (activityHeartbeatTimer) clearInterval(activityHeartbeatTimer);
   activityHeartbeatTimer = setInterval(renderActivityHeartbeats, 1000);
   startBackendHealthPolling();
+  startWatchdogAlertPolling();
   switchTab('chain');
   applyMode(currentMode);
   loadConfigList();
@@ -2502,6 +3008,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Fetch Ollama models in background - populates both brain dropdowns
   fetchOllamaModels();
   refreshChainOutputs(false);
+  loadGovernancePolicy({ silent: true });
+  loadOwnerDecisionBoard();
   ['codex-bin', 'claude-bin'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -2534,6 +3042,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     closePermissionsHelpModal();
     closeReadOnlyWarningModal('cancel');
     closeDocsModal();
+    hideTodoWishlistModal();
     hideNewProjectModal();
     browseClose();
   });
@@ -2545,15 +3054,272 @@ function dismissOnboarding() {
   applyMode('easy');
 }
 
+/* -- To-Do / Wishlist workspace -- */
+let lastTodoWishlistSuggestion = '';
+
+function _activeRepoPath() {
+  const chainRepo = String(document.getElementById('repo-path').value || '').trim();
+  if (chainRepo) return chainRepo;
+  const pipeRepo = String(document.getElementById('pipe-repo-path').value || '').trim();
+  return pipeRepo;
+}
+
+function syncTodoWishlistRepoFromMain() {
+  const repo = _activeRepoPath();
+  const input = document.getElementById('todo-wishlist-repo');
+  if (input) input.value = repo;
+  return repo;
+}
+
+function _setTodoWishlistStatus(text, tone = 'muted') {
+  const el = document.getElementById('todo-wishlist-suggest-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+async function showTodoWishlistModal() {
+  syncTodoWishlistRepoFromMain();
+  const area = document.getElementById('todo-wishlist-content');
+  if (area) area.value = '';
+  lastTodoWishlistSuggestion = '';
+  _setTodoWishlistStatus('');
+  _openOverlay('todo-wishlist-overlay', '#todo-wishlist-repo');
+  await loadTodoWishlist();
+}
+
+function hideTodoWishlistModal() {
+  _closeOverlay('todo-wishlist-overlay');
+}
+
+async function loadTodoWishlist() {
+  const repo = String(document.getElementById('todo-wishlist-repo').value || '').trim();
+  if (!repo) {
+    _setTodoWishlistStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  _setTodoWishlistStatus('Loading to-do/wishlist...', 'muted');
+  try {
+    const resp = await api('/api/owner/todo-wishlist?repo_path=' + encodeURIComponent(repo));
+    if (resp.error) {
+      _setTodoWishlistStatus(resp.error, 'error');
+      return;
+    }
+    const area = document.getElementById('todo-wishlist-content');
+    if (area) area.value = String(resp.content || '').trim();
+    _setTodoWishlistStatus(resp.exists ? 'Loaded existing to-do/wishlist file.' : 'Loaded starter template.', 'ok');
+  } catch (e) {
+    _setTodoWishlistStatus('Could not load to-do/wishlist.', 'error');
+  }
+}
+
+async function saveTodoWishlist() {
+  const repo = String(document.getElementById('todo-wishlist-repo').value || '').trim();
+  const content = String(document.getElementById('todo-wishlist-content').value || '').trim();
+  if (!repo) {
+    _setTodoWishlistStatus('Set a repository path first.', 'warn');
+    return false;
+  }
+  try {
+    const resp = await postJson('/api/owner/todo-wishlist/save', {
+      repo_path: repo,
+      content: content,
+    });
+    if (resp.error) {
+      _setTodoWishlistStatus(resp.error, 'error');
+      return false;
+    }
+    _setTodoWishlistStatus('Saved to-do/wishlist.', 'ok');
+    toast('To-do/wishlist saved.', 'success');
+    return true;
+  } catch (e) {
+    _setTodoWishlistStatus('Could not save to-do/wishlist.', 'error');
+    return false;
+  }
+}
+
+async function suggestTodoWishlist() {
+  const repo = String(document.getElementById('todo-wishlist-repo').value || '').trim();
+  if (!repo) {
+    _setTodoWishlistStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const existing = String(document.getElementById('todo-wishlist-content').value || '').trim();
+  const ownerContext = String(document.getElementById('todo-wishlist-context').value || '').trim();
+  const model = String(document.getElementById('todo-wishlist-model').value || 'gpt-5.3').trim() || 'gpt-5.3';
+  _setTodoWishlistStatus('Generating suggestions...', 'muted');
+  try {
+    const resp = await postJson('/api/owner/todo-wishlist/suggest', {
+      repo_path: repo,
+      existing_markdown: existing,
+      owner_context: ownerContext,
+      model: model,
+    });
+    if (resp.error) {
+      _setTodoWishlistStatus(resp.error, 'error');
+      return;
+    }
+    lastTodoWishlistSuggestion = String(resp.content || '').trim();
+    if (!lastTodoWishlistSuggestion) {
+      _setTodoWishlistStatus('AI returned an empty suggestion.', 'warn');
+      return;
+    }
+    document.getElementById('todo-wishlist-content').value = lastTodoWishlistSuggestion;
+    const warning = String(resp.warning || '').trim();
+    if (warning) {
+      _setTodoWishlistStatus(warning, 'warn');
+      toast(warning, 'info');
+    } else {
+      _setTodoWishlistStatus('AI suggestion applied to the editor.', 'ok');
+    }
+  } catch (e) {
+    _setTodoWishlistStatus('AI suggestion failed.', 'error');
+  }
+}
+
+function appendTodoWishlistSuggestion() {
+  const area = document.getElementById('todo-wishlist-content');
+  const suggestion = String(lastTodoWishlistSuggestion || '').trim();
+  if (!area || !suggestion) {
+    _setTodoWishlistStatus('No suggestion to append yet. Click "Suggest with AI" first.', 'warn');
+    return;
+  }
+  const existing = String(area.value || '').trim();
+  area.value = existing ? (existing + '\n\n' + suggestion) : suggestion;
+  _setTodoWishlistStatus('Appended latest suggestion to the editor.', 'ok');
+}
+
+async function saveAndStartTodoWishlistAutopilot() {
+  const ok = await saveTodoWishlist();
+  if (!ok) return;
+  hideTodoWishlistModal();
+  await startTodoWishlistAutopilot();
+}
+
+async function startTodoWishlistAutopilot() {
+  const repoFromModal = String(document.getElementById('todo-wishlist-repo') ? document.getElementById('todo-wishlist-repo').value : '').trim();
+  const repo = repoFromModal || _activeRepoPath();
+  if (!repo) {
+    toast('Set a repository path first.', 'error');
+    return;
+  }
+  document.getElementById('repo-path').value = repo;
+  config.repo_path = repo;
+  validateRepo();
+  applyMode('easy');
+  selectRecipe('todo_wishlist_autopilot');
+  switchTab('chain');
+  await startChain();
+}
+
 /* Ã¢â€â‚¬Ã¢â€â‚¬ New Project Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 function showNewProjectModal() {
   document.getElementById('np-result').style.display = 'none';
   document.getElementById('np-create-btn').disabled = false;
+  toggleFoundationOptions();
+  toggleLicensingOptions();
   _openOverlay('new-project-overlay', '#np-parent');
 }
 
 function hideNewProjectModal() {
   _closeOverlay('new-project-overlay');
+}
+
+function toggleFoundationOptions() {
+  const enabled = document.getElementById('np-foundation-enabled').checked;
+  const panel = document.getElementById('np-foundation-options');
+  panel.classList.toggle('hidden', !enabled);
+}
+
+function toggleLicensingOptions() {
+  const enabled = document.getElementById('np-licensing-enabled').checked;
+  const panel = document.getElementById('np-licensing-options');
+  panel.classList.toggle('hidden', !enabled);
+  toggleLicensingLegalSignoff();
+}
+
+function toggleLicensingLegalSignoff() {
+  const requiredEl = document.getElementById('np-licensing-legal-review-required');
+  const signoffEl = document.getElementById('np-licensing-legal-signoff');
+  const reviewerEl = document.getElementById('np-licensing-legal-reviewer');
+  const notesEl = document.getElementById('np-licensing-legal-notes');
+  if (!requiredEl || !signoffEl || !reviewerEl || !notesEl) return;
+  const required = !!requiredEl.checked;
+  signoffEl.disabled = !required;
+  reviewerEl.disabled = !required;
+  notesEl.disabled = !required;
+  if (!required) signoffEl.checked = false;
+}
+
+function _selectedFoundationAssistants() {
+  return Array.from(document.querySelectorAll('.np-foundation-assistant:checked'))
+    .map(el => String(el.value || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function _setFoundationStatus(text, tone = 'muted') {
+  const el = document.getElementById('np-foundation-status');
+  if (!el) return;
+  el.textContent = text;
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+async function improveFoundationalPrompt() {
+  const projectName = document.getElementById('np-name').value.trim() || 'Project';
+  const promptEl = document.getElementById('np-foundation-prompt');
+  const prompt = promptEl.value.trim();
+  const assistants = _selectedFoundationAssistants();
+  if (!prompt) {
+    toast('Enter a foundational prompt first', 'error');
+    return;
+  }
+
+  _setFoundationStatus('Improving prompt...', 'muted');
+  try {
+    const resp = await postJson('/api/project/foundation/improve', {
+      prompt,
+      project_name: projectName,
+      assistants,
+    });
+    if (resp.error) {
+      _setFoundationStatus(resp.error, 'error');
+      toast(resp.error, 'error');
+      return;
+    }
+    const improved = String(resp.recommended_prompt || '').trim();
+    if (!improved) {
+      _setFoundationStatus('No improved prompt returned.', 'warn');
+      return;
+    }
+    promptEl.value = improved;
+    if (resp.warning) {
+      _setFoundationStatus(String(resp.warning), 'warn');
+      toast(String(resp.warning), 'info');
+    } else {
+      _setFoundationStatus('Prompt improved and applied.', 'ok');
+      toast('Foundational prompt improved', 'success');
+    }
+  } catch (e) {
+    const message = 'Prompt improvement failed: ' + (e && e.message ? e.message : String(e));
+    _setFoundationStatus(message, 'error');
+    toast(message, 'error');
+  }
 }
 
 async function createProject() {
@@ -2566,11 +3332,29 @@ async function createProject() {
   const addGitignore = document.getElementById('np-gitignore').checked;
   const branch = document.getElementById('np-branch').value.trim() || 'main';
   const remoteUrl = document.getElementById('np-remote').value.trim();
+  const foundationEnabled = document.getElementById('np-foundation-enabled').checked;
+  const foundationalPrompt = document.getElementById('np-foundation-prompt').value.trim();
+  const foundationAssistants = _selectedFoundationAssistants();
+  const foundationGenerateDocs = document.getElementById('np-foundation-generate-docs').checked;
+  const foundationBootstrapOnce = document.getElementById('np-foundation-bootstrap-once').checked;
+  const foundationBootstrapAutorun = document.getElementById('np-foundation-bootstrap-autorun').checked;
+  const licensingEnabled = document.getElementById('np-licensing-enabled').checked;
+  const licensingStrategy = document.getElementById('np-licensing-strategy').value;
+  const licensingCommercialTiers = document.getElementById('np-licensing-commercial').checked;
+  const licensingOwnerContactEmail = document.getElementById('np-licensing-email').value.trim();
+  const licensingLegalReviewRequired = document.getElementById('np-licensing-legal-review-required').checked;
+  const licensingLegalSignoffApproved = document.getElementById('np-licensing-legal-signoff').checked;
+  const licensingLegalReviewer = document.getElementById('np-licensing-legal-reviewer').value.trim();
+  const licensingLegalNotes = document.getElementById('np-licensing-legal-notes').value.trim();
 
   if (!parentDir) { toast('Enter a parent directory', 'error'); return; }
   if (!projectName) { toast('Enter a project name', 'error'); return; }
   if (!gitName) { toast('Enter a git author name', 'error'); return; }
   if (!gitEmail) { toast('Enter a git author email', 'error'); return; }
+  if (foundationEnabled && !foundationalPrompt) {
+    toast('Foundational prompt is required when foundational setup is enabled', 'error');
+    return;
+  }
 
   document.getElementById('np-create-btn').disabled = true;
   const resultEl = document.getElementById('np-result');
@@ -2587,6 +3371,20 @@ async function createProject() {
       add_gitignore: addGitignore,
       initial_branch: branch,
       remote_url: remoteUrl,
+      foundation_enabled: foundationEnabled,
+      foundational_prompt: foundationalPrompt,
+      foundation_assistants: foundationAssistants,
+      foundation_generate_docs: foundationGenerateDocs,
+      foundation_bootstrap_once: foundationBootstrapOnce,
+      foundation_bootstrap_autorun: foundationBootstrapAutorun,
+      licensing_enabled: licensingEnabled,
+      licensing_strategy: licensingStrategy,
+      licensing_include_commercial_tiers: licensingCommercialTiers,
+      licensing_owner_contact_email: licensingOwnerContactEmail,
+      licensing_legal_review_required: licensingLegalReviewRequired,
+      licensing_legal_signoff_approved: licensingLegalSignoffApproved,
+      licensing_legal_reviewer: licensingLegalReviewer,
+      licensing_legal_notes: licensingLegalNotes,
     });
 
     if (resp.error) {
@@ -2602,7 +3400,33 @@ async function createProject() {
 
     // Close modal immediately and show toast
     hideNewProjectModal();
-    toast('Project created at: ' + resp.path, 'success');
+    if (resp.foundation_enabled && Array.isArray(resp.foundation_files) && resp.foundation_files.length) {
+      const bootstrap = resp.foundation_bootstrap_status || {};
+      const bootstrapStatus = String(bootstrap.status || '').trim().toLowerCase();
+      if (bootstrapStatus === 'running') {
+        toast('Project created with foundation artifacts and bootstrap chain started.', 'success');
+      } else if (bootstrapStatus === 'queued') {
+        toast('Project created. Bootstrap request queued because executor is busy.', 'info');
+      } else if (bootstrapStatus === 'pending') {
+        toast('Project created with foundation artifacts. Bootstrap request is pending manual run.', 'success');
+      } else {
+        toast('Project created with foundational artifacts at: ' + resp.path, 'success');
+      }
+    } else {
+      toast('Project created at: ' + resp.path, 'success');
+    }
+    if (resp.licensing_enabled && Array.isArray(resp.licensing_files) && resp.licensing_files.length) {
+      toast('Licensing/commercial docs generated for strategy: ' + String(resp.licensing_strategy || 'oss_only'), 'info');
+      const legalStatus = String(resp.licensing_legal_review_status || '').trim().toLowerCase();
+      if (legalStatus === 'pending') {
+        toast('Legal review checkpoint is pending before publishing licensing/pricing docs.', 'warn');
+      } else if (legalStatus === 'approved') {
+        toast('Legal review checkpoint recorded as approved.', 'success');
+      } else if (legalStatus === 'not_required') {
+        toast('Legal review checkpoint was marked optional for this project.', 'info');
+      }
+    }
+    loadOwnerDecisionBoard();
 
   } catch (e) {
     toast('Failed to create project: ' + e.message, 'error');
@@ -2612,6 +3436,7 @@ async function createProject() {
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ API helper Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 function setBackendOnlineState(isOnline, detail = '') {
+  const wasOnline = backendOnline;
   backendOnline = !!isOnline;
   if (backendOnline) {
     backendLastError = '';
@@ -2634,6 +3459,12 @@ function setBackendOnlineState(isOnline, detail = '') {
         banner.textContent = 'Backend connection lost. Waiting to reconnect.';
       }
     }
+  }
+  if (!backendOnline) {
+    const watchdogBanner = document.getElementById('watchdog-alert-banner');
+    if (watchdogBanner) watchdogBanner.style.display = 'none';
+  } else if (!wasOnline) {
+    pollWatchdogAlerts({ silent: true });
   }
 
   if (backendOnline && pendingServerRestart) {
@@ -2662,6 +3493,218 @@ function startBackendHealthPolling() {
   if (backendHealthTimer) clearInterval(backendHealthTimer);
   backendHealthTimer = setInterval(pollBackendHealth, 2500);
   pollBackendHealth();
+}
+
+function _watchdogDigest(alerts) {
+  if (!Array.isArray(alerts) || !alerts.length) return '';
+  return alerts
+    .map(a => [a.severity, a.title, a.detail, a.action].map(v => String(v || '')).join('|'))
+    .join('||');
+}
+
+function _watchdogMigrationsFromAlerts(alerts) {
+  const rows = [];
+  if (!Array.isArray(alerts)) return rows;
+  alerts.forEach(alert => {
+    const direct = Array.isArray(alert && alert.migrations) ? alert.migrations : [];
+    const nested = (
+      alert
+      && alert.playbook
+      && Array.isArray(alert.playbook.migrations)
+    ) ? alert.playbook.migrations : [];
+    direct.concat(nested).forEach(row => {
+      if (!row || typeof row !== 'object') return;
+      const provider = String(row.provider || '').trim().toLowerCase();
+      const fromModel = String(row.from_model || row.from || '').trim();
+      const toModel = String(row.to_model || row.to || '').trim();
+      if (!provider || !fromModel || !toModel || fromModel === toModel) return;
+      const key = provider + '|' + fromModel + '|' + toModel;
+      if (!rows.some(item => (item.key === key))) {
+        rows.push({ key, provider, from_model: fromModel, to_model: toModel });
+      }
+    });
+  });
+  return rows;
+}
+
+function renderWatchdogAlerts(payload, opts = {}) {
+  const banner = document.getElementById('watchdog-alert-banner');
+  const content = document.getElementById('watchdog-alert-content');
+  const applyBtn = document.getElementById('watchdog-apply-migrations-btn');
+  if (!banner || !content) return;
+
+  const hasAlerts = !!(payload && payload.has_alerts);
+  const alerts = Array.isArray(payload && payload.alerts) ? payload.alerts : [];
+  const muted = Date.now() < watchdogAlertsMutedUntil;
+  if (!backendOnline || muted || !hasAlerts || !alerts.length) {
+    banner.style.display = 'none';
+    content.textContent = '';
+    watchdogMigrationSuggestions = [];
+    if (applyBtn) applyBtn.style.display = 'none';
+    if (!hasAlerts && !muted) {
+      watchdogAlertDigest = '';
+    }
+    return;
+  }
+
+  const warnCount = alerts.filter(a => String(a && a.severity || '').toLowerCase() === 'warn').length;
+  banner.classList.toggle('error', warnCount > 0);
+  banner.classList.toggle('warning', warnCount === 0);
+
+  const lines = alerts.slice(0, 6).map((alert, idx) => {
+    const sev = String(alert && alert.severity || 'info').toUpperCase();
+    const title = esc(alert && alert.title || ('Alert ' + (idx + 1)));
+    const detail = esc(alert && alert.detail || '');
+    const action = esc(alert && alert.action || '');
+    return '[' + sev + '] ' + title
+      + (detail ? ('\n  ' + detail) : '')
+      + (action ? ('\n  Action: ' + action) : '');
+  });
+  if (alerts.length > 6) {
+    lines.push('... and ' + (alerts.length - 6) + ' more alert(s).');
+  }
+  watchdogMigrationSuggestions = _watchdogMigrationsFromAlerts(alerts);
+  if (watchdogMigrationSuggestions.length) {
+    lines.push(
+      'Migration suggestions available: '
+      + watchdogMigrationSuggestions.length
+      + ' (use "Apply migration suggestions").'
+    );
+  }
+  if (applyBtn) {
+    applyBtn.style.display = watchdogMigrationSuggestions.length ? '' : 'none';
+  }
+  const generatedAt = String(payload && payload.last_generated_at || '').trim();
+  if (generatedAt) {
+    lines.push('Snapshot: ' + generatedAt);
+  }
+  content.textContent = lines.join('\n');
+  banner.style.display = '';
+
+  const digest = _watchdogDigest(alerts);
+  if (opts.announce && digest && digest !== watchdogAlertDigest) {
+    const level = warnCount > 0 ? 'error' : 'info';
+    toast('Model watchdog reported ' + alerts.length + ' alert(s).', level);
+  }
+  watchdogAlertDigest = digest;
+}
+
+function applyWatchdogMigrationsFromBanner() {
+  const suggestions = Array.isArray(watchdogMigrationSuggestions)
+    ? watchdogMigrationSuggestions
+    : [];
+  if (!suggestions.length) {
+    toast('No migration suggestions are available right now.', 'info');
+    return;
+  }
+
+  let applied = 0;
+  let skipped = 0;
+  suggestions.forEach(row => {
+    const provider = String(row.provider || '').trim().toLowerCase();
+    const fromModel = String(row.from_model || '').trim();
+    const toModel = String(row.to_model || '').trim();
+    if (!provider || !fromModel || !toModel || fromModel === toModel) {
+      skipped += 1;
+      return;
+    }
+    let changed = false;
+
+    if (provider === 'openai') {
+      if (String(pipeConfig.deep_research_openai_model || '').trim() === fromModel) {
+        pipeConfig.deep_research_openai_model = toModel;
+        changed = true;
+      }
+    } else if (provider === 'google') {
+      if (String(pipeConfig.deep_research_google_model || '').trim() === fromModel) {
+        pipeConfig.deep_research_google_model = toModel;
+        changed = true;
+      }
+    }
+
+    if (String(config.brain_model || '').trim() === fromModel) {
+      config.brain_model = toModel;
+      changed = true;
+    }
+    if (String(pipeConfig.brain_model || '').trim() === fromModel) {
+      pipeConfig.brain_model = toModel;
+      changed = true;
+    }
+
+    if (changed) applied += 1;
+    else skipped += 1;
+  });
+
+  normalizeCapabilitySettings(pipeConfig);
+  syncPipelineCapabilityControlsFromConfig();
+  const chainBrainEl = document.getElementById('brain-model');
+  if (chainBrainEl && String(config.brain_model || '').trim()) {
+    chainBrainEl.value = config.brain_model;
+  }
+  const pipeBrainEl = document.getElementById('pipe-brain-model');
+  if (pipeBrainEl && String(pipeConfig.brain_model || '').trim()) {
+    pipeBrainEl.value = pipeConfig.brain_model;
+  }
+
+  if (applied > 0) {
+    toast(
+      'Applied ' + applied + ' model migration suggestion(s).'
+      + (skipped > 0 ? (' Skipped ' + skipped + ' with no matching current model.') : ''),
+      'success'
+    );
+  } else {
+    toast('No current settings matched the suggested migrations.', 'info');
+  }
+}
+
+async function pollWatchdogAlerts(opts = {}) {
+  if (!backendOnline) return;
+  try {
+    const resp = await fetch('/api/system/model-watchdog/alerts', { cache: 'no-store' });
+    if (!resp.ok) {
+      throw new Error('Watchdog alerts failed (' + resp.status + ' ' + resp.statusText + ')');
+    }
+    const payload = await resp.json();
+    renderWatchdogAlerts(payload, { announce: !!opts.announce });
+  } catch (err) {
+    if (!opts.silent) {
+      console.warn('Could not load watchdog alerts', err);
+    }
+  }
+}
+
+function startWatchdogAlertPolling() {
+  if (watchdogAlertsTimer) clearInterval(watchdogAlertsTimer);
+  watchdogAlertsTimer = setInterval(() => {
+    pollWatchdogAlerts({ silent: true });
+  }, 60000);
+  pollWatchdogAlerts({ silent: true });
+}
+
+function muteWatchdogAlerts(hours) {
+  const parsed = Number(hours);
+  const durationHours = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  watchdogAlertsMutedUntil = Date.now() + durationHours * 60 * 60 * 1000;
+  const banner = document.getElementById('watchdog-alert-banner');
+  const applyBtn = document.getElementById('watchdog-apply-migrations-btn');
+  if (banner) banner.style.display = 'none';
+  if (applyBtn) applyBtn.style.display = 'none';
+  toast('Watchdog alerts muted for ' + durationHours + ' hour(s).', 'info');
+}
+
+async function runWatchdogNowFromBanner() {
+  try {
+    const resp = await postJson('/api/system/model-watchdog/run', { force: true });
+    if (resp.error) {
+      toast(resp.error, 'error');
+      return;
+    }
+    toast('Watchdog run complete. Refreshing alerts...', 'info');
+    await pollWatchdogAlerts({ announce: true });
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    toast('Could not run watchdog: ' + message, 'error');
+  }
 }
 
 async function requestServerRestart(checkpointPath, opts = {}) {
@@ -3570,6 +4613,10 @@ async function startChain() {
   config.image_generation_enabled = document.getElementById('chain-image-generation-enabled').checked;
   config.image_provider        = document.getElementById('chain-image-provider').value;
   config.image_model           = document.getElementById('chain-image-model').value.trim();
+  config.vector_memory_enabled = document.getElementById('chain-vector-memory-enabled').checked;
+  config.vector_memory_backend = document.getElementById('chain-vector-memory-backend').value;
+  config.vector_memory_collection = document.getElementById('chain-vector-memory-collection').value.trim();
+  config.vector_memory_top_k = parseInt(document.getElementById('chain-vector-memory-top-k').value, 10) || 8;
   normalizeCodexPermissions(config);
   normalizeCapabilitySettings(config);
   syncChainPermissionControlsFromConfig();
@@ -4058,6 +5105,109 @@ async function viewChainOutput(name) {
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Config Save / Load Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
+function renderOwnerDecisionBoard(board) {
+  const area = document.getElementById('owner-board-content');
+  const warningEl = document.getElementById('owner-board-warning');
+  if (!area || !warningEl) return;
+
+  const cards = Array.isArray(board.cards) ? board.cards : [];
+  const warnings = Array.isArray(board.governance_warnings) ? board.governance_warnings : [];
+  warningEl.textContent = warnings.length ? ('Governance checks:\n- ' + warnings.join('\n- ')) : '';
+
+  if (!cards.length) {
+    area.textContent = 'No decision cards found yet. Generate from a monetization output.';
+    return;
+  }
+
+  area.innerHTML = cards.map(card => {
+    const id = String(card.id || '');
+    const title = esc(card.title || 'Untitled');
+    const summary = esc(card.summary || '');
+    const decision = String(card.decision || 'pending');
+    const prompt = esc(card.owner_prompt || '');
+    const decided = card.decided_at
+      ? ('<div style="font-size:10px;color:var(--text2);margin-top:4px">Decided: ' + esc(card.decided_at) + '</div>')
+      : '';
+    return ''
+      + '<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--panel2)">'
+      +   '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'
+      +     '<strong>' + title + '</strong>'
+      +     '<span class="badge" style="font-size:10px;background:var(--surface2);color:var(--text2)">' + esc(decision) + '</span>'
+      +   '</div>'
+      +   '<div style="font-size:12px;color:var(--text2);margin-top:6px;white-space:pre-wrap">' + summary + '</div>'
+      +   '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
+      +     '<button class="btn btn-success" onclick="updateOwnerDecisionCard(\'' + esc(id) + '\', \'approve\')">Approve</button>'
+      +     '<button class="btn btn-warning" onclick="updateOwnerDecisionCard(\'' + esc(id) + '\', \'hold\')">Hold</button>'
+      +     '<button class="btn btn-danger" onclick="updateOwnerDecisionCard(\'' + esc(id) + '\', \'deny\')">Deny</button>'
+      +   '</div>'
+      +   '<div style="margin-top:8px">'
+      +     '<label style="font-size:11px;color:var(--text2)">Follow-up prompt override (optional)</label>'
+      +     '<textarea id="owner-card-prompt-' + esc(id) + '" rows="3" style="width:100%;margin-top:4px">' + prompt + '</textarea>'
+      +   '</div>'
+      +   decided
+      + '</div>';
+  }).join('');
+}
+
+async function loadOwnerDecisionBoard() {
+  const repoPath = (document.getElementById('repo-path').value || '').trim();
+  const area = document.getElementById('owner-board-content');
+  if (!repoPath) {
+    if (area) area.textContent = 'Set Repository Path in Chain Builder first.';
+    return;
+  }
+  if (area) area.textContent = 'Loading decision board...';
+  const resp = await api('/api/owner/decision-board?repo_path=' + encodeURIComponent(repoPath));
+  if (resp.error) {
+    if (area) area.textContent = resp.error;
+    return;
+  }
+  renderOwnerDecisionBoard(resp);
+}
+
+async function generateDecisionBoardFromCurrentOutput() {
+  const repoPath = (document.getElementById('repo-path').value || '').trim();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    return;
+  }
+  const outputContent = document.getElementById('chain-output-content');
+  const markdown = (outputContent && outputContent.textContent) ? outputContent.textContent.trim() : '';
+  if (!markdown) {
+    toast('Open a monetization output file first, then generate the decision board.', 'error');
+    return;
+  }
+  const resp = await postJson('/api/owner/decision-board/generate', {
+    repo_path: repoPath,
+    markdown,
+    source: 'chain_output',
+  });
+  if (resp.error) {
+    toast(resp.error, 'error');
+    return;
+  }
+  renderOwnerDecisionBoard(resp);
+  toast('Owner decision board generated.', 'success');
+}
+
+async function updateOwnerDecisionCard(cardId, decision) {
+  const repoPath = (document.getElementById('repo-path').value || '').trim();
+  const promptEl = document.getElementById('owner-card-prompt-' + cardId);
+  const ownerPrompt = promptEl ? promptEl.value.trim() : '';
+  const resp = await postJson('/api/owner/decision-board/decision', {
+    repo_path: repoPath,
+    card_id: cardId,
+    decision,
+    owner_prompt: ownerPrompt,
+  });
+  if (resp.error) {
+    toast(resp.error, 'error');
+    return;
+  }
+  renderOwnerDecisionBoard(resp);
+  toast('Decision saved: ' + decision, 'success');
+}
+
 async function loadConfigList() {
   try {
     const configs = await api('/api/configs');
@@ -4117,7 +5267,7 @@ function applyConfig(data) {
   syncChainTimeoutControlsFromConfig();
   document.getElementById('parallel-exec').checked = !!config.parallel_execution;
   document.getElementById('brain-enabled').checked = !!config.brain_enabled;
-  document.getElementById('brain-model').value = config.brain_model || 'gpt-5.2';
+  document.getElementById('brain-model').value = config.brain_model || 'gpt-5.3';
   document.getElementById('local-only').checked = !!config.local_only;
   setMode(config.mode || 'dry-run');
   toggleUnlimited();
@@ -4128,6 +5278,7 @@ function applyConfig(data) {
   renderStepDetails();
   validateRepo();
   refreshChainOutputs(false);
+  loadOwnerDecisionBoard();
 }
 
 async function saveConfig() {
@@ -4160,6 +5311,10 @@ async function saveConfig() {
   config.image_generation_enabled = document.getElementById('chain-image-generation-enabled').checked;
   config.image_provider        = document.getElementById('chain-image-provider').value;
   config.image_model           = document.getElementById('chain-image-model').value.trim();
+  config.vector_memory_enabled = document.getElementById('chain-vector-memory-enabled').checked;
+  config.vector_memory_backend = document.getElementById('chain-vector-memory-backend').value;
+  config.vector_memory_collection = document.getElementById('chain-vector-memory-collection').value.trim();
+  config.vector_memory_top_k = parseInt(document.getElementById('chain-vector-memory-top-k').value, 10) || 8;
   normalizeCodexPermissions(config);
   normalizeCapabilitySettings(config);
   syncChainPermissionControlsFromConfig();
@@ -4241,10 +5396,44 @@ function resetNewProjectForm() {
   document.getElementById('np-gitignore').checked = true;
   document.getElementById('np-branch').value = 'main';
   document.getElementById('np-remote').value = '';
+  document.getElementById('np-foundation-enabled').checked = false;
+  document.getElementById('np-foundation-prompt').value = '';
+  document.getElementById('np-foundation-generate-docs').checked = true;
+  document.getElementById('np-foundation-bootstrap-once').checked = true;
+  document.getElementById('np-foundation-bootstrap-autorun').checked = true;
+  document.getElementById('np-licensing-enabled').checked = false;
+  document.getElementById('np-licensing-strategy').value = 'oss_only';
+  document.getElementById('np-licensing-commercial').checked = true;
+  document.getElementById('np-licensing-email').value = '';
+  document.getElementById('np-licensing-legal-review-required').checked = true;
+  document.getElementById('np-licensing-legal-signoff').checked = false;
+  document.getElementById('np-licensing-legal-reviewer').value = '';
+  document.getElementById('np-licensing-legal-notes').value = '';
+  document.querySelectorAll('.np-foundation-assistant').forEach((el) => {
+    el.checked = el.value === 'codex';
+  });
+  _setFoundationStatus(
+    'Choose assistants and click "Improve..." to refine prompt structure.',
+    'muted',
+  );
+  toggleFoundationOptions();
+  toggleLicensingOptions();
+  toggleLicensingLegalSignoff();
   document.getElementById('np-result').style.display = 'none';
   document.getElementById('np-create-btn').disabled = false;
   document.querySelectorAll('#new-project-overlay details').forEach(el => { el.open = false; });
   hideNewProjectModal();
+}
+
+function resetTodoWishlistForm() {
+  const repo = _activeRepoPath();
+  document.getElementById('todo-wishlist-repo').value = repo;
+  document.getElementById('todo-wishlist-content').value = '';
+  document.getElementById('todo-wishlist-context').value = '';
+  document.getElementById('todo-wishlist-model').value = 'gpt-5.3';
+  lastTodoWishlistSuggestion = '';
+  _setTodoWishlistStatus('', 'muted');
+  hideTodoWishlistModal();
 }
 
 async function clearEverything() {
@@ -4292,6 +5481,7 @@ async function clearEverything() {
 
   resetExecutionPanelsToDefaults();
   resetNewProjectForm();
+  resetTodoWishlistForm();
   closeRunPlanModal({ action: 'cancel' });
   closePermissionsHelpModal();
   closeReadOnlyWarningModal('cancel');
@@ -4408,6 +5598,7 @@ const PHASE_ICONS = {
   testing: '\uD83E\uDDEA',
   debugging: '\uD83D\uDC1B',
   commit: '\uD83D\uDCBE',
+  deep_research: '\uD83D\uDD0D',
   apply_upgrades_and_restart: '\uD83D\uDD04',
   progress_review: '\uD83D\uDCCB',
   visual_test: '\uD83D\uDC41\uFE0F',
@@ -4434,7 +5625,7 @@ const pipeConfig = {
   cua_target_url: '',
   cua_task: '',
   brain_enabled: false,
-  brain_model: 'gpt-5.2',
+  brain_model: 'gpt-5.3',
   phases: [],
   // Stop conditions (consistent with chain builder)
   max_time_minutes: 240,
@@ -4455,6 +5646,21 @@ const pipeConfig = {
   image_generation_enabled: false,
   image_provider: 'openai',
   image_model: 'gpt-image-1',
+  vector_memory_enabled: false,
+  vector_memory_backend: 'chroma',
+  vector_memory_collection: '',
+  vector_memory_top_k: 8,
+  deep_research_enabled: false,
+  deep_research_providers: 'both',
+  deep_research_max_age_hours: 168,
+  deep_research_dedupe: true,
+  deep_research_native_enabled: false,
+  deep_research_retry_attempts: 2,
+  deep_research_daily_quota: 8,
+  deep_research_max_provider_tokens: 12000,
+  deep_research_budget_usd: 5.0,
+  deep_research_openai_model: 'gpt-5.3',
+  deep_research_google_model: 'gemini-3-pro-preview',
   self_improvement_enabled: false,
   self_improvement_auto_restart: false,
   timeout_per_phase: 0,
@@ -4491,7 +5697,7 @@ function applyPipeConfigToUi() {
   cuaStatus.textContent = '';
   cuaStatus.style.color = 'var(--text2)';
   document.getElementById('pipe-brain').checked = !!pipeConfig.brain_enabled;
-  document.getElementById('pipe-brain-model').value = pipeConfig.brain_model || 'gpt-5.2';
+  document.getElementById('pipe-brain-model').value = pipeConfig.brain_model || 'gpt-5.3';
   document.getElementById('pipe-local-only').checked = !!pipeConfig.local_only;
   document.getElementById('pipe-auto-commit').checked = pipeConfig.auto_commit !== false;
   document.getElementById('pipe-commit-freq').value = pipeConfig.commit_frequency || 'per_phase';
@@ -4507,6 +5713,8 @@ function applyPipeConfigToUi() {
   togglePipeScience();
   togglePipeCUA();
   togglePipeBrain();
+  togglePipeVectorMemory(false);
+  togglePipeDeepResearch(false);
   togglePipeSelfImprovement();
   togglePipeLocalOnly();
   validatePipeRepo();
@@ -4534,15 +5742,20 @@ function renderPipelinePhases() {
 
   const scienceEnabled = document.getElementById('pipe-science').checked;
   const cuaEnabled = document.getElementById('pipe-cua') ? document.getElementById('pipe-cua').checked : false;
+  const deepResearchEnabled = document.getElementById('pipe-deep-research-enabled')
+    ? document.getElementById('pipe-deep-research-enabled').checked
+    : false;
   const selfImprovementEnabled = document.getElementById('pipe-self-improvement-enabled')
     ? document.getElementById('pipe-self-improvement-enabled').checked
     : false;
 
   list.innerHTML = pipelinePhases.map(p => {
     const isScience = p.is_science;
+    const isDeepResearch = p.is_deep_research;
     const isCUA = p.is_cua;
     const isSelfImprovement = p.is_self_improvement;
     const hidden = (isScience && !scienceEnabled)
+      || (isDeepResearch && !deepResearchEnabled)
       || (isCUA && !cuaEnabled)
       || (isSelfImprovement && !selfImprovementEnabled);
     if (hidden) return '';
@@ -4819,6 +6032,21 @@ async function startPipeline() {
   pipeConfig.image_generation_enabled = document.getElementById('pipe-image-generation-enabled').checked;
   pipeConfig.image_provider         = document.getElementById('pipe-image-provider').value;
   pipeConfig.image_model            = document.getElementById('pipe-image-model').value.trim();
+  pipeConfig.vector_memory_enabled  = document.getElementById('pipe-vector-memory-enabled').checked;
+  pipeConfig.vector_memory_backend  = document.getElementById('pipe-vector-memory-backend').value;
+  pipeConfig.vector_memory_collection = document.getElementById('pipe-vector-memory-collection').value.trim();
+  pipeConfig.vector_memory_top_k    = parseInt(document.getElementById('pipe-vector-memory-top-k').value, 10) || 8;
+  pipeConfig.deep_research_enabled  = document.getElementById('pipe-deep-research-enabled').checked;
+  pipeConfig.deep_research_providers = document.getElementById('pipe-deep-research-providers').value;
+  pipeConfig.deep_research_max_age_hours = parseInt(document.getElementById('pipe-deep-research-max-age-hours').value, 10) || 168;
+  pipeConfig.deep_research_dedupe   = document.getElementById('pipe-deep-research-dedupe').checked;
+  pipeConfig.deep_research_native_enabled = document.getElementById('pipe-deep-research-native-enabled').checked;
+  pipeConfig.deep_research_retry_attempts = parseInt(document.getElementById('pipe-deep-research-retry-attempts').value, 10) || 2;
+  pipeConfig.deep_research_daily_quota = parseInt(document.getElementById('pipe-deep-research-daily-quota').value, 10) || 8;
+  pipeConfig.deep_research_max_provider_tokens = parseInt(document.getElementById('pipe-deep-research-max-provider-tokens').value, 10) || 12000;
+  pipeConfig.deep_research_budget_usd = parseFloat(document.getElementById('pipe-deep-research-budget-usd').value) || 5.0;
+  pipeConfig.deep_research_openai_model = document.getElementById('pipe-deep-research-openai-model').value.trim();
+  pipeConfig.deep_research_google_model = document.getElementById('pipe-deep-research-google-model').value.trim();
   pipeConfig.self_improvement_enabled = document.getElementById('pipe-self-improvement-enabled').checked;
   pipeConfig.self_improvement_auto_restart = document.getElementById('pipe-self-improvement-auto-restart').checked;
   if (!pipeConfig.self_improvement_enabled) {
@@ -4828,6 +6056,8 @@ async function startPipeline() {
   normalizeCapabilitySettings(pipeConfig);
   syncPipelinePermissionControlsFromConfig();
   syncPipelineCapabilityControlsFromConfig();
+  togglePipeVectorMemory(false);
+  togglePipeDeepResearch(false);
   togglePipeSelfImprovement();
   syncPipeTimeoutControlsFromConfig();
 

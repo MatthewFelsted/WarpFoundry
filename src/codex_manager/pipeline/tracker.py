@@ -106,12 +106,63 @@ _PROGRESS_TEMPLATE = """\
 
 """
 
+_RESEARCH_TEMPLATE = """\
+# RESEARCH — Deep Research Findings
+
+> Auto-maintained by AI Manager Pipeline (Deep Research mode). Captures
+> external research questions, summaries, and actionable implementation links.
+
+## Summary
+
+- **Research Runs**: 0
+- **Cached Reuses**: 0
+- **Last Topic**: none
+
+---
+
+"""
+
+_AGENT_PROTOCOL_TEMPLATE = """\
+# Agent Protocol
+
+This file defines shared run-time coordination rules for all agents.
+
+## Core Rules
+
+1. Stay aligned to repository goals and current phase scope.
+2. Reuse existing project context before proposing new work.
+3. Avoid duplicate work when prior research or memory already covers a topic.
+4. When uncertain, state assumptions explicitly in outputs/logs.
+5. Keep edits incremental, testable, and reversible.
+6. Avoid absolute marketing/legal guarantees unless verified by trusted sources.
+
+## Coordination Contract
+
+- Inputs:
+  - `.codex_manager/logs/*.md` phase logs
+  - `.codex_manager/ledger/*` open-item ledger
+  - `.codex_manager/memory/*` long-term memory / research cache
+- Outputs:
+  - Update phase logs with concise, structured findings
+  - Reference IDs for ledger/memory items when reusing prior context
+  - Record decision rationale in `PROGRESS.md`
+
+## Safety + Quality
+
+- Prefer high-signal, directly actionable recommendations.
+- Avoid speculative changes unrelated to project improvement.
+- If blocked by missing credentials/tools, log the blocker and next step.
+- For research-backed claims, include HTTPS source URLs from credible domains.
+- Flag low-trust or policy-blocked sources for owner review.
+"""
+
 _TEMPLATES: dict[str, str] = {
     "WISHLIST.md": _WISHLIST_TEMPLATE,
     "TESTPLAN.md": _TESTPLAN_TEMPLATE,
     "ERRORS.md": _ERRORS_TEMPLATE,
     "EXPERIMENTS.md": _EXPERIMENTS_TEMPLATE,
     "PROGRESS.md": _PROGRESS_TEMPLATE,
+    "RESEARCH.md": _RESEARCH_TEMPLATE,
 }
 
 
@@ -137,6 +188,11 @@ class LogTracker:
             if not path.exists():
                 path.write_text(template, encoding="utf-8")
                 logger.info("Created %s", path)
+        protocol = self.repo_path / ".codex_manager" / "AGENT_PROTOCOL.md"
+        if not protocol.exists():
+            protocol.parent.mkdir(parents=True, exist_ok=True)
+            protocol.write_text(_AGENT_PROTOCOL_TEMPLATE, encoding="utf-8")
+            logger.info("Created %s", protocol)
 
     # -- Scientist evidence artifacts ---------------------------------
 
@@ -358,6 +414,8 @@ class LogTracker:
                 ledger_categories = ["error", "bug", "observation"]
             elif phase_enum == PipelinePhase.IDEATION:
                 ledger_categories = ["suggestion", "wishlist", "feature"]
+            elif phase_enum == PipelinePhase.DEEP_RESEARCH:
+                ledger_categories = ["feature", "wishlist", "suggestion", "todo", "observation"]
             elif phase_enum in (PipelinePhase.IMPLEMENTATION, PipelinePhase.PRIORITIZATION):
                 ledger_categories = ["todo", "feature", "suggestion", "wishlist"]
             elif phase_enum == PipelinePhase.TESTING:
@@ -398,7 +456,7 @@ class LogTracker:
 
         if phase_enum == PipelinePhase.PROGRESS_REVIEW:
             # Progress review needs everything
-            for fname in ("WISHLIST.md", "TESTPLAN.md", "ERRORS.md", "EXPERIMENTS.md"):
+            for fname in ("WISHLIST.md", "TESTPLAN.md", "ERRORS.md", "EXPERIMENTS.md", "RESEARCH.md"):
                 content = self.read(fname)
                 if content:
                     parts.append(f"## Current {fname}\n\n{content[:2000]}")
@@ -408,6 +466,12 @@ class LogTracker:
             progress = self.read("PROGRESS.md")
             if progress:
                 parts.append(f"## Recent PROGRESS.md\n\n{progress[-2000:]}")
+
+        protocol = self.repo_path / ".codex_manager" / "AGENT_PROTOCOL.md"
+        if protocol.exists():
+            text = self._read_text_utf8_resilient(protocol)
+            if text:
+                parts.append(f"## Agent Protocol\n\n{text[:2200]}")
 
         return "\n\n---\n\n".join(parts)
 

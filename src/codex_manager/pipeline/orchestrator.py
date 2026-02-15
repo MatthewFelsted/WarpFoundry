@@ -54,6 +54,7 @@ from codex_manager.git_tools import (
 )
 from codex_manager.history_log import HistoryLogbook
 from codex_manager.ledger import KnowledgeLedger
+from codex_manager.memory.vector_store import ProjectVectorMemory
 from codex_manager.pipeline.phases import (
     PHASE_LOG_FILES,
     PhaseResult,
@@ -64,6 +65,7 @@ from codex_manager.pipeline.phases import (
 from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.preflight import binary_exists as shared_binary_exists
 from codex_manager.prompts.catalog import PromptCatalog, get_catalog
+from codex_manager.research import DeepResearchSettings, run_native_deep_research
 from codex_manager.schemas import EvalResult
 
 logger = logging.getLogger(__name__)
@@ -105,6 +107,13 @@ class PipelineOrchestrator:
         self.catalog = catalog or get_catalog()
         self.tracker = LogTracker(self.repo_path)
         self.ledger = KnowledgeLedger(self.repo_path)
+        self.vector_memory = ProjectVectorMemory(
+            self.repo_path,
+            enabled=bool(getattr(self.config, "vector_memory_enabled", False)),
+            backend=str(getattr(self.config, "vector_memory_backend", "chroma") or "chroma"),
+            collection_name=str(getattr(self.config, "vector_memory_collection", "") or ""),
+            default_top_k=int(getattr(self.config, "vector_memory_top_k", 8) or 8),
+        )
 
         self.state = PipelineState()
         self._stop_event = threading.Event()
@@ -272,6 +281,326 @@ class PipelineOrchestrator:
             summary=summary,
             level=level,
             context=context or {},
+        )
+
+    def _derive_deep_research_topic(self, cycle: int) -> str:
+        """Derive a compact research topic from WISHLIST context."""
+        wishlist = self.tracker.read("WISHLIST.md")
+        matches = re.findall(r"^### \[(WISH-[0-9]{3,})\]\s*(.+)$", wishlist, flags=re.MULTILINE)
+        if matches:
+            top = "; ".join(f"{wish_id}: {title.strip()}" for wish_id, title in matches[:3])
+            return f"Cycle {cycle} priorities - {top}"
+
+        title_matches = re.findall(r"^\s*[-*]\s+(.+)$", wishlist, flags=re.MULTILINE)
+        if title_matches:
+            top = "; ".join(item.strip() for item in title_matches[:3])
+            return f"Cycle {cycle} priorities - {top}"
+
+        return f"Cycle {cycle} repository improvement opportunities for {self.repo_path.name}"
+
+    def _append_deep_research_log_entry(
+        self,
+        *,
+        cycle: int,
+        iteration: int,
+        topic: str,
+        providers: str,
+        summary: str,
+        reused_cache: bool,
+    ) -> None:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        compact = re.sub(r"\s+", " ", (summary or "").strip())
+        if len(compact) > 1800:
+            compact = compact[:1797].rstrip() + "..."
+        block = (
+            "\n## Deep Research Entry\n\n"
+            f"- Timestamp: {now}\n"
+            f"- Cycle: {cycle}\n"
+            f"- Iteration: {iteration}\n"
+            f"- Providers: {providers}\n"
+            f"- Cache Reuse: {'yes' if reused_cache else 'no'}\n"
+            f"- Topic: {topic}\n\n"
+            "### Summary\n\n"
+            f"{compact}\n"
+        )
+        self.tracker.append("RESEARCH.md", block)
+
+    def _build_native_deep_research_context(self, *, phase_context: str) -> str:
+        """Build compact repository context passed to native research providers."""
+        parts: list[str] = []
+        wishlist = self.tracker.read("WISHLIST.md").strip()
+        if wishlist:
+            excerpt = wishlist[:3000]
+            if len(wishlist) > 3000:
+                excerpt += "\n...[truncated]..."
+            parts.append("## WISHLIST Snapshot\n")
+            parts.append(excerpt)
+        progress = self.tracker.read("PROGRESS.md").strip()
+        if progress:
+            excerpt = progress[:2000]
+            if len(progress) > 2000:
+                excerpt += "\n...[truncated]..."
+            parts.append("\n## PROGRESS Snapshot\n")
+            parts.append(excerpt)
+        if phase_context:
+            excerpt = phase_context[:2500]
+            if len(phase_context) > 2500:
+                excerpt += "\n...[truncated]..."
+            parts.append("\n## Phase Context\n")
+            parts.append(excerpt)
+        return "\n".join(parts).strip()
+
+    def _execute_native_deep_research(
+        self,
+        *,
+        topic: str,
+        cycle: int,
+        iteration: int,
+        phase_context: str,
+    ) -> PhaseResult:
+        """Execute provider-native deep research and map it into a PhaseResult."""
+        started = time.monotonic()
+        settings = DeepResearchSettings(
+            providers=self.config.deep_research_providers,
+            retry_attempts=self.config.deep_research_retry_attempts,
+            daily_quota=self.config.deep_research_daily_quota,
+            max_provider_tokens=self.config.deep_research_max_provider_tokens,
+            daily_budget_usd=self.config.deep_research_budget_usd,
+            openai_model=self.config.deep_research_openai_model,
+            google_model=self.config.deep_research_google_model,
+        )
+        context = self._build_native_deep_research_context(phase_context=phase_context)
+        native = run_native_deep_research(
+            repo_path=self.repo_path,
+            topic=topic,
+            project_context=context,
+            settings=settings,
+        )
+        if native.ok:
+            provider_summaries = [
+                f"{item.provider}: in={item.input_tokens:,}, out={item.output_tokens:,}, cost~${item.estimated_cost_usd:.4f}"
+                for item in native.providers
+                if item.ok
+            ]
+            if native.filtered_source_count:
+                provider_summaries.append(f"sources_filtered={native.filtered_source_count}")
+            summary = native.merged_summary.strip()
+            if not summary:
+                summary = "Native deep research completed with empty summary."
+            test_summary = (
+                "Native deep research complete. "
+                + " | ".join(provider_summaries)
+                + f" | total cost~${native.total_estimated_cost_usd:.4f}"
+            )
+            if native.governance_warnings:
+                test_summary += " | governance warnings present"
+            agent_message = summary
+            if native.merged_sources:
+                agent_message = (
+                    f"{summary}\n\nSources:\n"
+                    + "\n".join(f"- {source}" for source in native.merged_sources[:30])
+                )
+            if native.governance_warnings:
+                agent_message += (
+                    "\n\nSource Governance Warnings:\n"
+                    + "\n".join(f"- {warning}" for warning in native.governance_warnings[:10])
+                )
+            return PhaseResult(
+                cycle=cycle,
+                phase=PipelinePhase.DEEP_RESEARCH.value,
+                iteration=iteration,
+                agent_success=True,
+                validation_success=True,
+                tests_passed=True,
+                success=True,
+                test_outcome="passed",
+                test_summary=test_summary,
+                test_exit_code=0,
+                files_changed=0,
+                net_lines_changed=0,
+                changed_files=[],
+                error_message="",
+                duration_seconds=round(time.monotonic() - started, 1),
+                input_tokens=native.total_input_tokens,
+                output_tokens=native.total_output_tokens,
+                prompt_used=f"Native deep research topic: {topic}",
+                agent_final_message=agent_message,
+                terminate_repeats=True,
+                agent_used=f"deep_research:{self.config.deep_research_providers}",
+            )
+
+        provider_errors = [
+            f"{item.provider}: {item.error}"
+            for item in native.providers
+            if (not item.ok) and item.error
+        ]
+        if native.error:
+            provider_errors.insert(0, native.error)
+        if native.quota_blocked:
+            provider_errors.insert(0, "daily quota reached")
+        if native.budget_blocked:
+            provider_errors.insert(0, "daily budget reached")
+        message = "; ".join(err for err in provider_errors if err) or "native deep research failed"
+        return PhaseResult(
+            cycle=cycle,
+            phase=PipelinePhase.DEEP_RESEARCH.value,
+            iteration=iteration,
+            agent_success=False,
+            validation_success=False,
+            tests_passed=False,
+            success=False,
+            test_outcome="error",
+            test_summary="Native deep research failed",
+            test_exit_code=1,
+            files_changed=0,
+            net_lines_changed=0,
+            changed_files=[],
+            error_message=message,
+            duration_seconds=round(time.monotonic() - started, 1),
+            input_tokens=native.total_input_tokens,
+            output_tokens=native.total_output_tokens,
+            prompt_used=f"Native deep research topic: {topic}",
+            agent_final_message="",
+            terminate_repeats=False,
+            agent_used=f"deep_research:{self.config.deep_research_providers}",
+        )
+
+    def _build_vector_memory_context(
+        self,
+        *,
+        phase: PipelinePhase,
+        base_prompt: str,
+        log_context: str,
+    ) -> str:
+        if not self.vector_memory.enabled:
+            return ""
+        query = "\n".join(
+            [
+                f"phase: {phase.value}",
+                base_prompt[:500],
+                log_context[:900],
+            ]
+        ).strip()
+        if not query:
+            return ""
+        categories: list[str] | None = None
+        source_prefix = ""
+        if phase in (
+            PipelinePhase.THEORIZE,
+            PipelinePhase.EXPERIMENT,
+            PipelinePhase.SKEPTIC,
+            PipelinePhase.ANALYZE,
+        ):
+            categories = ["scientist_trial", "scientist_report", "pipeline_phase", "deep_research"]
+        elif phase == PipelinePhase.DEEP_RESEARCH:
+            categories = ["deep_research", "pipeline_phase", "scientist_report"]
+            source_prefix = "pipeline:"
+        hits = self.vector_memory.search(
+            query,
+            top_k=int(getattr(self.config, "vector_memory_top_k", 8) or 8),
+            categories=categories,
+            source_prefix=source_prefix,
+        )
+        if not hits:
+            return ""
+
+        lines = ["## Similar Past Context (Vector Memory)", ""]
+        for hit in hits:
+            meta = hit.metadata or {}
+            category = str(meta.get("category") or "note").strip() or "note"
+            source = str(meta.get("source") or "").strip()
+            snippet = re.sub(r"\s+", " ", hit.document).strip()
+            if len(snippet) > 280:
+                snippet = snippet[:277].rstrip() + "..."
+            prefix = f"- [{category}] score={hit.score:.2f}"
+            if source:
+                prefix += f" source={source}"
+            lines.append(f"{prefix}: {snippet}")
+        return "\n".join(lines)
+
+    def _record_vector_memory_note(
+        self,
+        *,
+        phase: PipelinePhase,
+        cycle: int,
+        iteration: int,
+        result: PhaseResult,
+    ) -> None:
+        if not self.vector_memory.enabled:
+            return
+        summary = (
+            f"Phase {phase.value} cycle={cycle} iteration={iteration} "
+            f"success={result.success} tests={result.test_outcome} "
+            f"files={result.files_changed} lines={result.net_lines_changed:+d}. "
+            f"Result: {(result.test_summary or result.error_message or result.agent_final_message or '').strip()}"
+        )
+        self.vector_memory.add_note(
+            summary[:3500],
+            category="pipeline_phase",
+            source=f"pipeline:{phase.value}",
+            metadata={
+                "phase": phase.value,
+                "cycle": cycle,
+                "iteration": iteration,
+                "success": bool(result.success),
+                "test_outcome": result.test_outcome,
+                "files_changed": int(result.files_changed),
+                "net_lines_changed": int(result.net_lines_changed),
+            },
+        )
+
+    def _record_science_trial_memory(self, payload: dict[str, Any]) -> None:
+        """Index structured scientist trial artifacts into vector memory."""
+        if not self.vector_memory.enabled:
+            return
+        hypothesis = payload.get("hypothesis") or {}
+        post = payload.get("post") or {}
+        verdict = str(payload.get("verdict") or "").strip()
+        rationale = str(payload.get("verdict_rationale") or "").strip()
+        summary = (
+            "Scientist trial "
+            f"id={payload.get('trial_id', '')} "
+            f"phase={payload.get('phase', '')} "
+            f"cycle={payload.get('cycle', '')} "
+            f"verdict={verdict} "
+            f"confidence={payload.get('confidence', '')}. "
+            f"Hypothesis: {hypothesis.get('id', '')} {hypothesis.get('title', '')}. "
+            f"Post-tests={post.get('test_outcome', '')}, files={post.get('files_changed', 0)}, "
+            f"lines={post.get('net_lines_changed', 0)}. "
+            f"Rationale: {rationale}"
+        )
+        self.vector_memory.add_note(
+            summary[:3500],
+            category="scientist_trial",
+            source="pipeline:scientist",
+            metadata={
+                "phase": str(payload.get("phase", "")),
+                "cycle": int(payload.get("cycle") or 0),
+                "iteration": int(payload.get("iteration") or 0),
+                "trial_id": str(payload.get("trial_id") or ""),
+                "verdict": verdict,
+                "confidence": str(payload.get("confidence") or ""),
+            },
+        )
+
+    def _record_scientist_report_memory(self, report: str) -> None:
+        """Index scientist report snapshots for cross-surface retrieval."""
+        if not self.vector_memory.enabled:
+            return
+        content = str(report or "").strip()
+        if not content:
+            return
+        compact = re.sub(r"\s+", " ", content)
+        if len(compact) > 4000:
+            compact = compact[:3997].rstrip() + "..."
+        self.vector_memory.add_note(
+            compact,
+            category="scientist_report",
+            source="pipeline:scientist_report",
+            metadata={
+                "cycle": int(self.state.current_cycle or 0),
+                "phase": str(self.state.current_phase or ""),
+            },
         )
 
     def _finalize_run(
@@ -818,6 +1147,7 @@ class PipelineOrchestrator:
                 f"- **Experiments Snapshot**: `{snapshot_path}`\n"
             ),
         )
+        self._record_science_trial_memory(payload)
 
         return {
             "trial_id": trial_id,
@@ -1097,6 +1427,7 @@ class PipelineOrchestrator:
             self.tracker.initialize_science()
             report = self._build_scientist_report()
             self.tracker.write("SCIENTIST_REPORT.md", report)
+            self._record_scientist_report_memory(report)
         except Exception as exc:
             self._log("warn", f"Could not refresh Scientist report: {exc}")
 
@@ -1254,10 +1585,39 @@ class PipelineOrchestrator:
             if image_issue:
                 issues.append(image_issue)
 
+        if config.vector_memory_enabled:
+            backend = (config.vector_memory_backend or "chroma").strip().lower()
+            if backend != "chroma":
+                issues.append(
+                    "Unsupported vector_memory_backend. Supported backend(s): chroma."
+                )
+            else:
+                try:
+                    import chromadb  # noqa: F401
+                except Exception:
+                    issues.append(
+                        "Vector memory requires ChromaDB. Install with: pip install chromadb"
+                    )
+
         if config.self_improvement_auto_restart and not config.self_improvement_enabled:
             issues.append(
                 "self_improvement_auto_restart requires self_improvement_enabled to be true."
             )
+
+        if config.deep_research_enabled and config.deep_research_native_enabled:
+            providers = (config.deep_research_providers or "both").strip().lower()
+            if providers in {"both", "openai"} and not (
+                os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
+            ):
+                issues.append(
+                    "Native deep research (openai provider) requires OPENAI_API_KEY or CODEX_API_KEY."
+                )
+            if providers in {"both", "google"} and not (
+                os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            ):
+                issues.append(
+                    "Native deep research (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+                )
 
         for agent in sorted(self._collect_required_agents(config)):
             if agent == "codex":
@@ -1341,6 +1701,19 @@ class PipelineOrchestrator:
                 "brain_enabled": bool(config.brain_enabled),
                 "resume_cycle": self._resume_cycle,
                 "resume_phase_index": self._resume_phase_index,
+                "vector_memory_enabled": bool(config.vector_memory_enabled),
+                "vector_memory_backend": config.vector_memory_backend,
+                "deep_research_enabled": bool(config.deep_research_enabled),
+                "deep_research_providers": config.deep_research_providers,
+                "deep_research_max_age_hours": int(config.deep_research_max_age_hours),
+                "deep_research_dedupe": bool(config.deep_research_dedupe),
+                "deep_research_native_enabled": bool(config.deep_research_native_enabled),
+                "deep_research_retry_attempts": int(config.deep_research_retry_attempts),
+                "deep_research_daily_quota": int(config.deep_research_daily_quota),
+                "deep_research_max_provider_tokens": int(config.deep_research_max_provider_tokens),
+                "deep_research_budget_usd": float(config.deep_research_budget_usd),
+                "deep_research_openai_model": config.deep_research_openai_model,
+                "deep_research_google_model": config.deep_research_google_model,
                 "self_improvement_enabled": bool(config.self_improvement_enabled),
                 "self_improvement_auto_restart": bool(config.self_improvement_auto_restart),
             },
@@ -1427,6 +1800,19 @@ class PipelineOrchestrator:
                     f"Scientist evidence directory: {self.tracker.science_dir()}",
                 )
                 self._refresh_scientist_report()
+            if config.vector_memory_enabled:
+                if self.vector_memory.available:
+                    self._log(
+                        "info",
+                        "Vector memory enabled: "
+                        f"backend={self.vector_memory.backend}, "
+                        f"collection={self.vector_memory.collection_name}",
+                    )
+                else:
+                    self._log(
+                        "warn",
+                        f"Vector memory unavailable: {self.vector_memory.reason}",
+                    )
         except Exception as exc:
             self._log("error", f"Failed to initialize pipeline logs: {exc}")
             self.ledger.add(
@@ -1530,6 +1916,7 @@ class PipelineOrchestrator:
 
                     phase = phase_cfg.phase
                     self.state.current_phase = phase.value
+                    deep_research_topic = ""
 
                     if phase == PipelinePhase.APPLY_UPGRADES_AND_RESTART:
                         self.state.current_iteration = 1
@@ -1676,6 +2063,86 @@ class PipelineOrchestrator:
                             self.state.elapsed_seconds = time.monotonic() - start_time
                         continue
 
+                    if phase == PipelinePhase.DEEP_RESEARCH:
+                        deep_research_topic = self._derive_deep_research_topic(cycle_num)
+                        if config.deep_research_dedupe and self.vector_memory.enabled:
+                            cached = self.vector_memory.lookup_recent_deep_research(
+                                deep_research_topic,
+                                max_age_hours=config.deep_research_max_age_hours,
+                            )
+                            if cached:
+                                self.state.current_iteration = 1
+                                self.state.current_phase_started_at_epoch_ms = int(
+                                    time.time() * 1000
+                                )
+                                cached_summary = str(cached.get("summary") or "").strip()
+                                source = str(cached.get("source") or "memory-cache")
+                                self._log(
+                                    "info",
+                                    "Deep research cache hit: "
+                                    f"reusing recent findings from {source}.",
+                                )
+                                self._append_deep_research_log_entry(
+                                    cycle=cycle_num,
+                                    iteration=1,
+                                    topic=deep_research_topic,
+                                    providers=config.deep_research_providers,
+                                    summary=cached_summary or "(cached summary missing)",
+                                    reused_cache=True,
+                                )
+                                cached_result = PhaseResult(
+                                    cycle=cycle_num,
+                                    phase=phase.value,
+                                    iteration=1,
+                                    agent_success=True,
+                                    validation_success=True,
+                                    tests_passed=True,
+                                    success=True,
+                                    test_outcome="skipped",
+                                    test_summary="Deep research cache reused.",
+                                    test_exit_code=0,
+                                    files_changed=0,
+                                    net_lines_changed=0,
+                                    changed_files=[],
+                                    prompt_used="Deep research cache reuse",
+                                    agent_final_message=(
+                                        "Reused cached deep research findings for topic: "
+                                        f"{deep_research_topic}"
+                                    ),
+                                    agent_used="system",
+                                )
+                                self.state.results.append(cached_result)
+                                self.state.successes += 1
+                                self.state.total_phases_completed += 1
+                                self.state.elapsed_seconds = time.monotonic() - start_time
+                                self.tracker.log_phase_result(
+                                    phase.value,
+                                    1,
+                                    True,
+                                    "Cache reuse: yes (recent deep research hit).",
+                                )
+                                self._record_history_note(
+                                    "phase_result",
+                                    (
+                                        f"Cycle {cycle_num}, phase '{phase.value}' "
+                                        "reused deep-research cache."
+                                    ),
+                                    context={
+                                        "cycle": cycle_num,
+                                        "phase": phase.value,
+                                        "iteration": 1,
+                                        "cache_reuse": True,
+                                        "topic": deep_research_topic,
+                                    },
+                                )
+                                self._record_vector_memory_note(
+                                    phase=phase,
+                                    cycle=cycle_num,
+                                    iteration=1,
+                                    result=cached_result,
+                                )
+                                continue
+
                     # Determine prompt source: custom override > catalog
                     custom = getattr(phase_cfg, "custom_prompt", "")
                     if custom and custom.strip():
@@ -1688,6 +2155,17 @@ class PipelineOrchestrator:
                     if not base_prompt:
                         self._log("warn", f"No prompt found for phase: {phase.value}")
                         continue
+
+                    if phase == PipelinePhase.DEEP_RESEARCH:
+                        if not deep_research_topic:
+                            deep_research_topic = self._derive_deep_research_topic(cycle_num)
+                        base_prompt = (
+                            f"{base_prompt}\n\n"
+                            f"Research provider preference: {config.deep_research_providers}\n"
+                            f"Research topic: {deep_research_topic}\n"
+                            "If prior work already covers this topic, summarize reuse explicitly "
+                            "instead of repeating expensive research."
+                        )
 
                     self._log(
                         "info",
@@ -1724,87 +2202,103 @@ class PipelineOrchestrator:
                                 preferred_hypothesis_id=preferred_hypothesis_id,
                             )
 
-                        # Build the full prompt with log context
+                        # Build phase context and execute either native research
+                        # or regular agent-driven phase prompt.
                         context = self.tracker.get_context_for_phase(
                             phase.value, ledger=self.ledger
                         )
-                        full_prompt = self._build_phase_prompt(
-                            base_prompt,
-                            phase,
-                            context,
-                            cycle_num,
-                            iteration,
-                        )
-
-                        # Brain refinement
-                        if brain.enabled:
-                            original_prompt = full_prompt
-                            history = self._build_history_summary()
-                            ledger_ctx = self.ledger.get_context_for_prompt(
-                                categories=[
-                                    "error",
-                                    "bug",
-                                    "observation",
-                                    "suggestion",
-                                    "wishlist",
-                                    "todo",
-                                    "feature",
-                                ],
-                                max_items=15,
+                        full_prompt = ""
+                        if phase == PipelinePhase.DEEP_RESEARCH and config.deep_research_native_enabled:
+                            topic = deep_research_topic or self._derive_deep_research_topic(cycle_num)
+                            self._log(
+                                "info",
+                                "  Executing native deep research "
+                                f"({config.deep_research_providers}; topic='{topic[:100]}')",
                             )
-                            full_prompt = brain.plan_step(
-                                goal=self._brain_goal(phase.value),
-                                step_name=phase.value,
-                                base_prompt=full_prompt,
-                                history_summary=history,
-                                ledger_context=ledger_ctx,
-                            )
-                            self._record_brain_note(
-                                "plan_phase",
-                                f"Brain refined prompt for phase '{phase.value}'",
-                                context={
-                                    "cycle": cycle_num,
-                                    "phase": phase.value,
-                                    "iteration": iteration,
-                                    "prompt_changed": full_prompt != original_prompt,
-                                    "original_length": len(original_prompt),
-                                    "refined_length": len(full_prompt),
-                                },
-                            )
-
-                        if science_baseline_eval is not None:
-                            full_prompt = self._build_science_prompt(
-                                prompt=full_prompt,
-                                phase=phase,
+                            result = self._execute_native_deep_research(
+                                topic=topic,
                                 cycle=cycle_num,
                                 iteration=iteration,
-                                baseline_eval=science_baseline_eval,
-                                selected_hypothesis=science_hypothesis,
-                                preferred_experiment_id=(
-                                    science_latest_experiment_id
-                                    if phase == PipelinePhase.SKEPTIC
-                                    else ""
-                                ),
+                                phase_context=context,
+                            )
+                        else:
+                            full_prompt = self._build_phase_prompt(
+                                base_prompt,
+                                phase,
+                                context,
+                                cycle_num,
+                                iteration,
                             )
 
-                        self._log("info", f"  Prompt: {full_prompt[:120]}...")
+                            # Brain refinement
+                            if brain.enabled:
+                                original_prompt = full_prompt
+                                history = self._build_history_summary()
+                                ledger_ctx = self.ledger.get_context_for_prompt(
+                                    categories=[
+                                        "error",
+                                        "bug",
+                                        "observation",
+                                        "suggestion",
+                                        "wishlist",
+                                        "todo",
+                                        "feature",
+                                    ],
+                                    max_items=15,
+                                )
+                                full_prompt = brain.plan_step(
+                                    goal=self._brain_goal(phase.value),
+                                    step_name=phase.value,
+                                    base_prompt=full_prompt,
+                                    history_summary=history,
+                                    ledger_context=ledger_ctx,
+                                )
+                                self._record_brain_note(
+                                    "plan_phase",
+                                    f"Brain refined prompt for phase '{phase.value}'",
+                                    context={
+                                        "cycle": cycle_num,
+                                        "phase": phase.value,
+                                        "iteration": iteration,
+                                        "prompt_changed": full_prompt != original_prompt,
+                                        "original_length": len(original_prompt),
+                                        "refined_length": len(full_prompt),
+                                    },
+                                )
 
-                        # Execute
-                        agent_key = (phase_cfg.agent or "").strip().lower()
-                        if agent_key in {"", "auto"}:
-                            agent_key = (config.agent or "codex").strip().lower()
-                        runner = runners.get(agent_key, runners["codex"])
+                            if science_baseline_eval is not None:
+                                full_prompt = self._build_science_prompt(
+                                    prompt=full_prompt,
+                                    phase=phase,
+                                    cycle=cycle_num,
+                                    iteration=iteration,
+                                    baseline_eval=science_baseline_eval,
+                                    selected_hypothesis=science_hypothesis,
+                                    preferred_experiment_id=(
+                                        science_latest_experiment_id
+                                        if phase == PipelinePhase.SKEPTIC
+                                        else ""
+                                    ),
+                                )
 
-                        result = self._execute_phase(
-                            runner,
-                            evaluator,
-                            repo,
-                            config,
-                            phase,
-                            cycle_num,
-                            iteration,
-                            full_prompt,
-                        )
+                            self._log("info", f"  Prompt: {full_prompt[:120]}...")
+
+                            # Execute
+                            agent_key = (phase_cfg.agent or "").strip().lower()
+                            if agent_key in {"", "auto"}:
+                                agent_key = (config.agent or "codex").strip().lower()
+                            runner = runners.get(agent_key, runners["codex"])
+
+                            result = self._execute_phase(
+                                runner,
+                                evaluator,
+                                repo,
+                                config,
+                                phase,
+                                cycle_num,
+                                iteration,
+                                full_prompt,
+                            )
 
                         if science_baseline_eval is not None:
                             trial = self._record_science_trial(
@@ -1871,6 +2365,41 @@ class PipelineOrchestrator:
                             f"Lines: {result.net_lines_changed:+d}, "
                             f"Tests: {result.test_outcome}",
                         )
+                        self._record_vector_memory_note(
+                            phase=phase,
+                            cycle=cycle_num,
+                            iteration=iteration,
+                            result=result,
+                        )
+                        if phase == PipelinePhase.DEEP_RESEARCH and result.success:
+                            topic = deep_research_topic or self._derive_deep_research_topic(
+                                cycle_num
+                            )
+                            summary = (
+                                result.agent_final_message
+                                or result.test_summary
+                                or result.error_message
+                            ).strip()
+                            if summary:
+                                self._append_deep_research_log_entry(
+                                    cycle=cycle_num,
+                                    iteration=iteration,
+                                    topic=topic,
+                                    providers=config.deep_research_providers,
+                                    summary=summary,
+                                    reused_cache=False,
+                                )
+                                if self.vector_memory.enabled:
+                                    self.vector_memory.record_deep_research(
+                                        topic=topic,
+                                        summary=summary[:5000],
+                                        providers=config.deep_research_providers,
+                                        metadata={
+                                            "phase": phase.value,
+                                            "cycle": cycle_num,
+                                            "iteration": iteration,
+                                        },
+                                    )
                         self._record_history_note(
                             "phase_result",
                             (
@@ -2335,6 +2864,15 @@ class PipelineOrchestrator:
         if context:
             parts.append("\n--- CURRENT LOG FILE CONTENTS ---\n")
             parts.append(context)
+
+        memory_context = self._build_vector_memory_context(
+            phase=phase,
+            base_prompt=base_prompt,
+            log_context=context,
+        )
+        if memory_context:
+            parts.append("\n--- LONG-TERM MEMORY CONTEXT ---\n")
+            parts.append(memory_context)
 
         # Previous results context
         if self.state.results:

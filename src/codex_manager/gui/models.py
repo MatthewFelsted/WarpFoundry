@@ -13,6 +13,8 @@ CodexReasoningEffort = Literal["inherit", "low", "medium", "high", "xhigh"]
 CommitFrequency = Literal["per_phase", "per_cycle", "manual"]
 DependencyInstallPolicy = Literal["disallow", "project_only", "allow_system"]
 ImageProvider = Literal["openai", "google"]
+VectorMemoryBackend = Literal["chroma"]
+DeepResearchProviders = Literal["openai", "google", "both"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -68,13 +70,17 @@ class ChainConfig(BaseModel):
     image_generation_enabled: bool = False
     image_provider: ImageProvider = "openai"
     image_model: str = "gpt-image-1"
+    vector_memory_enabled: bool = False
+    vector_memory_backend: VectorMemoryBackend = "chroma"
+    vector_memory_collection: str = ""
+    vector_memory_top_k: int = 8
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_step: int = 0
     parallel_execution: bool = False  # run independent steps concurrently
 
     # Brain (thinking layer)
     brain_enabled: bool = False
-    brain_model: str = "gpt-5.2"
+    brain_model: str = "gpt-5.3"
 
     # Local-only mode — force all AI calls through Ollama
     local_only: bool = False
@@ -99,6 +105,7 @@ class ChainConfig(BaseModel):
             )
         if not self.image_model.strip():
             self.image_model = _default_image_model(self.image_provider)
+        self.vector_memory_top_k = min(30, max(1, int(self.vector_memory_top_k or 8)))
         return self
 
 
@@ -180,7 +187,7 @@ class PipelineGUIConfig(BaseModel):
     agent: str = "codex"
     science_enabled: bool = False
     brain_enabled: bool = False
-    brain_model: str = "gpt-5.2"
+    brain_model: str = "gpt-5.3"
     phases: list[PipelinePhaseGUI] = Field(default_factory=list)
 
     # Stop conditions (consistent with ChainConfig)
@@ -205,6 +212,21 @@ class PipelineGUIConfig(BaseModel):
     image_generation_enabled: bool = False
     image_provider: ImageProvider = "openai"
     image_model: str = "gpt-image-1"
+    vector_memory_enabled: bool = False
+    vector_memory_backend: VectorMemoryBackend = "chroma"
+    vector_memory_collection: str = ""
+    vector_memory_top_k: int = 8
+    deep_research_enabled: bool = False
+    deep_research_providers: DeepResearchProviders = "both"
+    deep_research_max_age_hours: int = 168
+    deep_research_dedupe: bool = True
+    deep_research_native_enabled: bool = False
+    deep_research_retry_attempts: int = 2
+    deep_research_daily_quota: int = 8
+    deep_research_max_provider_tokens: int = 12000
+    deep_research_budget_usd: float = 5.0
+    deep_research_openai_model: str = "gpt-5.3"
+    deep_research_google_model: str = "gemini-3-pro-preview"
     self_improvement_enabled: bool = False
     self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
@@ -237,4 +259,22 @@ class PipelineGUIConfig(BaseModel):
             )
         if not self.image_model.strip():
             self.image_model = _default_image_model(self.image_provider)
+        self.vector_memory_top_k = min(30, max(1, int(self.vector_memory_top_k or 8)))
+        self.deep_research_max_age_hours = max(1, int(self.deep_research_max_age_hours or 168))
+        self.deep_research_retry_attempts = min(
+            6, max(1, int(self.deep_research_retry_attempts or 2))
+        )
+        self.deep_research_daily_quota = min(100, max(1, int(self.deep_research_daily_quota or 8)))
+        self.deep_research_max_provider_tokens = min(
+            64000,
+            max(512, int(self.deep_research_max_provider_tokens or 12000)),
+        )
+        self.deep_research_budget_usd = max(0.0, float(self.deep_research_budget_usd or 5.0))
+        self.deep_research_openai_model = (
+            str(self.deep_research_openai_model or "gpt-5.3").strip() or "gpt-5.3"
+        )
+        self.deep_research_google_model = (
+            str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
+            or "gemini-3-pro-preview"
+        )
         return self

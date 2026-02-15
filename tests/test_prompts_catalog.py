@@ -260,3 +260,23 @@ def test_builtin_catalog_includes_visual_asset_generation(
     assert detail is not None
     assert detail["name"] == "Visual Asset Generation"
     assert "visual assets" in detail["prompt"].lower()
+
+
+def test_builtin_catalog_includes_marketing_mode(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(catalog_module, "_USER_OVERRIDE", tmp_path / "missing.yaml")
+    catalog = PromptCatalog()
+
+    detail = catalog.preset_detail("marketing_mode")
+    assert detail is not None
+    assert detail["name"] == "Marketing Mode"
+    assert "marketing mode" in detail["prompt"].lower()
+
+
+def test_builtin_catalog_includes_monetization_mode(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(catalog_module, "_USER_OVERRIDE", tmp_path / "missing.yaml")
+    catalog = PromptCatalog()
+
+    detail = catalog.preset_detail("monetization_mode")
+    assert detail is not None
+    assert detail["name"] == "Monetization Mode"
+    assert "monetization mode" in detail["prompt"].lower()

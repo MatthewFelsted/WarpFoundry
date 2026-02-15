@@ -204,9 +204,9 @@ _CACHE_DIR = Path.home() / ".codex_manager"
 _CACHE_PATH = _env_path("AI_RESULT_CACHE_PATH", _CACHE_DIR / "ai_cache.db")
 
 # Model tiers
-DEFAULT_LEAD_MODEL: str = _env_str("AI_LEAD_MODEL", "gpt-5.2")
+DEFAULT_LEAD_MODEL: str = _env_str("AI_LEAD_MODEL", "gpt-5.3")
 DEFAULT_CHEAP_MODEL: str = _env_str("AI_CHEAP_MODEL", "grok-4-1-fast-reasoning")
-DEFAULT_MEDIUM_MODEL: str = _env_str("AI_MEDIUM_MODEL", "gpt-5.2")
+DEFAULT_MEDIUM_MODEL: str = _env_str("AI_MEDIUM_MODEL", "gpt-5.3")
 DEFAULT_FREE_MODEL: str = _env_str("AI_FREE_MODEL", "ollama:gemma3:27b")
 
 # Retry knobs
@@ -375,7 +375,7 @@ def is_online(host: str = "api.openai.com", port: int = 443, timeout: float = 3.
 # ── Available models ──────────────────────────────────────────────
 
 ALL_MODELS: list[str] = [
-    "gpt-5.2",
+    "gpt-5.3",
     "gemini-3-pro-preview",
     "grok-4-1-fast-reasoning",
     "claude-opus-4-6",

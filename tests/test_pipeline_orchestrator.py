@@ -318,6 +318,15 @@ def test_default_science_order_runs_before_implementation():
     )
 
 
+def test_default_deep_research_order_runs_before_prioritization():
+    cfg = PipelineConfig(deep_research_enabled=True)
+    phase_order = [p.phase for p in cfg.get_phase_order()]
+
+    assert phase_order.index(PipelinePhase.DEEP_RESEARCH) < phase_order.index(
+        PipelinePhase.PRIORITIZATION
+    )
+
+
 def test_dry_run_commit_phase_reverts_changes(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)

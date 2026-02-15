@@ -43,3 +43,31 @@ def test_recipe_summaries_and_steps_map_expose_known_default() -> None:
     mapped = recipes_module.recipe_steps_map()
     assert recipes_module.DEFAULT_RECIPE_ID in mapped
     assert len(mapped["autopilot_default"]) == 7
+
+
+def test_todo_wishlist_autopilot_recipe_exists_and_uses_terminate_signal() -> None:
+    recipe = recipes_module.get_recipe("todo_wishlist_autopilot")
+    assert recipe is not None
+
+    steps = recipe.get("steps", [])
+    assert isinstance(steps, list)
+    assert len(steps) == 2
+    assert steps[0]["name"] == "01 Build To-Do/Wishlist"
+    assert steps[1]["loop_count"] == 20
+    assert "Always make the backlog more useful" in str(steps[0]["custom_prompt"])
+    assert "Do not invent work unrelated" in str(steps[0]["custom_prompt"])
+    assert "[TERMINATE_STEP]" in str(steps[1]["custom_prompt"])
+
+
+def test_feature_dream_autopilot_recipe_exists_and_loops_until_done() -> None:
+    recipe = recipes_module.get_recipe("feature_dream_autopilot")
+    assert recipe is not None
+
+    steps = recipe.get("steps", [])
+    assert isinstance(steps, list)
+    assert len(steps) == 2
+    assert steps[0]["name"] == "01 Dream Up Features"
+    assert ".codex_manager/owner/FEATURE_DREAMS.md" in str(steps[0]["custom_prompt"])
+    assert steps[1]["name"] == "02 Implement Dreamed Features"
+    assert steps[1]["loop_count"] == 30
+    assert "[TERMINATE_STEP]" in str(steps[1]["custom_prompt"])

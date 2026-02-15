@@ -66,7 +66,7 @@ class ScientistEngine:
     def __init__(
         self,
         repo_path: str | Path,
-        brain_model: str = "gpt-5.2",
+        brain_model: str = "gpt-5.3",
         catalog: PromptCatalog | None = None,
         max_experiments: int = 3,
         local_only: bool = False,

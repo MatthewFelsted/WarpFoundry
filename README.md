@@ -20,6 +20,10 @@ Codex Manager is a local Python app that orchestrates coding agents (Codex, and 
 - `docs/CLI_REFERENCE.md`
 - `docs/TROUBLESHOOTING.md`
 - `docs/USER_FRIENDLY_IMPROVEMENTS.md`
+- `docs/AGENT_PROTOCOL.md`
+- `docs/MODEL_WATCHDOG.md`
+- `docs/LICENSING_AND_COMMERCIAL.md`
+- `docs/REQUESTED_FEATURES_TODO.md`
 
 ## Quick Start
 
@@ -34,6 +38,9 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -e ".[dev]"
+
+# Optional: include vector-memory support (ChromaDB)
+# pip install -e ".[memory]"
 ```
 
 Set auth:
@@ -98,6 +105,11 @@ Inside target repo:
 - `.codex_manager/logs/EXPERIMENTS.md`
 - `.codex_manager/logs/PROGRESS.md`
 - `.codex_manager/logs/scientist/*`
+- `.codex_manager/business/licensing_profile.json` (if licensing/commercial packaging is enabled on project creation)
+
+Inside home config (cross-repo state):
+
+- `~/.codex_manager/watchdog/*` (provider/dependency change snapshots)
 
 ## First-Run Checklist
 

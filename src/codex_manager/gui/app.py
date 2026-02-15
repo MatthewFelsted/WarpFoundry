@@ -15,9 +15,10 @@ import threading
 import time
 import webbrowser
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Timer
+from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -26,6 +27,7 @@ from codex_manager.gui.models import (
     DANGER_CONFIRMATION_PHRASE,
     ChainConfig,
     PipelineGUIConfig,
+    TaskStep,
 )
 from codex_manager.gui.presets import get_preset, list_presets
 from codex_manager.gui.recipes import (
@@ -35,6 +37,7 @@ from codex_manager.gui.recipes import (
     recipe_steps_map,
 )
 from codex_manager.gui.stop_guidance import get_stop_guidance
+from codex_manager.monitoring import ModelCatalogWatchdog
 from codex_manager.preflight import (
     binary_exists as shared_binary_exists,
 )
@@ -73,6 +76,8 @@ _DOCS_CATALOG: dict[str, tuple[str, str]] = {
     "tutorial": ("Tutorial", "TUTORIAL.md"),
     "cli_reference": ("CLI Reference", "CLI_REFERENCE.md"),
     "troubleshooting": ("Troubleshooting", "TROUBLESHOOTING.md"),
+    "model_watchdog": ("Model Watchdog", "MODEL_WATCHDOG.md"),
+    "licensing_commercial": ("Licensing and Commercial", "LICENSING_AND_COMMERCIAL.md"),
 }
 _PIPELINE_LOG_FILES = frozenset(
     {
@@ -80,6 +85,7 @@ _PIPELINE_LOG_FILES = frozenset(
         "TESTPLAN.md",
         "ERRORS.md",
         "EXPERIMENTS.md",
+        "RESEARCH.md",
         "PROGRESS.md",
         "SCIENTIST_REPORT.md",
         "BRAIN.md",
@@ -100,6 +106,17 @@ _ATOMIC_REPLACE_MAX_RETRIES = 8
 _ATOMIC_REPLACE_RETRY_SECONDS = 0.01
 _SERVER_PORT = 5088
 _SERVER_OPEN_BROWSER = True
+_MODEL_WATCHDOG_ROOT = Path.home() / ".codex_manager" / "watchdog"
+_GOVERNANCE_POLICY_PATH = Path.home() / ".codex_manager" / "governance" / "source_policy.json"
+_GOVERNANCE_ENV_KEYS: dict[str, str] = {
+    "research_allowed_domains": "CODEX_MANAGER_RESEARCH_ALLOWED_DOMAINS",
+    "research_blocked_domains": "CODEX_MANAGER_RESEARCH_BLOCKED_DOMAINS",
+    "deep_research_allowed_domains": "DEEP_RESEARCH_ALLOWED_SOURCE_DOMAINS",
+    "deep_research_blocked_domains": "DEEP_RESEARCH_BLOCKED_SOURCE_DOMAINS",
+}
+
+_model_watchdog: ModelCatalogWatchdog | None = None
+_model_watchdog_lock = threading.Lock()
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -475,6 +492,18 @@ def _chain_preflight_issues(config: ChainConfig) -> list[str]:
     if image_issue:
         issues.append(image_issue)
 
+    if config.vector_memory_enabled:
+        backend = str(config.vector_memory_backend or "chroma").strip().lower()
+        if backend != "chroma":
+            issues.append("Unsupported vector_memory_backend. Supported backend(s): chroma.")
+        else:
+            try:
+                import chromadb  # noqa: F401
+            except Exception:
+                issues.append(
+                    "Vector memory requires ChromaDB. Install with: pip install chromadb"
+                )
+
     return issues
 
 
@@ -514,8 +543,35 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
     if image_issue:
         issues.append(image_issue)
 
+    if config.vector_memory_enabled:
+        backend = str(config.vector_memory_backend or "chroma").strip().lower()
+        if backend != "chroma":
+            issues.append("Unsupported vector_memory_backend. Supported backend(s): chroma.")
+        else:
+            try:
+                import chromadb  # noqa: F401
+            except Exception:
+                issues.append(
+                    "Vector memory requires ChromaDB. Install with: pip install chromadb"
+                )
+
     if config.self_improvement_auto_restart and not config.self_improvement_enabled:
         issues.append("self_improvement_auto_restart requires self_improvement_enabled.")
+
+    if config.deep_research_native_enabled and config.deep_research_enabled:
+        providers = str(config.deep_research_providers or "both").strip().lower()
+        if providers in {"both", "openai"} and not (
+            os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
+        ):
+            issues.append(
+                "Native deep research (OpenAI) requires OPENAI_API_KEY or CODEX_API_KEY."
+            )
+        if providers in {"both", "google"} and not (
+            os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        ):
+            issues.append(
+                "Native deep research (Google) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+            )
 
     return issues
 
@@ -647,6 +703,357 @@ def _extract_code_fence_text(lines: list[str]) -> str:
     return "\n".join(line.rstrip() for line in lines).strip()
 
 
+_RISKY_MARKETING_PHRASES = (
+    "guaranteed",
+    "risk-free",
+    "instant results",
+    "zero risk",
+    "no downside",
+    "always works",
+)
+_DARK_PATTERN_PHRASES = (
+    "dark pattern",
+    "trick users",
+    "force users",
+    "addictive loop",
+    "dopamine trap",
+    "manipulate users",
+)
+_LEGAL_CERTAINTY_PHRASES = (
+    "fully compliant",
+    "legal guaranteed",
+    "zero legal risk",
+    "regulation-proof",
+)
+_SOURCE_URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
+_DEFAULT_BLOCKED_SOURCE_DOMAINS = frozenset(
+    {
+        "example.com",
+        "localhost",
+        "127.0.0.1",
+        "facebook.com",
+        "instagram.com",
+        "tiktok.com",
+        "x.com",
+        "twitter.com",
+        "pinterest.com",
+    }
+)
+
+
+def _parse_domain_policy_env(name: str) -> set[str]:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return set()
+    values = {chunk.strip().lower().lstrip(".") for chunk in raw.split(",") if chunk.strip()}
+    return {item for item in values if item}
+
+
+def _extract_links(text: str) -> list[str]:
+    links = {match.group(0).rstrip(".,;:") for match in _SOURCE_URL_RE.finditer(text or "")}
+    return sorted(link for link in links if link)
+
+
+def _domain_matches(host: str, domain: str) -> bool:
+    host_key = str(host or "").strip().lower()
+    domain_key = str(domain or "").strip().lower().lstrip(".")
+    if not host_key or not domain_key:
+        return False
+    return host_key == domain_key or host_key.endswith(f".{domain_key}")
+
+
+def _audit_research_sources(links: list[str]) -> list[str]:
+    if not links:
+        return ["Research/citation links missing. Add credible source URLs before approving."]
+
+    warnings: list[str] = []
+    allowed_domains = _parse_domain_policy_env("CODEX_MANAGER_RESEARCH_ALLOWED_DOMAINS")
+    blocked_domains = set(_DEFAULT_BLOCKED_SOURCE_DOMAINS)
+    blocked_domains.update(_parse_domain_policy_env("CODEX_MANAGER_RESEARCH_BLOCKED_DOMAINS"))
+    insecure_links = 0
+    hostnames: set[str] = set()
+    blocked_hits: set[str] = set()
+    allowlist_violations: set[str] = set()
+
+    for link in links:
+        parsed = urlparse(link)
+        if parsed.scheme.lower() != "https":
+            insecure_links += 1
+        host = str(parsed.hostname or "").strip().lower()
+        if not host:
+            continue
+        hostnames.add(host)
+        if any(_domain_matches(host, blocked) for blocked in blocked_domains):
+            blocked_hits.add(host)
+        if allowed_domains and not any(
+            _domain_matches(host, allowed) for allowed in allowed_domains
+        ):
+            allowlist_violations.add(host)
+
+    if insecure_links:
+        warnings.append(
+            "Some citations are not HTTPS. Prefer HTTPS sources for integrity and traceability."
+        )
+    if blocked_hits:
+        warnings.append(
+            "Potentially low-trust source domains detected: "
+            + ", ".join(sorted(blocked_hits)[:8])
+        )
+    if allowlist_violations:
+        warnings.append(
+            "Sources outside configured governance allowlist policy: "
+            + ", ".join(sorted(allowlist_violations)[:8])
+        )
+    if len(hostnames) <= 1 and len(links) >= 2:
+        warnings.append(
+            "Source diversity is low (single domain). Add corroborating references before approval."
+        )
+    return warnings
+
+
+def _owner_decision_board_path(repo: Path) -> Path:
+    return repo / ".codex_manager" / "owner" / "decision_board.json"
+
+
+def _todo_wishlist_path(repo: Path) -> Path:
+    return repo / ".codex_manager" / "owner" / "TODO_WISHLIST.md"
+
+
+def _default_todo_wishlist_markdown(project_name: str) -> str:
+    name = str(project_name or "Project").strip() or "Project"
+    return (
+        f"# To-Do and Wishlist - {name}\n\n"
+        "Use this list to track features, fixes, and implementation ideas.\n\n"
+        "## High Priority\n\n"
+        "- [ ] Define the most important user-facing improvement.\n"
+        "- [ ] Add one high-impact reliability or quality upgrade.\n\n"
+        "## Medium Priority\n\n"
+        "- [ ] Improve onboarding/readme clarity.\n"
+        "- [ ] Add one automation or developer-experience improvement.\n\n"
+        "## Backlog Ideas\n\n"
+        "- [ ] Add one optional enhancement to revisit later.\n\n"
+        "## Notes\n\n"
+        "- Mark completed items as `- [x] ...`.\n"
+        "- Keep items concrete and implementation-ready.\n"
+    )
+
+
+def _read_todo_wishlist(repo: Path) -> str:
+    path = _todo_wishlist_path(repo)
+    if not path.is_file():
+        return _default_todo_wishlist_markdown(repo.name)
+    return _read_text_utf8_resilient(path)
+
+
+def _write_todo_wishlist(repo: Path, content: str) -> Path:
+    path = _todo_wishlist_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clean = str(content or "").strip() or _default_todo_wishlist_markdown(repo.name)
+    path.write_text(clean + "\n", encoding="utf-8")
+    return path
+
+
+def _todo_wishlist_has_open_items(text: str) -> bool:
+    return bool(re.search(r"^\s*[-*]\s+\[\s\]\s+", str(text or ""), flags=re.MULTILINE))
+
+
+def _suggest_todo_wishlist_markdown(
+    *,
+    repo: Path,
+    model: str,
+    owner_context: str,
+    existing_markdown: str,
+) -> tuple[str, str]:
+    prompt = (
+        "You are building a practical implementation backlog for a software repository.\n"
+        "Return only markdown.\n\n"
+        "Requirements:\n"
+        "- Include sections: High Priority, Medium Priority, Backlog Ideas.\n"
+        "- Use markdown checkboxes (`- [ ]`) for each item.\n"
+        "- Provide 8-20 concrete, repository-relevant items.\n"
+        "- Prioritize items that can be implemented incrementally.\n"
+        "- Avoid duplicates against existing list items.\n"
+        "- Keep each item specific and actionable.\n\n"
+        f"Repository: {repo.name}\n"
+        f"Owner context: {owner_context or '(none)'}\n\n"
+        "Existing list (for dedupe context):\n"
+        f"{existing_markdown[:4000]}"
+    )
+    try:
+        from codex_manager.brain.connector import connect
+    except Exception as exc:
+        logger.warning("Could not import AI connector for wishlist suggestion: %s", exc)
+        return (
+            _default_todo_wishlist_markdown(repo.name),
+            "AI suggestion unavailable; used a deterministic starter template.",
+        )
+
+    try:
+        raw = connect(
+            model=str(model or "gpt-5.3").strip() or "gpt-5.3",
+            prompt=prompt,
+            text_only=True,
+            operation="todo_wishlist_suggest",
+            stage="owner:todo_wishlist",
+            max_output_tokens=1800,
+            temperature=0.35,
+        )
+        suggested = _extract_first_code_fence(str(raw or "")).strip()
+        if not suggested:
+            suggested = str(raw or "").strip()
+        if not suggested:
+            raise RuntimeError("empty suggestion")
+        return suggested, ""
+    except Exception as exc:
+        logger.warning("AI suggestion failed for todo/wishlist", exc_info=True)
+        fallback = _default_todo_wishlist_markdown(repo.name)
+        return fallback, f"AI suggestion failed ({exc}); used a starter template."
+
+
+def _extract_governance_warnings(text: str) -> list[str]:
+    raw = str(text or "").lower()
+    warnings: list[str] = []
+    risky_hits = [phrase for phrase in _RISKY_MARKETING_PHRASES if phrase in raw]
+    if risky_hits:
+        warnings.append(
+            "Marketing/commercial claims may be overconfident. Review phrases: "
+            + ", ".join(sorted(set(risky_hits)))
+        )
+    dark_hits = [phrase for phrase in _DARK_PATTERN_PHRASES if phrase in raw]
+    if dark_hits:
+        warnings.append(
+            "Manipulative engagement language detected. Remove/replace phrases: "
+            + ", ".join(sorted(set(dark_hits)))
+        )
+    legal_hits = [phrase for phrase in _LEGAL_CERTAINTY_PHRASES if phrase in raw]
+    if legal_hits:
+        warnings.append(
+            "Legal/compliance certainty claims detected. Rephrase as conditional guidance: "
+            + ", ".join(sorted(set(legal_hits)))
+        )
+
+    links = _extract_links(text)
+    warnings.extend(_audit_research_sources(links))
+
+    deduped: list[str] = []
+    for warning in warnings:
+        key = str(warning or "").strip()
+        if key and key not in deduped:
+            deduped.append(key)
+    return deduped[:12]
+
+
+def _parse_decision_cards(markdown: str, *, max_cards: int = 12) -> list[dict[str, str]]:
+    text = str(markdown or "").strip()
+    if not text:
+        return []
+    cards: list[dict[str, str]] = []
+
+    # Preferred format: "### Option ..." sections.
+    section_matches = list(
+        re.finditer(
+            r"^###\s+(.+?)\n(.*?)(?=^###\s+|\Z)",
+            text,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+    )
+    for idx, match in enumerate(section_matches, start=1):
+        title = re.sub(r"\s+", " ", match.group(1)).strip()
+        body = re.sub(r"\s+", " ", match.group(2)).strip()
+        if not title:
+            continue
+        cards.append(
+            {
+                "id": f"card-{idx:03d}",
+                "title": title[:120],
+                "summary": body[:800] if body else "(no details provided)",
+                "decision": "pending",
+                "owner_prompt": "",
+                "source": "section",
+            }
+        )
+        if len(cards) >= max_cards:
+            return cards
+
+    if cards:
+        return cards
+
+    # Fallback: bullet list items.
+    bullet_lines = re.findall(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", text, flags=re.MULTILINE)
+    for idx, line in enumerate(bullet_lines, start=1):
+        content = re.sub(r"\s+", " ", line).strip()
+        if not content:
+            continue
+        cards.append(
+            {
+                "id": f"card-{idx:03d}",
+                "title": content[:120],
+                "summary": content[:800],
+                "decision": "pending",
+                "owner_prompt": "",
+                "source": "bullet",
+            }
+        )
+        if len(cards) >= max_cards:
+            return cards
+
+    if cards:
+        return cards
+
+    # Last resort: one catch-all card.
+    return [
+        {
+            "id": "card-001",
+            "title": "Monetization Plan Review",
+            "summary": re.sub(r"\s+", " ", text)[:1000],
+            "decision": "pending",
+            "owner_prompt": "",
+            "source": "fallback",
+        }
+    ]
+
+
+def _load_decision_board(repo: Path) -> dict[str, object]:
+    path = _owner_decision_board_path(repo)
+    if not path.is_file():
+        return {
+            "version": 1,
+            "updated_at": "",
+            "repo_path": str(repo),
+            "cards": [],
+            "governance_warnings": [],
+            "source": "",
+        }
+    payload = _read_json_file(path)
+    if not payload:
+        return {
+            "version": 1,
+            "updated_at": "",
+            "repo_path": str(repo),
+            "cards": [],
+            "governance_warnings": [],
+            "source": "",
+        }
+    payload.setdefault("repo_path", str(repo))
+    payload.setdefault("cards", [])
+    payload.setdefault("governance_warnings", [])
+    return payload
+
+
+def _save_decision_board(repo: Path, payload: dict[str, object]) -> dict[str, object]:
+    out = dict(payload)
+    out["version"] = 1
+    out["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    out["repo_path"] = str(repo)
+    cards = out.get("cards")
+    if not isinstance(cards, list):
+        out["cards"] = []
+    path = _owner_decision_board_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    return out
+
+
 def _safe_int(value: object, default: int = 0) -> int:
     """Coerce *value* to int where possible."""
     try:
@@ -655,6 +1062,770 @@ def _safe_int(value: object, default: int = 0) -> int:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return default
+
+
+def _safe_bool(value: object, default: bool = False) -> bool:
+    """Coerce common boolean-like values."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _parse_domain_list(value: object) -> list[str]:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return []
+    tokens = re.split(r"[\s,;]+", raw)
+    domains: list[str] = []
+    for token in tokens:
+        cleaned = token.strip().lstrip(".")
+        if not cleaned:
+            continue
+        if cleaned not in domains:
+            domains.append(cleaned)
+    return domains
+
+
+def _normalize_domain_csv(value: object) -> str:
+    return ",".join(_parse_domain_list(value))
+
+
+def _governance_policy_defaults() -> dict[str, str]:
+    payload: dict[str, str] = {}
+    for key, env_name in _GOVERNANCE_ENV_KEYS.items():
+        payload[key] = _normalize_domain_csv(os.getenv(env_name, ""))
+    return payload
+
+
+def _read_governance_policy_file() -> dict[str, str]:
+    if not _GOVERNANCE_POLICY_PATH.is_file():
+        return {}
+    try:
+        raw = json.loads(_read_text_utf8_resilient(_GOVERNANCE_POLICY_PATH))
+    except Exception:
+        logger.warning("Could not parse governance policy file: %s", _GOVERNANCE_POLICY_PATH)
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    payload: dict[str, str] = {}
+    for key in _GOVERNANCE_ENV_KEYS:
+        payload[key] = _normalize_domain_csv(raw.get(key, ""))
+    return payload
+
+
+def _apply_governance_policy_env(
+    payload: dict[str, object],
+    *,
+    only_if_unset: bool = False,
+) -> None:
+    for key, env_name in _GOVERNANCE_ENV_KEYS.items():
+        if only_if_unset and str(os.getenv(env_name, "")).strip():
+            continue
+        value = _normalize_domain_csv(payload.get(key, ""))
+        if value:
+            os.environ[env_name] = value
+        else:
+            os.environ.pop(env_name, None)
+
+
+def _load_governance_policy() -> dict[str, str]:
+    defaults = _governance_policy_defaults()
+    from_file = _read_governance_policy_file()
+    payload: dict[str, str] = {}
+    for key in _GOVERNANCE_ENV_KEYS:
+        payload[key] = defaults.get(key, "") or from_file.get(key, "")
+    return payload
+
+
+def _save_governance_policy(data: dict[str, object]) -> dict[str, str]:
+    current = _load_governance_policy()
+    for key in _GOVERNANCE_ENV_KEYS:
+        if key in data:
+            current[key] = _normalize_domain_csv(data.get(key, ""))
+    payload: dict[str, object] = {
+        "version": 1,
+        "updated_at": datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    payload.update({key: current.get(key, "") for key in _GOVERNANCE_ENV_KEYS})
+    _write_json_file_atomic(_GOVERNANCE_POLICY_PATH, payload)
+    _apply_governance_policy_env(payload, only_if_unset=False)
+    return {key: str(payload.get(key, "") or "") for key in _GOVERNANCE_ENV_KEYS}
+
+
+def _initialize_governance_policy() -> None:
+    payload = _read_governance_policy_file()
+    if payload:
+        _apply_governance_policy_env(payload, only_if_unset=True)
+
+
+with suppress(Exception):
+    _initialize_governance_policy()
+
+
+_FOUNDATION_ASSISTANT_MODEL: dict[str, str] = {
+    "codex": "gpt-5.3",
+    "openai": "gpt-5.3",
+    "google": "gemini-3-pro-preview",
+    "claude": "claude-opus-4-6",
+}
+
+
+def _normalize_foundation_assistants(raw: object) -> list[str]:
+    """Normalize assistant keys from API payload."""
+    values: list[str] = []
+    if isinstance(raw, str):
+        values = [part.strip().lower() for part in raw.split(",")]
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(part).strip().lower() for part in raw]
+    normalized: list[str] = []
+    for value in values:
+        if value in _FOUNDATION_ASSISTANT_MODEL and value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _fallback_foundation_prompt(prompt: str, project_name: str) -> str:
+    """Return a deterministic improved foundational prompt when APIs fail."""
+    core = str(prompt or "").strip()
+    return (
+        f"You are the principal engineer for project '{project_name}'.\n\n"
+        "Goal:\n"
+        "- Build the project from this foundational brief with production quality.\n\n"
+        "Functional Scope:\n"
+        f"{core}\n\n"
+        "Required Output Contract:\n"
+        "- Architecture summary (components + responsibilities)\n"
+        "- Phase-by-phase execution plan with acceptance criteria\n"
+        "- Initial implementation order with measurable milestones\n"
+        "- Test strategy and rollback/safety notes\n"
+        "- Documentation files to generate before coding\n"
+    )
+
+
+def _improve_foundational_prompt(
+    prompt: str,
+    *,
+    project_name: str,
+    assistants: list[str],
+) -> dict[str, object]:
+    """Improve a foundational prompt using one or more model assistants."""
+    clean_prompt = str(prompt or "").strip()
+    if not clean_prompt:
+        return {
+            "recommended_prompt": "",
+            "variants": [],
+            "warning": "Prompt is empty.",
+        }
+
+    assistant_order = assistants or ["codex"]
+    instruction = (
+        "You are refining a software project foundational prompt.\n\n"
+        f"Project name: {project_name}\n\n"
+        "Improve this prompt so it is execution-ready for autonomous coding agents.\n"
+        "Return only the improved prompt text. Keep it concise but specific.\n\n"
+        "Original prompt:\n"
+        f"{clean_prompt}"
+    )
+    variants: list[dict[str, str]] = []
+
+    try:
+        from codex_manager.brain.connector import connect
+    except Exception as exc:
+        fallback = _fallback_foundation_prompt(clean_prompt, project_name)
+        return {
+            "recommended_prompt": fallback,
+            "variants": [],
+            "warning": f"AI prompt improver unavailable ({exc}). Used fallback template.",
+        }
+
+    for assistant in assistant_order:
+        model = _FOUNDATION_ASSISTANT_MODEL.get(assistant)
+        if not model:
+            continue
+        try:
+            text = connect(
+                model=model,
+                prompt=instruction,
+                text_only=True,
+                operation="foundation_prompt_improve",
+                stage=f"foundation:{assistant}",
+                max_output_tokens=1200,
+            )
+            candidate = str(text or "").strip()
+            if candidate:
+                variants.append(
+                    {
+                        "assistant": assistant,
+                        "model": model,
+                        "prompt": candidate,
+                    }
+                )
+        except Exception as exc:
+            variants.append(
+                {
+                    "assistant": assistant,
+                    "model": model,
+                    "error": str(exc),
+                    "prompt": "",
+                }
+            )
+
+    successful = [item for item in variants if item.get("prompt")]
+    if successful:
+        return {
+            "recommended_prompt": str(successful[0]["prompt"]),
+            "variants": variants,
+            "warning": "",
+        }
+
+    fallback = _fallback_foundation_prompt(clean_prompt, project_name)
+    return {
+        "recommended_prompt": fallback,
+        "variants": variants,
+        "warning": "No assistant returned a usable prompt. Used fallback template.",
+    }
+
+
+def _write_foundation_artifacts(
+    *,
+    project_path: Path,
+    project_name: str,
+    description: str,
+    foundational_prompt: str,
+    assistants: list[str],
+    generate_docs: bool,
+    bootstrap_once: bool,
+) -> list[str]:
+    """Write foundational planning artifacts into the new repository."""
+    root = project_path / ".codex_manager" / "foundation"
+    root.mkdir(parents=True, exist_ok=True)
+    now = datetime.utcnow().isoformat() + "Z"
+
+    prompt_path = root / "FOUNDATIONAL_PROMPT.md"
+    prompt_path.write_text(
+        (
+            "# Foundational Prompt\n\n"
+            f"- Project: {project_name}\n"
+            f"- Created: {now}\n"
+            f"- Assistants requested: {', '.join(assistants) if assistants else 'codex'}\n\n"
+            "## Prompt\n\n"
+            f"{foundational_prompt.strip()}\n"
+        ),
+        encoding="utf-8",
+    )
+    written = [str(prompt_path.relative_to(project_path))]
+
+    if generate_docs:
+        plan_path = root / "FOUNDATION_PLAN.md"
+        plan_path.write_text(
+            (
+                "# Foundation Plan\n\n"
+                f"- Project: {project_name}\n"
+                f"- Description: {description or '(none provided)'}\n"
+                f"- Generated: {now}\n\n"
+                "## Objectives\n"
+                "- Define architecture and execution phases\n"
+                "- Identify MVP scope and success metrics\n"
+                "- Capture implementation milestones and validation checks\n\n"
+                "## One-Time Bootstrap Checklist\n"
+                "1. Validate foundational prompt and constraints.\n"
+                "2. Generate architecture notes and technical design docs.\n"
+                "3. Produce implementation plan with ordered milestones.\n"
+                "4. Execute the first implementation pass.\n"
+                "5. Run tests and update docs before handoff.\n\n"
+                "## Owner Decision Log\n"
+                "- Approved ideas:\n"
+                "- On hold:\n"
+                "- Rejected:\n"
+            ),
+            encoding="utf-8",
+        )
+        written.append(str(plan_path.relative_to(project_path)))
+
+    if bootstrap_once:
+        bootstrap_path = root / "BOOTSTRAP_REQUEST.json"
+        payload = {
+            "version": 1,
+            "created_at": now,
+            "project_name": project_name,
+            "description": description,
+            "foundational_prompt_path": "FOUNDATIONAL_PROMPT.md",
+            "status": "pending",
+            "one_time_bootstrap": True,
+        }
+        bootstrap_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        written.append(str(bootstrap_path.relative_to(project_path)))
+
+    return written
+
+
+_LICENSING_STRATEGIES: dict[str, str] = {
+    "oss_only": "Open-source only",
+    "open_core": "Open core (OSS + paid add-ons)",
+    "dual_license": "Dual license (OSS + commercial)",
+    "hosted_service": "Hosted service (SaaS/API)",
+}
+
+
+def _normalize_licensing_strategy(value: object) -> str:
+    key = str(value or "oss_only").strip().lower().replace("-", "_")
+    if key not in _LICENSING_STRATEGIES:
+        return "oss_only"
+    return key
+
+
+def _legal_review_state_path(project_path: Path) -> Path:
+    return project_path / ".codex_manager" / "business" / "legal_review.json"
+
+
+def _legal_review_status(*, required: bool, approved: bool) -> tuple[str, bool]:
+    if not required:
+        return "not_required", True
+    if approved:
+        return "approved", True
+    return "pending", False
+
+
+def _load_legal_review_state(project_path: Path) -> dict[str, object]:
+    path = _legal_review_state_path(project_path)
+    if not path.is_file():
+        return {}
+    payload = _read_json_file(path)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_legal_review_state(project_path: Path, payload: dict[str, object]) -> dict[str, object]:
+    state = dict(payload)
+    state["version"] = 1
+    state["updated_at"] = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    path = _legal_review_state_path(project_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return state
+
+
+def _upsert_legal_review_state(
+    *,
+    project_path: Path,
+    project_name: str,
+    required: bool,
+    approved: bool,
+    reviewer: str = "",
+    notes: str = "",
+    files: list[str] | None = None,
+    source: str = "",
+) -> dict[str, object]:
+    existing = _load_legal_review_state(project_path)
+    reviewer_value = str(reviewer or existing.get("reviewer") or "").strip()
+    notes_value = str(notes or existing.get("notes") or "").strip()
+    status, publish_ready = _legal_review_status(required=required, approved=approved)
+    approved_at = str(existing.get("approved_at") or "").strip()
+    if approved and not approved_at:
+        approved_at = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    if not approved:
+        approved_at = ""
+    out: dict[str, object] = {
+        "project_name": project_name,
+        "required": bool(required),
+        "approved": bool(approved),
+        "status": status,
+        "publish_ready": bool(publish_ready),
+        "reviewer": reviewer_value,
+        "notes": notes_value,
+        "approved_at": approved_at,
+        "source": str(source or existing.get("source") or "").strip(),
+        "files": files if isinstance(files, list) else list(existing.get("files", []) or []),
+    }
+    return _save_legal_review_state(project_path, out)
+
+
+def _legal_review_markdown_notice(state: dict[str, object]) -> str:
+    required = bool(state.get("required", False))
+    approved = bool(state.get("approved", False))
+    status = str(state.get("status") or "").strip().lower()
+    reviewer = str(state.get("reviewer") or "").strip()
+    approved_at = str(state.get("approved_at") or "").strip()
+
+    if not required:
+        return ""
+    if approved or status == "approved":
+        reviewer_label = reviewer or "owner"
+        approved_label = approved_at or "recorded in legal review state"
+        return (
+            "> [!NOTE]\n"
+            f"> Legal review checkpoint approved by `{reviewer_label}` ({approved_label}).\n\n"
+        )
+    return (
+        "> [!WARNING]\n"
+        "> Legal review checkpoint is **pending**. Do not publish licensing/pricing docs until sign-off is recorded.\n\n"
+    )
+
+
+def _write_licensing_packaging_artifacts(
+    *,
+    project_path: Path,
+    project_name: str,
+    description: str,
+    strategy: str,
+    include_commercial_tiers: bool,
+    owner_contact_email: str,
+    legal_review_required: bool = True,
+    legal_signoff_approved: bool = False,
+    legal_reviewer: str = "",
+    legal_notes: str = "",
+) -> list[str]:
+    """Write licensing/commercial planning artifacts for a new project."""
+    strategy_key = _normalize_licensing_strategy(strategy)
+    strategy_label = _LICENSING_STRATEGIES[strategy_key]
+    now = datetime.now(tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    docs_dir = project_path / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    business_dir = project_path / ".codex_manager" / "business"
+    business_dir.mkdir(parents=True, exist_ok=True)
+    contact = owner_contact_email.strip() or "owner@example.com"
+    legal_state = _upsert_legal_review_state(
+        project_path=project_path,
+        project_name=project_name,
+        required=bool(legal_review_required),
+        approved=bool(legal_signoff_approved),
+        reviewer=legal_reviewer,
+        notes=legal_notes,
+        files=[],
+        source="new_project",
+    )
+    legal_notice = _legal_review_markdown_notice(legal_state)
+
+    profile = {
+        "version": 1,
+        "project_name": project_name,
+        "description": description,
+        "strategy_key": strategy_key,
+        "strategy_label": strategy_label,
+        "include_commercial_tiers": bool(include_commercial_tiers),
+        "owner_contact_email": contact,
+        "created_at": now,
+    }
+    profile_path = business_dir / "licensing_profile.json"
+    profile_path.write_text(json.dumps(profile, indent=2), encoding="utf-8")
+
+    strategy_path = docs_dir / "LICENSING_STRATEGY.md"
+    strategy_path.write_text(
+        (
+            f"# Licensing Strategy - {project_name}\n\n"
+            f"_Generated: {now}_\n\n"
+            f"{legal_notice}"
+            "## Current Direction\n\n"
+            f"- Strategy: **{strategy_label}** (`{strategy_key}`)\n"
+            f"- Contact: `{contact}`\n"
+            f"- Project description: {description or '(none provided)'}\n\n"
+            "## Operating Principles\n\n"
+            "1. Keep open-source obligations clear and discoverable.\n"
+            "2. Separate community and commercial promises explicitly.\n"
+            "3. Avoid legal/compliance claims without counsel review.\n"
+            "4. Keep pricing and support terms versioned in-repo.\n\n"
+            "## Required Follow-up\n\n"
+            "1. Choose and publish the exact OSS license text.\n"
+            "2. Define commercial terms in `docs/COMMERCIAL_OFFERING.md`.\n"
+            "3. Add contribution policy and trademark guidelines (if applicable).\n"
+            "4. Have legal counsel review before public launch.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    offering_path = docs_dir / "COMMERCIAL_OFFERING.md"
+    offering_path.write_text(
+        (
+            f"# Commercial Offering - {project_name}\n\n"
+            f"_Generated: {now}_\n\n"
+            f"{legal_notice}"
+            "## Packaging Tracks\n\n"
+            "- Community track: source code, docs, and standard issue support.\n"
+            "- Commercial track: hosted offering, premium support, and enterprise controls.\n\n"
+            "## Offer Checklist\n\n"
+            "- SLA and support hours\n"
+            "- Data retention and security posture\n"
+            "- Upgrade/migration path between tiers\n"
+            "- Refund and billing dispute policy\n\n"
+            "## Governance\n\n"
+            "- Do not publish guarantees such as 'risk-free' or 'always compliant'.\n"
+            "- Require source-backed claims for benchmark/performance statements.\n"
+            "- Track approvals in `.codex_manager/owner/decision_board.json`.\n"
+        ),
+        encoding="utf-8",
+    )
+
+    written = [
+        str(profile_path.relative_to(project_path)),
+        str(strategy_path.relative_to(project_path)),
+        str(offering_path.relative_to(project_path)),
+    ]
+
+    if include_commercial_tiers:
+        pricing_path = docs_dir / "PRICING_TIERS.md"
+        pricing_path.write_text(
+            (
+                f"# Pricing Tiers - {project_name}\n\n"
+                f"_Generated: {now}_\n\n"
+                f"{legal_notice}"
+                "## Suggested Tiers (Draft)\n\n"
+                "| Tier | Target | Price Anchor | Included |\n"
+                "|------|--------|--------------|----------|\n"
+                "| Community | Individual builders | $0 | OSS self-hosted usage |\n"
+                "| Pro | Small teams | $29-$99 / month | Hosted convenience, faster support |\n"
+                "| Business | Growing orgs | $299-$999 / month | SSO, admin controls, audit logs |\n"
+                "| Enterprise | Regulated/large orgs | Custom annual | SLA, dedicated support, compliance docs |\n\n"
+                "## Notes\n\n"
+                "- Replace draft anchors with validated willingness-to-pay research.\n"
+                "- Tie each tier to measurable cost-to-serve assumptions.\n"
+                "- Keep this file synchronized with customer-facing pricing pages.\n"
+            ),
+            encoding="utf-8",
+        )
+        written.append(str(pricing_path.relative_to(project_path)))
+
+    written.append(str(_legal_review_state_path(project_path).relative_to(project_path)))
+    legal_state = _upsert_legal_review_state(
+        project_path=project_path,
+        project_name=project_name,
+        required=bool(legal_review_required),
+        approved=bool(legal_signoff_approved),
+        reviewer=legal_reviewer,
+        notes=legal_notes,
+        files=written,
+        source="new_project",
+    )
+    if legal_state.get("status") == "pending":
+        logger.info(
+            "Legal review checkpoint pending for %s; licensing files are marked draft.",
+            project_path,
+        )
+
+    return written
+
+
+def _foundation_root(project_path: Path) -> Path:
+    return project_path / ".codex_manager" / "foundation"
+
+
+def _foundation_bootstrap_request_path(project_path: Path) -> Path:
+    return _foundation_root(project_path) / "BOOTSTRAP_REQUEST.json"
+
+
+def _foundation_bootstrap_status_path(project_path: Path) -> Path:
+    return _foundation_root(project_path) / "BOOTSTRAP_STATUS.json"
+
+
+def _read_json_file(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(_read_text_utf8_resilient(path))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_foundation_bootstrap_status(
+    *,
+    project_path: Path,
+    status: str,
+    detail: str,
+    project_name: str = "",
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "version": 1,
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "status": status,
+        "detail": detail,
+        "project_path": str(project_path),
+    }
+    if project_name:
+        payload["project_name"] = project_name
+    if extra:
+        payload.update(extra)
+    path = _foundation_bootstrap_status_path(project_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def _update_bootstrap_request(
+    *,
+    project_path: Path,
+    status: str,
+    detail: str = "",
+    extra: dict[str, object] | None = None,
+) -> None:
+    req_path = _foundation_bootstrap_request_path(project_path)
+    if not req_path.is_file():
+        return
+    payload = _read_json_file(req_path)
+    payload["status"] = status
+    payload["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    if detail:
+        payload["detail"] = detail
+    if extra:
+        payload.update(extra)
+    req_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _start_foundation_bootstrap_chain(
+    *,
+    project_path: Path,
+    project_name: str,
+    description: str,
+    source: str,
+) -> dict[str, object]:
+    """Start the one-time bootstrap chain for a newly created foundation project."""
+    global executor
+
+    foundation_root = _foundation_root(project_path)
+    prompt_path = foundation_root / "FOUNDATIONAL_PROMPT.md"
+    if not prompt_path.is_file():
+        status = _write_foundation_bootstrap_status(
+            project_path=project_path,
+            project_name=project_name,
+            status="failed",
+            detail="Missing FOUNDATIONAL_PROMPT.md.",
+            extra={"source": source},
+        )
+        _update_bootstrap_request(
+            project_path=project_path,
+            status="failed",
+            detail="Missing FOUNDATIONAL_PROMPT.md.",
+        )
+        return status
+
+    if executor.is_running:
+        status = _write_foundation_bootstrap_status(
+            project_path=project_path,
+            project_name=project_name,
+            status="queued",
+            detail="Chain executor is busy. Run bootstrap manually when current run finishes.",
+            extra={"source": source},
+        )
+        _update_bootstrap_request(
+            project_path=project_path,
+            status="queued",
+            detail="Executor busy; bootstrap queued.",
+        )
+        return status
+
+    plan_path = foundation_root / "FOUNDATION_PLAN.md"
+    prompt_hint = (
+        "Read and follow `.codex_manager/foundation/FOUNDATIONAL_PROMPT.md` exactly. "
+        "If `.codex_manager/foundation/FOUNDATION_PLAN.md` exists, use it as the execution plan. "
+        "Implement a production-ready MVP scaffold now, create required files, wire core flows, "
+        "and run project-appropriate validation. Update README and docs with setup and usage."
+    )
+    validation_hint = (
+        "Run and/or create practical validation checks for this new project. "
+        "If tests do not exist, create minimal baseline tests or smoke checks. "
+        "Document current status and next highest-priority actions."
+    )
+    if plan_path.is_file():
+        prompt_hint += " Foundation plan available at `.codex_manager/foundation/FOUNDATION_PLAN.md`."
+
+    chain = ChainConfig(
+        name=f"{project_name or project_path.name} Foundation Bootstrap",
+        repo_path=str(project_path),
+        mode="apply",
+        steps=[
+            TaskStep(
+                name="Foundation Bootstrap Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt=prompt_hint,
+                enabled=True,
+                agent="codex",
+                loop_count=1,
+            ),
+            TaskStep(
+                name="Foundation Bootstrap Validation",
+                job_type="testing",
+                prompt_mode="custom",
+                custom_prompt=validation_hint,
+                enabled=True,
+                agent="codex",
+                loop_count=1,
+            ),
+        ],
+        max_loops=1,
+        unlimited=False,
+        improvement_threshold=0.1,
+        max_time_minutes=90,
+        max_total_tokens=1_500_000,
+        strict_token_budget=False,
+        stop_on_convergence=False,
+        test_cmd="",
+    )
+
+    executor.start(chain)
+    detail = (
+        "One-time bootstrap chain started. Track progress in the main Chain Execution panel."
+    )
+    status = _write_foundation_bootstrap_status(
+        project_path=project_path,
+        project_name=project_name,
+        status="running",
+        detail=detail,
+        extra={
+            "source": source,
+            "chain_name": chain.name,
+            "bootstrap_mode": chain.mode,
+            "steps": [step.name for step in chain.steps if step.enabled],
+            "foundation_prompt_path": str(prompt_path),
+            "foundation_plan_path": str(plan_path) if plan_path.is_file() else "",
+        },
+    )
+    _update_bootstrap_request(
+        project_path=project_path,
+        status="running",
+        detail=detail,
+        extra={"chain_name": chain.name},
+    )
+    return status
+
+
+def _foundation_bootstrap_status(repo_path: Path) -> dict[str, object]:
+    """Return bootstrap status and reconcile stale 'running' states."""
+    status_path = _foundation_bootstrap_status_path(repo_path)
+    payload = _read_json_file(status_path) if status_path.is_file() else {}
+    status = str(payload.get("status") or "").strip().lower()
+    if not status:
+        return {
+            "status": "not_requested",
+            "detail": "No bootstrap status found.",
+            "project_path": str(repo_path),
+        }
+
+    if status == "running":
+        cfg = executor.config
+        running_same_repo = bool(
+            executor.is_running
+            and cfg
+            and str(Path(cfg.repo_path).resolve()) == str(repo_path.resolve())
+        )
+        if not running_same_repo:
+            payload = _write_foundation_bootstrap_status(
+                project_path=repo_path,
+                project_name=str(payload.get("project_name") or ""),
+                status="completed",
+                detail="Bootstrap chain is no longer running.",
+                extra={k: v for k, v in payload.items() if k not in {"status", "detail", "updated_at"}},
+            )
+            _update_bootstrap_request(
+                project_path=repo_path,
+                status="completed",
+                detail="Bootstrap chain finished.",
+            )
+    return payload
 
 
 def _docs_dir() -> Path | None:
@@ -704,26 +1875,154 @@ def _attach_stop_guidance(
     return payload
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _get_model_watchdog() -> ModelCatalogWatchdog:
+    global _model_watchdog
+    with _model_watchdog_lock:
+        if _model_watchdog is None:
+            _model_watchdog = ModelCatalogWatchdog(
+                root_dir=_MODEL_WATCHDOG_ROOT,
+                default_enabled=_env_bool("CODEX_MANAGER_MODEL_WATCHDOG_ENABLED", True),
+                default_interval_hours=_env_int(
+                    "CODEX_MANAGER_MODEL_WATCHDOG_INTERVAL_HOURS",
+                    24,
+                    1,
+                    24 * 30,
+                ),
+            )
+        return _model_watchdog
+
+
+def _model_watchdog_health() -> dict[str, object]:
+    try:
+        status = _get_model_watchdog().status()
+    except Exception:
+        logger.exception("Could not read model watchdog status")
+        return {
+            "model_watchdog_enabled": False,
+            "model_watchdog_running": False,
+            "model_watchdog_next_due_at": "",
+            "model_watchdog_last_status": "error",
+        }
+    cfg = status.get("config", {})
+    state = status.get("state", {})
+    return {
+        "model_watchdog_enabled": bool(cfg.get("enabled", False)),
+        "model_watchdog_running": bool(status.get("running", False)),
+        "model_watchdog_next_due_at": str(status.get("next_due_at", "") or ""),
+        "model_watchdog_last_status": str(state.get("last_status", "") or ""),
+    }
+
+
 # â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 @app.route("/")
 def index():
-    return render_template("index.html", recipes_payload=_recipe_template_payload())
+    project_display_name = str(
+        os.getenv("CODEX_MANAGER_PROJECT_NAME")
+        or os.getenv("AI_MANAGER_PROJECT_NAME")
+        or "Codex Manager"
+    ).strip()
+    if not project_display_name:
+        project_display_name = "Codex Manager"
+    return render_template(
+        "index.html",
+        recipes_payload=_recipe_template_payload(),
+        project_display_name=project_display_name,
+    )
 
 @app.route("/api/health")
 def api_health():
     """Lightweight liveness endpoint for frontend reconnect handling."""
     global _pipeline_executor
     pipeline_running = bool(_pipeline_executor is not None and _pipeline_executor.is_running)
-    return jsonify(
-        {
-            "ok": True,
-            "time_epoch_ms": int(time.time() * 1000),
-            "chain_running": bool(executor.is_running),
-            "pipeline_running": pipeline_running,
-        }
-    )
+    payload = {
+        "ok": True,
+        "time_epoch_ms": int(time.time() * 1000),
+        "chain_running": bool(executor.is_running),
+        "pipeline_running": pipeline_running,
+    }
+    payload.update(_model_watchdog_health())
+    return jsonify(payload)
+
+
+@app.route("/api/system/model-watchdog/status")
+def api_model_watchdog_status():
+    """Return model-watchdog scheduler status and latest persisted state."""
+    return jsonify(_get_model_watchdog().status())
+
+
+@app.route("/api/system/model-watchdog/alerts")
+def api_model_watchdog_alerts():
+    """Return latest alert-oriented watchdog summary for frontend surfacing."""
+    return jsonify(_get_model_watchdog().latest_alerts())
+
+
+@app.route("/api/system/model-watchdog/run", methods=["POST"])
+def api_model_watchdog_run():
+    """Trigger an immediate model-watchdog run."""
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get("force", True))
+    result = _get_model_watchdog().run_once(force=force, reason="manual")
+    return jsonify(result)
+
+
+@app.route("/api/system/model-watchdog/config", methods=["POST"])
+def api_model_watchdog_config():
+    """Update model-watchdog schedule settings."""
+    data = request.get_json(silent=True) or {}
+    updates: dict[str, object] = {}
+    if "enabled" in data:
+        updates["enabled"] = bool(data.get("enabled"))
+    if "interval_hours" in data:
+        updates["interval_hours"] = data.get("interval_hours")
+    if "providers" in data:
+        updates["providers"] = data.get("providers")
+    if "request_timeout_seconds" in data:
+        updates["request_timeout_seconds"] = data.get("request_timeout_seconds")
+    if "auto_run_on_start" in data:
+        updates["auto_run_on_start"] = bool(data.get("auto_run_on_start"))
+    if "history_limit" in data:
+        updates["history_limit"] = data.get("history_limit")
+
+    watchdog = _get_model_watchdog()
+    config = watchdog.update_config(updates)
+    return jsonify({"status": "saved", "config": config, "watchdog": watchdog.status()})
+
+
+@app.route("/api/governance/source-policy")
+def api_governance_source_policy():
+    """Return GUI-managed source-domain allow/deny policy settings."""
+    return jsonify(_load_governance_policy())
+
+
+@app.route("/api/governance/source-policy", methods=["POST"])
+def api_governance_source_policy_save():
+    """Persist GUI-managed source-domain allow/deny policy settings."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required."}), 400
+    policy = _save_governance_policy(data)
+    return jsonify({"status": "saved", "policy": policy})
+
 
 # â”€â”€ Presets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1066,6 +2365,172 @@ def api_diagnostics_run_action():
     )
 
 
+# â”€â”€ Owner decision board â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+@app.route("/api/owner/decision-board")
+def api_owner_decision_board():
+    """Return the owner decision board for a repository."""
+    repo_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+    return jsonify(_load_decision_board(repo))
+
+
+@app.route("/api/owner/decision-board/generate", methods=["POST"])
+def api_owner_decision_board_generate():
+    """Generate/replace owner decision cards from monetization markdown."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    markdown = str(data.get("markdown") or "").strip()
+    source = str(data.get("source") or "manual").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+    if not markdown:
+        return jsonify({"error": "markdown is required."}), 400
+
+    cards = _parse_decision_cards(markdown)
+    warnings = _extract_governance_warnings(markdown)
+    payload = _save_decision_board(
+        repo,
+        {
+            "source": source,
+            "cards": cards,
+            "governance_warnings": warnings,
+        },
+    )
+    return jsonify(payload)
+
+
+@app.route("/api/owner/decision-board/decision", methods=["POST"])
+def api_owner_decision_board_decision():
+    """Update one decision card with approve/hold/deny and optional follow-up prompt."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    card_id = str(data.get("card_id") or "").strip()
+    decision = str(data.get("decision") or "").strip().lower()
+    owner_prompt = str(data.get("owner_prompt") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    if not card_id:
+        return jsonify({"error": "card_id is required."}), 400
+    if decision not in {"approve", "hold", "deny"}:
+        return jsonify({"error": "decision must be one of: approve, hold, deny"}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    board = _load_decision_board(repo)
+    cards_raw = board.get("cards")
+    cards = cards_raw if isinstance(cards_raw, list) else []
+    updated = False
+    for row in cards:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("id") or "").strip() != card_id:
+            continue
+        row["decision"] = decision
+        row["owner_prompt"] = owner_prompt
+        row["decided_at"] = datetime.utcnow().isoformat() + "Z"
+        updated = True
+        break
+    if not updated:
+        return jsonify({"error": f"Card not found: {card_id}"}), 404
+
+    board["cards"] = cards
+    board = _save_decision_board(repo, board)
+    return jsonify(board)
+
+
+# -- Owner todo/wishlist workspace --------------------------------------------
+
+
+@app.route("/api/owner/todo-wishlist")
+def api_owner_todo_wishlist():
+    """Read the owner todo/wishlist markdown for a repository."""
+    repo_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    path = _todo_wishlist_path(repo)
+    content = _read_todo_wishlist(repo)
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "path": str(path),
+            "exists": path.is_file(),
+            "has_open_items": _todo_wishlist_has_open_items(content),
+            "content": content,
+        }
+    )
+
+
+@app.route("/api/owner/todo-wishlist/save", methods=["POST"])
+def api_owner_todo_wishlist_save():
+    """Save owner-provided todo/wishlist markdown content."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    content = str(data.get("content") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+    path = _write_todo_wishlist(repo, content)
+    saved = _read_text_utf8_resilient(path)
+    return jsonify(
+        {
+            "status": "saved",
+            "repo_path": str(repo),
+            "path": str(path),
+            "has_open_items": _todo_wishlist_has_open_items(saved),
+            "content": saved,
+        }
+    )
+
+
+@app.route("/api/owner/todo-wishlist/suggest", methods=["POST"])
+def api_owner_todo_wishlist_suggest():
+    """Generate a suggested todo/wishlist markdown list using an AI model."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    owner_context = str(data.get("owner_context") or "").strip()
+    existing_markdown = str(data.get("existing_markdown") or "").strip()
+    model = str(data.get("model") or "gpt-5.3").strip() or "gpt-5.3"
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    if not existing_markdown:
+        existing_markdown = _read_todo_wishlist(repo)
+    suggested, warning = _suggest_todo_wishlist_markdown(
+        repo=repo,
+        model=model,
+        owner_context=owner_context,
+        existing_markdown=existing_markdown,
+    )
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "model": model,
+            "content": suggested,
+            "has_open_items": _todo_wishlist_has_open_items(suggested),
+            "warning": warning,
+        }
+    )
+
+
 # â”€â”€ Directory browser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
@@ -1136,11 +2601,37 @@ def api_create_project():
     initial_branch = data.get("initial_branch", "main").strip() or "main"
     git_name = (data.get("git_name") or data.get("gitName") or "").strip()
     git_email = (data.get("git_email") or data.get("gitEmail") or "").strip()
+    foundation_enabled = _safe_bool(data.get("foundation_enabled"), False)
+    foundational_prompt = str(data.get("foundational_prompt") or "").strip()
+    foundational_prompt_improved = str(data.get("foundational_prompt_improved") or "").strip()
+    foundation_assistants = _normalize_foundation_assistants(data.get("foundation_assistants"))
+    foundation_generate_docs = _safe_bool(data.get("foundation_generate_docs"), True)
+    foundation_bootstrap_once = _safe_bool(data.get("foundation_bootstrap_once"), True)
+    foundation_bootstrap_autorun = _safe_bool(data.get("foundation_bootstrap_autorun"), True)
+    licensing_enabled = _safe_bool(data.get("licensing_enabled"), False)
+    licensing_strategy = _normalize_licensing_strategy(data.get("licensing_strategy"))
+    licensing_include_commercial_tiers = _safe_bool(
+        data.get("licensing_include_commercial_tiers"),
+        licensing_strategy != "oss_only",
+    )
+    licensing_owner_contact_email = str(data.get("licensing_owner_contact_email") or "").strip()
+    licensing_legal_review_required = _safe_bool(
+        data.get("licensing_legal_review_required"),
+        True,
+    )
+    licensing_legal_signoff_approved = _safe_bool(
+        data.get("licensing_legal_signoff_approved"),
+        False,
+    )
+    licensing_legal_reviewer = str(data.get("licensing_legal_reviewer") or "").strip()
+    licensing_legal_notes = str(data.get("licensing_legal_notes") or "").strip()
 
     if not parent_dir:
         return jsonify({"error": "Parent directory is required"}), 400
     if not project_name:
         return jsonify({"error": "Project name is required"}), 400
+    if foundation_enabled and not (foundational_prompt or foundational_prompt_improved):
+        return jsonify({"error": "Foundational prompt is required when foundation setup is enabled."}), 400
 
     # Sanitize project name (allow alphanumeric, hyphens, underscores, dots)
     safe_name = "".join(c for c in project_name if c.isalnum() or c in "-_. ").strip()
@@ -1213,6 +2704,47 @@ def api_create_project():
                 encoding="utf-8",
             )
 
+        foundation_files: list[str] = []
+        foundation_prompt_used = ""
+        bootstrap_status: dict[str, object] | None = None
+        if foundation_enabled:
+            foundation_prompt_used = (
+                foundational_prompt_improved.strip() or foundational_prompt.strip()
+            )
+            foundation_files = _write_foundation_artifacts(
+                project_path=project_path,
+                project_name=project_name,
+                description=description,
+                foundational_prompt=foundation_prompt_used,
+                assistants=foundation_assistants,
+                generate_docs=foundation_generate_docs,
+                bootstrap_once=foundation_bootstrap_once,
+            )
+            if foundation_bootstrap_once and not foundation_bootstrap_autorun:
+                bootstrap_status = _write_foundation_bootstrap_status(
+                    project_path=project_path,
+                    project_name=project_name,
+                    status="pending",
+                    detail="Bootstrap request created. Run it manually when ready.",
+                    extra={"source": "project_create"},
+                )
+
+        licensing_files: list[str] = []
+        if licensing_enabled:
+            licensing_files = _write_licensing_packaging_artifacts(
+                project_path=project_path,
+                project_name=project_name,
+                description=description,
+                strategy=licensing_strategy,
+                include_commercial_tiers=licensing_include_commercial_tiers,
+                owner_contact_email=licensing_owner_contact_email,
+                legal_review_required=licensing_legal_review_required,
+                legal_signoff_approved=licensing_legal_signoff_approved,
+                legal_reviewer=licensing_legal_reviewer,
+                legal_notes=licensing_legal_notes,
+            )
+        legal_review_state = _load_legal_review_state(project_path) if licensing_enabled else {}
+
         # Initial commit
         subprocess.run(
             ["git", "add", "-A"],
@@ -1243,6 +2775,14 @@ def api_create_project():
             )
             remote_added = res.returncode == 0
 
+        if foundation_enabled and foundation_bootstrap_once and foundation_bootstrap_autorun:
+            bootstrap_status = _start_foundation_bootstrap_chain(
+                project_path=project_path,
+                project_name=project_name,
+                description=description,
+                source="project_create",
+            )
+
         return jsonify(
             {
                 "status": "created",
@@ -1251,6 +2791,22 @@ def api_create_project():
                 "initial_branch": initial_branch,
                 "remote_added": remote_added,
                 "remote_url": remote_url if remote_added else None,
+                "foundation_enabled": foundation_enabled,
+                "foundation_files": foundation_files,
+                "foundation_assistants": foundation_assistants,
+                "foundation_bootstrap_once": foundation_bootstrap_once,
+                "foundation_bootstrap_autorun": foundation_bootstrap_autorun,
+                "foundation_bootstrap_status": bootstrap_status or {},
+                "licensing_enabled": licensing_enabled,
+                "licensing_strategy": licensing_strategy,
+                "licensing_include_commercial_tiers": licensing_include_commercial_tiers,
+                "licensing_files": licensing_files,
+                "licensing_legal_review_required": bool(
+                    legal_review_state.get("required", licensing_legal_review_required)
+                ),
+                "licensing_legal_review_approved": bool(legal_review_state.get("approved", False)),
+                "licensing_legal_review_status": str(legal_review_state.get("status", "")),
+                "licensing_legal_review": legal_review_state,
             }
         )
 
@@ -1258,6 +2814,121 @@ def api_create_project():
         return jsonify({"error": f"Git command failed: {exc.stderr.strip()}"}), 500
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/project/legal-review/status")
+def api_project_legal_review_status():
+    """Return legal-review checkpoint status for a project repository."""
+    repo_path_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_path_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo_path = Path(repo_path_raw).expanduser().resolve()
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_path_raw}"}), 400
+    state = _load_legal_review_state(repo_path)
+    if not state:
+        return jsonify({"error": "Legal review state not found for this repository."}), 404
+    return jsonify(state)
+
+
+@app.route("/api/project/legal-review/signoff", methods=["POST"])
+def api_project_legal_review_signoff():
+    """Record or revoke legal-review sign-off for project licensing/pricing docs."""
+    data = request.get_json(silent=True) or {}
+    repo_path_raw = str(data.get("repo_path") or "").strip()
+    if not repo_path_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo_path = Path(repo_path_raw).expanduser().resolve()
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_path_raw}"}), 400
+
+    current = _load_legal_review_state(repo_path)
+    if not current:
+        return jsonify({"error": "Legal review state not found for this repository."}), 404
+
+    required = (
+        _safe_bool(data.get("required"), bool(current.get("required", True)))
+        if "required" in data
+        else bool(current.get("required", True))
+    )
+    approved = _safe_bool(data.get("approved"), bool(current.get("approved", False)))
+    reviewer = str(data.get("reviewer") or current.get("reviewer") or "").strip()
+    notes = str(data.get("notes") or current.get("notes") or "").strip()
+    files_raw = current.get("files")
+    files = files_raw if isinstance(files_raw, list) else []
+    project_name = str(current.get("project_name") or repo_path.name).strip() or repo_path.name
+    updated = _upsert_legal_review_state(
+        project_path=repo_path,
+        project_name=project_name,
+        required=required,
+        approved=approved,
+        reviewer=reviewer,
+        notes=notes,
+        files=files,
+        source="api_signoff",
+    )
+    return jsonify({"status": "saved", "legal_review": updated})
+
+
+@app.route("/api/project/foundation/improve", methods=["POST"])
+def api_improve_foundational_prompt():
+    """Improve a foundational prompt using selected assistants/models."""
+    data = request.get_json(silent=True) or {}
+    prompt = str(data.get("prompt") or "").strip()
+    project_name = str(data.get("project_name") or "Project").strip() or "Project"
+    assistants = _normalize_foundation_assistants(data.get("assistants"))
+    if not prompt:
+        return jsonify({"error": "Prompt is required."}), 400
+
+    payload = _improve_foundational_prompt(
+        prompt,
+        project_name=project_name,
+        assistants=assistants,
+    )
+    return jsonify(payload)
+
+
+@app.route("/api/project/foundation/bootstrap/run", methods=["POST"])
+def api_run_foundation_bootstrap():
+    """Start (or queue) the one-time foundational bootstrap chain for a repo."""
+    data = request.get_json(silent=True) or {}
+    repo_path_raw = str(data.get("repo_path") or "").strip()
+    if not repo_path_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo_path = Path(repo_path_raw).expanduser().resolve()
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_path_raw}"}), 400
+    request_path = _foundation_bootstrap_request_path(repo_path)
+    if not request_path.is_file():
+        return jsonify(
+            {
+                "error": (
+                    "Bootstrap request not found. "
+                    "Enable foundational bootstrap when creating the project first."
+                )
+            }
+        ), 404
+    project_name = str(data.get("project_name") or repo_path.name).strip() or repo_path.name
+    description = str(data.get("description") or "").strip()
+    status = _start_foundation_bootstrap_chain(
+        project_path=repo_path,
+        project_name=project_name,
+        description=description,
+        source="manual_api",
+    )
+    return jsonify({"status": "started", "bootstrap": status})
+
+
+@app.route("/api/project/foundation/bootstrap/status")
+def api_foundation_bootstrap_status():
+    """Return the current one-time bootstrap status for a repository."""
+    repo_path_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_path_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo_path = Path(repo_path_raw).expanduser().resolve()
+    if not repo_path.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_path_raw}"}), 400
+    return jsonify(_foundation_bootstrap_status(repo_path))
 
 
 # â”€â”€ Config persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1335,12 +3006,13 @@ def api_pipeline_phases():
     """Return available pipeline phases, defaults, and prompt info."""
     from codex_manager.pipeline.phases import (
         CUA_PHASES,
+        DEEP_RESEARCH_PHASES,
         DEFAULT_ITERATIONS,
         DEFAULT_PHASE_ORDER,
         PHASE_LOG_FILES,
-        PipelinePhase,
         SCIENCE_PHASES,
         SELF_IMPROVEMENT_PHASES,
+        PipelinePhase,
     )
 
     # Load prompt catalog for phase descriptions and prompt text
@@ -1358,12 +3030,18 @@ def api_pipeline_phases():
     except ValueError:
         implementation_idx = 0
     ordered_phases[implementation_idx:implementation_idx] = list(SCIENCE_PHASES)
+    try:
+        prioritization_idx = ordered_phases.index(PipelinePhase.PRIORITIZATION)
+    except ValueError:
+        prioritization_idx = 1 if ordered_phases else 0
+    ordered_phases[prioritization_idx:prioritization_idx] = list(DEEP_RESEARCH_PHASES)
     ordered_phases.extend(CUA_PHASES)
     ordered_phases.extend(SELF_IMPROVEMENT_PHASES)
 
     for phase in ordered_phases:
         key = phase.value
         is_science = phase in SCIENCE_PHASES
+        is_deep_research = phase in DEEP_RESEARCH_PHASES
         is_cua = phase in CUA_PHASES
         is_self_improvement = phase in SELF_IMPROVEMENT_PHASES
 
@@ -1386,6 +3064,7 @@ def api_pipeline_phases():
                 "default_iterations": DEFAULT_ITERATIONS.get(phase, 1),
                 "log_file": PHASE_LOG_FILES.get(phase, ""),
                 "is_science": is_science,
+                "is_deep_research": is_deep_research,
                 "is_cua": is_cua,
                 "is_self_improvement": is_self_improvement,
                 "description": description,
@@ -1466,6 +3145,21 @@ def api_pipeline_start():
         image_generation_enabled=gui_config.image_generation_enabled,
         image_provider=gui_config.image_provider,
         image_model=gui_config.image_model,
+        vector_memory_enabled=gui_config.vector_memory_enabled,
+        vector_memory_backend=gui_config.vector_memory_backend,
+        vector_memory_collection=gui_config.vector_memory_collection,
+        vector_memory_top_k=gui_config.vector_memory_top_k,
+        deep_research_enabled=gui_config.deep_research_enabled,
+        deep_research_providers=gui_config.deep_research_providers,
+        deep_research_max_age_hours=gui_config.deep_research_max_age_hours,
+        deep_research_dedupe=gui_config.deep_research_dedupe,
+        deep_research_native_enabled=gui_config.deep_research_native_enabled,
+        deep_research_retry_attempts=gui_config.deep_research_retry_attempts,
+        deep_research_daily_quota=gui_config.deep_research_daily_quota,
+        deep_research_max_provider_tokens=gui_config.deep_research_max_provider_tokens,
+        deep_research_budget_usd=gui_config.deep_research_budget_usd,
+        deep_research_openai_model=gui_config.deep_research_openai_model,
+        deep_research_google_model=gui_config.deep_research_google_model,
         self_improvement_enabled=gui_config.self_improvement_enabled,
         self_improvement_auto_restart=gui_config.self_improvement_auto_restart,
         timeout_per_phase=gui_config.timeout_per_phase,
@@ -2104,8 +3798,8 @@ def _resume_pipeline_from_checkpoint(checkpoint_path: str) -> tuple[bool, str]:
     resume_phase_index = int(payload.get("resume_phase_index") or 0)
 
     try:
-        from codex_manager.pipeline.phases import PipelineConfig
         from codex_manager.pipeline.orchestrator import PipelineOrchestrator
+        from codex_manager.pipeline.phases import PipelineConfig
 
         config = PipelineConfig(**config_payload)
         _pipeline_executor = PipelineOrchestrator(
@@ -2140,6 +3834,20 @@ def run_gui(
         format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    try:
+        watchdog = _get_model_watchdog()
+        if watchdog.start():
+            logger.info(
+                "Model watchdog active (interval=%sh providers=%s root=%s)",
+                watchdog.status().get("config", {}).get("interval_hours"),
+                ",".join(watchdog.status().get("config", {}).get("providers", [])),
+                _MODEL_WATCHDOG_ROOT,
+            )
+        else:
+            logger.info("Model watchdog disabled in config (%s)", _MODEL_WATCHDOG_ROOT)
+    except Exception:
+        logger.exception("Could not start model watchdog")
 
     if pipeline_resume_checkpoint:
         resumed, detail = _resume_pipeline_from_checkpoint(pipeline_resume_checkpoint)

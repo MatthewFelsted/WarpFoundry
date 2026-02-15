@@ -101,8 +101,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pipe_p.add_argument(
         "--brain-model",
         type=str,
-        default="gpt-5.2",
-        help="Model for the brain layer (default: gpt-5.2).",
+        default="gpt-5.3",
+        help="Model for the brain layer (default: gpt-5.3).",
     )
     pipe_p.add_argument(
         "--agent",
@@ -218,8 +218,8 @@ def _build_parser() -> argparse.ArgumentParser:
     opt_p.add_argument(
         "--model",
         type=str,
-        default="gpt-5.2",
-        help="Model to use for optimization (default: gpt-5.2).",
+        default="gpt-5.3",
+        help="Model to use for optimization (default: gpt-5.3).",
     )
     opt_p.add_argument(
         "--threshold",

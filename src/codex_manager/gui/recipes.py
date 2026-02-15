@@ -163,6 +163,92 @@ _RECIPE_DATA: dict[str, dict[str, object]] = {
             {"job_type": "testing", "loop_count": 2},
         ],
     },
+    "todo_wishlist_autopilot": {
+        "name": "To-Do/Wishlist Autopilot",
+        "description": "Generate a practical to-do list, then implement until complete",
+        "sequence": "Create To-Do/Wishlist -> Implement open items until done",
+        "steps": [
+            {
+                "name": "01 Build To-Do/Wishlist",
+                "job_type": "implementation",
+                "loop_count": 1,
+                "prompt_mode": "custom",
+                "custom_prompt": (
+                    "Create or refine `.codex_manager/owner/TODO_WISHLIST.md` as a high-signal "
+                    "execution backlog for this exact repository. Use markdown checklist items "
+                    "(`- [ ] ...`) grouped by priority. Preserve existing unchecked items unless "
+                    "you are clarifying wording, removing duplicates, or reordering for better "
+                    "execution flow (no large rewrites).\n\n"
+                    "Always make the backlog more useful in this run:\n"
+                    "1. Inspect the current repository state and infer missing opportunities "
+                    "(features, UX, reliability, test coverage, performance, security, DX, docs).\n"
+                    "2. Add net-new, repo-specific improvements when the list is thin, stale, or "
+                    "too generic.\n"
+                    "3. Ensure each open item is concrete and implementable in one focused pass.\n"
+                    "4. Avoid vague goals; include clear completion intent for each item.\n\n"
+                    "Quality bar:\n"
+                    "- Prioritize by value-to-effort and execution order.\n"
+                    "- Keep the final list actionable and non-redundant.\n"
+                    "- If there are no useful open items, propose at least 5 high-value new ones.\n"
+                    "- Do not invent work unrelated to improving this repository."
+                ),
+            },
+            {
+                "name": "02 Implement Open Wishlist Items",
+                "job_type": "implementation",
+                "loop_count": 20,
+                "prompt_mode": "custom",
+                "custom_prompt": (
+                    "Read `.codex_manager/owner/TODO_WISHLIST.md` and implement the first "
+                    "unchecked item (`- [ ] ...`) end-to-end. After implementation, mark it "
+                    "done as `- [x] ...` and add a short completion note. Repeat this process "
+                    "for each repetition. If there are no unchecked items left, output exactly "
+                    "`[TERMINATE_STEP]` on its own line and do not make code changes."
+                ),
+            },
+        ],
+    },
+    "feature_dream_autopilot": {
+        "name": "Feature Dream Autopilot",
+        "description": "Dream up high-value features, then implement all until complete",
+        "sequence": "Dream Up Feature List -> Implement features until done",
+        "steps": [
+            {
+                "name": "01 Dream Up Features",
+                "job_type": "implementation",
+                "loop_count": 1,
+                "prompt_mode": "custom",
+                "custom_prompt": (
+                    "Create or refine `.codex_manager/owner/FEATURE_DREAMS.md` as a feature-only "
+                    "execution list for this repository using markdown checkboxes (`- [ ]`). "
+                    "Preserve existing unchecked feature items unless deduplicating, clarifying, "
+                    "or reordering by value/effort.\n\n"
+                    "In this step, dream up meaningful repo-specific features and upgrades:\n"
+                    "1. Analyze current capabilities and identify missing user value.\n"
+                    "2. Propose 5-15 concrete, implementable feature ideas with clear outcomes.\n"
+                    "3. Prioritize by impact-to-effort and execution order.\n"
+                    "4. Avoid vague items; each item must be actionable in one focused implementation pass.\n\n"
+                    "If a useful feature list already exists, improve quality and fill strategic gaps "
+                    "instead of rewriting everything."
+                ),
+            },
+            {
+                "name": "02 Implement Dreamed Features",
+                "job_type": "implementation",
+                "loop_count": 30,
+                "prompt_mode": "custom",
+                "custom_prompt": (
+                    "Read `.codex_manager/owner/FEATURE_DREAMS.md` and implement the first unchecked "
+                    "feature item (`- [ ] ...`) end-to-end. After implementation, mark it done as "
+                    "`- [x] ...` and add a short completion note.\n\n"
+                    "Repeat this process for each repetition. Continue until there are no unchecked "
+                    "feature items left.\n\n"
+                    "If there are no unchecked items remaining, output exactly `[TERMINATE_STEP]` "
+                    "on its own line and do not make code changes."
+                ),
+            },
+        ],
+    },
 }
 
 

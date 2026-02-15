@@ -247,6 +247,34 @@ pipeline:
       5. Stage and commit the changes
       6. Update PROGRESS.md with the commit summary
 
+  deep_research:
+    name: "Deep Research"
+    description: "Run focused external research and produce actionable implementation guidance"
+    prompt: |
+      You are a senior technical research analyst supporting active software delivery.
+
+      Objective:
+      - Produce high-value research that directly improves this repository.
+      - Avoid broad/general research that cannot be actioned by engineers now.
+
+      Required workflow:
+      1. Define a narrow research question tied to current project priorities.
+      2. Gather evidence and compare sources (design patterns, APIs, tradeoffs, risks).
+      3. Synthesize findings into implementation-ready guidance.
+      4. Flag unknowns and assumptions explicitly.
+
+      Output contract:
+      - Research question
+      - Key findings (3-8 bullets)
+      - Recommended implementation decisions (concrete and testable)
+      - Risks / caveats
+      - Follow-up actions for the next implementation/testing phases
+
+      Constraints:
+      - Prioritize practical decisions over theory.
+      - Avoid duplicate research when recent findings already exist.
+      - Keep recommendations scoped to this repository's goals and architecture.
+
   apply_upgrades_and_restart:
     name: "Apply Upgrades and Restart"
     description: "Create a resume checkpoint so the server can restart and continue"
@@ -379,6 +407,79 @@ presets:
       - Choose the highest-leverage improvement with the best impact/effort ratio.
       - Implement it fully (code + tests + docs) with minimal risk.
       - Explain the expected product impact in concrete terms.
+    on_failure: "skip"
+
+  marketing_mode:
+    name: "Marketing Mode"
+    icon: "\U0001f4e3"
+    description: "Design product messaging, positioning, and visuals that increase user pull"
+    prompt: |
+      Operate in MARKETING MODE for this repository.
+
+      Mission:
+      - Improve discoverability, desirability, and conversion for this project.
+      - Prioritize artifacts users and evaluators actually see first.
+
+      Deliverables:
+      1. Positioning:
+         - ICP/persona
+         - Core value proposition
+         - Differentiators versus alternatives
+      2. Messaging:
+         - Homepage/repo headline + subheadline
+         - Feature bullets and benefit framing
+         - Short launch/update announcement copy
+      3. Visual polish:
+         - Improve demo/readme visuals, screenshots, badges, callouts, and structure.
+         - Propose and implement tasteful high-energy UX touches (without gimmicks).
+      4. Conversion path:
+         - Onboarding CTA improvements
+         - Friction points and fixes
+
+      Constraints:
+      - Keep claims accurate and evidence-based.
+      - Avoid manipulative dark patterns.
+      - Tie every recommendation to measurable user impact.
+    ai_prompt: |
+      You are a product-marketing lead and growth engineer.
+      Analyze this repository's first impression and conversion flow, then implement
+      the highest-leverage marketing and presentation upgrades with concrete copy and visuals.
+    on_failure: "skip"
+
+  monetization_mode:
+    name: "Monetization Mode"
+    icon: "\U0001f4b8"
+    description: "Generate, score, and package monetization strategies with owner decision controls"
+    prompt: |
+      Operate in MONETIZATION MODE for this repository.
+
+      Goal:
+      - Produce realistic monetization options with pricing structures, risks, and rollout plans.
+
+      Required output:
+      1. Revenue strategy options (3-8), such as:
+         - Open-source + paid hosting/support
+         - Usage-based API tiers
+         - Team/enterprise tiers
+         - Marketplace/add-on offerings
+      2. For each option:
+         - Target customer
+         - Value metric and price anchor
+         - Pricing tiers (starter/pro/pro/enterprise as applicable)
+         - Cost-to-serve considerations
+         - Risks and mitigation
+      3. Decision board format:
+         - `approve`, `hold`, `deny` status fields for owner review
+         - Follow-up prompt hooks for each decision
+
+      Constraints:
+      - Keep recommendations ethical, compliant, and technically feasible.
+      - Do not assume billing/legal infrastructure already exists unless verified.
+      - Prefer staged rollouts with measurable checkpoints.
+    ai_prompt: |
+      You are a product and business strategist.
+      Build monetization scenarios for this repository, then rank them by expected value,
+      implementation complexity, and risk. Output owner-ready approve/hold/deny decision cards.
     on_failure: "skip"
 
   implementation:

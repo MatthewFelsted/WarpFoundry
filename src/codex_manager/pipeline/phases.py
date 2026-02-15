@@ -20,6 +20,8 @@ CodexReasoningEffort = Literal["inherit", "low", "medium", "high", "xhigh"]
 CommitFrequency = Literal["per_phase", "per_cycle", "manual"]
 DependencyInstallPolicy = Literal["disallow", "project_only", "allow_system"]
 ImageProvider = Literal["openai", "google"]
+VectorMemoryBackend = Literal["chroma"]
+DeepResearchProviders = Literal["openai", "google", "both"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -38,6 +40,7 @@ class PipelinePhase(str, Enum):
     TESTING = "testing"
     DEBUGGING = "debugging"
     COMMIT = "commit"
+    DEEP_RESEARCH = "deep_research"
     APPLY_UPGRADES_AND_RESTART = "apply_upgrades_and_restart"
     PROGRESS_REVIEW = "progress_review"
 
@@ -59,6 +62,7 @@ PHASE_LOG_FILES: dict[PipelinePhase, str] = {
     PipelinePhase.TESTING: "TESTPLAN.md",
     PipelinePhase.DEBUGGING: "ERRORS.md",
     PipelinePhase.COMMIT: "PROGRESS.md",
+    PipelinePhase.DEEP_RESEARCH: "RESEARCH.md",
     PipelinePhase.APPLY_UPGRADES_AND_RESTART: "PROGRESS.md",
     PipelinePhase.PROGRESS_REVIEW: "PROGRESS.md",
     PipelinePhase.VISUAL_TEST: "TESTPLAN.md",
@@ -76,6 +80,7 @@ DEFAULT_ITERATIONS: dict[PipelinePhase, int] = {
     PipelinePhase.TESTING: 2,  # Design + run tests twice
     PipelinePhase.DEBUGGING: 3,  # Debug up to 3 rounds
     PipelinePhase.COMMIT: 1,  # One commit pass
+    PipelinePhase.DEEP_RESEARCH: 1,  # One deep-research sweep
     PipelinePhase.APPLY_UPGRADES_AND_RESTART: 1,  # One checkpoint/restart pass
     PipelinePhase.PROGRESS_REVIEW: 1,  # Review once
     PipelinePhase.VISUAL_TEST: 1,  # Visual test once per cycle
@@ -112,6 +117,11 @@ SCIENCE_PHASES: list[PipelinePhase] = [
 # Self-improvement restart checkpoint phase (optional)
 SELF_IMPROVEMENT_PHASES: list[PipelinePhase] = [
     PipelinePhase.APPLY_UPGRADES_AND_RESTART,
+]
+
+# Deep-research phase (optional, runs before prioritization by default)
+DEEP_RESEARCH_PHASES: list[PipelinePhase] = [
+    PipelinePhase.DEEP_RESEARCH,
 ]
 
 
@@ -164,6 +174,21 @@ class PipelineConfig(BaseModel):
     image_generation_enabled: bool = False
     image_provider: ImageProvider = "openai"
     image_model: str = "gpt-image-1"
+    vector_memory_enabled: bool = False
+    vector_memory_backend: VectorMemoryBackend = "chroma"
+    vector_memory_collection: str = ""
+    vector_memory_top_k: int = 8
+    deep_research_enabled: bool = False
+    deep_research_providers: DeepResearchProviders = "both"
+    deep_research_max_age_hours: int = 168
+    deep_research_dedupe: bool = True
+    deep_research_native_enabled: bool = False
+    deep_research_retry_attempts: int = 2
+    deep_research_daily_quota: int = 8
+    deep_research_max_provider_tokens: int = 12000
+    deep_research_budget_usd: float = 5.0
+    deep_research_openai_model: str = "gpt-5.3"
+    deep_research_google_model: str = "gemini-3-pro-preview"
     self_improvement_enabled: bool = False
     self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
@@ -185,7 +210,7 @@ class PipelineConfig(BaseModel):
 
     # Brain (thinking layer)
     brain_enabled: bool = False
-    brain_model: str = "gpt-5.2"
+    brain_model: str = "gpt-5.3"
 
     # Local-only mode — force all AI calls through Ollama
     local_only: bool = False
@@ -215,6 +240,24 @@ class PipelineConfig(BaseModel):
             )
         if not self.image_model.strip():
             self.image_model = _default_image_model(self.image_provider)
+        self.vector_memory_top_k = min(30, max(1, int(self.vector_memory_top_k or 8)))
+        self.deep_research_max_age_hours = max(1, int(self.deep_research_max_age_hours or 168))
+        self.deep_research_retry_attempts = min(
+            6, max(1, int(self.deep_research_retry_attempts or 2))
+        )
+        self.deep_research_daily_quota = min(100, max(1, int(self.deep_research_daily_quota or 8)))
+        self.deep_research_max_provider_tokens = min(
+            64000,
+            max(512, int(self.deep_research_max_provider_tokens or 12000)),
+        )
+        self.deep_research_budget_usd = max(0.0, float(self.deep_research_budget_usd or 5.0))
+        self.deep_research_openai_model = (
+            str(self.deep_research_openai_model or "gpt-5.3").strip() or "gpt-5.3"
+        )
+        self.deep_research_google_model = (
+            str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
+            or "gemini-3-pro-preview"
+        )
         return self
 
     def get_phase_order(self) -> list[PhaseConfig]:
@@ -232,6 +275,12 @@ class PipelineConfig(BaseModel):
             except ValueError:
                 insert_at = 0
             order[insert_at:insert_at] = list(SCIENCE_PHASES)
+        if self.deep_research_enabled:
+            try:
+                insert_at = order.index(PipelinePhase.PRIORITIZATION)
+            except ValueError:
+                insert_at = 1 if order else 0
+            order[insert_at:insert_at] = list(DEEP_RESEARCH_PHASES)
         if self.cua_enabled:
             order.extend(CUA_PHASES)
         if self.self_improvement_enabled:

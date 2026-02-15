@@ -53,6 +53,38 @@ _FALLBACK_PRESETS: dict[str, dict] = {
         ),
         "on_failure": "skip",
     },
+    "marketing_mode": {
+        "name": "Marketing Mode",
+        "icon": "\U0001f4e3",
+        "description": "Improve positioning, messaging, and visual conversion surfaces",
+        "prompt": (
+            "Operate in MARKETING MODE. Improve this project's positioning, first-impression "
+            "messaging, and conversion flow. Upgrade README/homepage copy, feature framing, "
+            "and high-impact visual presentation elements with accurate, user-centered claims."
+        ),
+        "ai_prompt": (
+            "You are a product-marketing lead and growth engineer. Analyze this repository's "
+            "onboarding and value communication, then implement the highest-leverage "
+            "marketing/presentation improvements with measurable impact goals."
+        ),
+        "on_failure": "skip",
+    },
+    "monetization_mode": {
+        "name": "Monetization Mode",
+        "icon": "\U0001f4b8",
+        "description": "Propose monetization strategies, pricing tiers, and decision-ready plans",
+        "prompt": (
+            "Operate in MONETIZATION MODE. Generate realistic monetization options for this "
+            "project (for example OSS+hosted tiers, API pricing, team/enterprise plans), "
+            "rank them by value/risk, and create an approve/hold/deny decision board."
+        ),
+        "ai_prompt": (
+            "You are a product/business strategist. Build multiple monetization scenarios "
+            "for this repository, with pricing structures, risks, and rollout sequencing. "
+            "Output owner-ready decision cards and follow-up prompts."
+        ),
+        "on_failure": "skip",
+    },
     "implementation": {
         "name": "Implementation",
         "icon": "\U0001f528",

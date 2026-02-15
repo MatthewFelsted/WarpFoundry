@@ -27,13 +27,16 @@ cua = [
     "anthropic>=0.30",
     "playwright>=1.40",
 ]
+memory = [
+    "chromadb>=0.5",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
     "pytest-asyncio>=0.23",
 ]
 all = [
-    "codex-manager[brain,cua,dev]",
+    "codex-manager[brain,cua,memory,dev]",
 ]
 
 [tool.hatch.build.targets.wheel]

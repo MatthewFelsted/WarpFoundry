@@ -44,6 +44,7 @@ from codex_manager.gui.models import ChainConfig, ChainState, StepResult, TaskSt
 from codex_manager.gui.presets import get_prompt
 from codex_manager.history_log import HistoryLogbook
 from codex_manager.ledger import KnowledgeLedger
+from codex_manager.memory.vector_store import ProjectVectorMemory
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,7 @@ class ChainExecutor:
         self._history_logbook: HistoryLogbook | None = None
         self._step_memory_path: Path | None = None
         self._step_memory_entries: list[dict[str, Any]] = []
+        self.vector_memory: ProjectVectorMemory | None = None
 
     # ------------------------------------------------------------------
     # Public controls
@@ -640,6 +642,77 @@ class ChainExecutor:
             return ""
         return "\n".join(lines)
 
+    def _build_vector_memory_context(self, *, step: TaskStep, query_hint: str) -> str:
+        """Return long-term memory context for the current step when enabled."""
+        vm = self.vector_memory
+        if vm is None or not vm.enabled:
+            return ""
+        query = "\n".join(
+            [
+                f"step: {step.name or step.job_type}",
+                f"job_type: {step.job_type}",
+                query_hint[:1200],
+            ]
+        ).strip()
+        if not query:
+            return ""
+        hits = vm.search(
+            query,
+            top_k=int(getattr(self.config, "vector_memory_top_k", 8) or 8),
+            categories=["chain_step", "pipeline_phase", "deep_research", "scientist_report"],
+        )
+        if not hits:
+            return ""
+        lines = ["## Similar Past Context (Vector Memory)", ""]
+        for hit in hits:
+            meta = hit.metadata or {}
+            category = str(meta.get("category") or "note").strip() or "note"
+            source = str(meta.get("source") or "").strip()
+            snippet = re.sub(r"\s+", " ", hit.document).strip()
+            if len(snippet) > 260:
+                snippet = snippet[:257].rstrip() + "..."
+            prefix = f"- [{category}] score={hit.score:.2f}"
+            if source:
+                prefix += f" source={source}"
+            lines.append(f"{prefix}: {snippet}")
+        return "\n".join(lines)
+
+    def _record_vector_memory_step(
+        self,
+        *,
+        loop_num: int,
+        step_idx: int,
+        step: TaskStep,
+        step_result: StepResult,
+        output_text: str,
+    ) -> None:
+        """Persist chain step outcomes into vector memory for cross-run reuse."""
+        vm = self.vector_memory
+        if vm is None or not vm.enabled:
+            return
+        summary = (
+            f"Chain step loop={loop_num} step={step_idx + 1} "
+            f"name={step.name or step.job_type} job_type={step.job_type} "
+            f"success={step_result.success} tests={step_result.test_outcome} "
+            f"files={step_result.files_changed} lines={step_result.net_lines_changed:+d}. "
+            f"Output: {self._truncate_text(output_text or step_result.error_message, 1600)}"
+        )
+        vm.add_note(
+            summary[:3500],
+            category="chain_step",
+            source="chain:step",
+            metadata={
+                "loop_number": loop_num,
+                "step_index": step_idx + 1,
+                "step_name": step.name or step.job_type,
+                "job_type": step.job_type,
+                "success": bool(step_result.success),
+                "test_outcome": step_result.test_outcome,
+                "files_changed": int(step_result.files_changed),
+                "net_lines_changed": int(step_result.net_lines_changed),
+            },
+        )
+
     def _archive_previous_outputs(self) -> None:
         """Move existing run outputs into timestamped history folders."""
         if self.output_dir is None or not self.output_dir.exists():
@@ -758,9 +831,28 @@ class ChainExecutor:
                 "max_loops": config.max_loops,
                 "unlimited": bool(config.unlimited),
                 "steps": [s.name or s.job_type for s in config.steps if s.enabled],
+                "vector_memory_enabled": bool(config.vector_memory_enabled),
+                "vector_memory_backend": config.vector_memory_backend,
             },
         )
         self._initialize_step_memory(repo)
+        self.vector_memory = ProjectVectorMemory(
+            repo,
+            enabled=bool(getattr(config, "vector_memory_enabled", False)),
+            backend=str(getattr(config, "vector_memory_backend", "chroma") or "chroma"),
+            collection_name=str(getattr(config, "vector_memory_collection", "") or ""),
+            default_top_k=int(getattr(config, "vector_memory_top_k", 8) or 8),
+        )
+        if bool(config.vector_memory_enabled):
+            if self.vector_memory.available:
+                self._log(
+                    "info",
+                    "Vector memory enabled: "
+                    f"backend={self.vector_memory.backend}, "
+                    f"collection={self.vector_memory.collection_name}",
+                )
+            else:
+                self._log("warn", f"Vector memory unavailable: {self.vector_memory.reason}")
         # #region agent log
         _agent_log(
             "chain.py:_run_loop",
@@ -1897,6 +1989,13 @@ class ChainExecutor:
             step_result=step_result,
             output_text=agent_output,
         )
+        self._record_vector_memory_step(
+            loop_num=loop_num,
+            step_idx=step_idx,
+            step=step,
+            step_result=step_result,
+            output_text=agent_output,
+        )
         self._record_history_note(
             "step_result",
             (
@@ -2387,6 +2486,13 @@ class ChainExecutor:
         if memory_context:
             context_parts.append("\n--- Recent Chain Memory ---")
             context_parts.append(memory_context)
+        vector_context = self._build_vector_memory_context(
+            step=step,
+            query_hint=base + "\n" + (memory_context or ""),
+        )
+        if vector_context:
+            context_parts.append("\n--- Long-Term Memory Context ---")
+            context_parts.append(vector_context)
         return base + "\n".join(context_parts)
 
     # ------------------------------------------------------------------

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -265,6 +268,17 @@ def test_pipeline_phases_api_marks_self_improvement_phase(client):
     assert restart_phase["is_self_improvement"] is True
 
 
+def test_pipeline_phases_api_marks_deep_research_phase(client):
+    resp = client.get("/api/pipeline/phases")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert isinstance(data, list)
+    deep_research = next((item for item in data if item.get("key") == "deep_research"), None)
+    assert deep_research is not None
+    assert deep_research["is_deep_research"] is True
+
+
 def test_pipeline_phases_api_places_science_before_implementation(client):
     resp = client.get("/api/pipeline/phases")
     data = resp.get_json()
@@ -286,6 +300,16 @@ def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
 
     monkeypatch.setattr(gui_app_module, "executor", _ChainExec())
     monkeypatch.setattr(gui_app_module, "_pipeline_executor", _PipeExec())
+    monkeypatch.setattr(
+        gui_app_module,
+        "_model_watchdog_health",
+        lambda: {
+            "model_watchdog_enabled": True,
+            "model_watchdog_running": True,
+            "model_watchdog_next_due_at": "2026-02-16T00:00:00Z",
+            "model_watchdog_last_status": "ok",
+        },
+    )
 
     resp = client.get("/api/health")
     data = resp.get_json()
@@ -296,6 +320,9 @@ def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
     assert isinstance(data["time_epoch_ms"], int)
     assert data["chain_running"] is True
     assert data["pipeline_running"] is False
+    assert data["model_watchdog_enabled"] is True
+    assert data["model_watchdog_running"] is True
+    assert data["model_watchdog_last_status"] == "ok"
 
 
 def test_chain_start_preflight_requires_image_provider_auth(client, monkeypatch, tmp_path: Path):
@@ -374,6 +401,7 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
     monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    monkeypatch.setitem(sys.modules, "chromadb", types.ModuleType("chromadb"))
 
     captured: dict[str, object] = {}
 
@@ -398,6 +426,14 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
         image_generation_enabled=True,
         image_provider="openai",
         image_model="gpt-image-1",
+        vector_memory_enabled=True,
+        vector_memory_backend="chroma",
+        vector_memory_collection="repo-memory",
+        vector_memory_top_k=12,
+        deep_research_enabled=True,
+        deep_research_providers="both",
+        deep_research_max_age_hours=240,
+        deep_research_dedupe=True,
         self_improvement_enabled=True,
         self_improvement_auto_restart=True,
     )
@@ -415,8 +451,170 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
     assert config.image_generation_enabled is True
     assert config.image_provider == "openai"
     assert config.image_model == "gpt-image-1"
+    assert config.vector_memory_enabled is True
+    assert config.vector_memory_backend == "chroma"
+    assert config.vector_memory_collection == "repo-memory"
+    assert config.vector_memory_top_k == 12
+    assert config.deep_research_enabled is True
+    assert config.deep_research_providers == "both"
+    assert config.deep_research_max_age_hours == 240
+    assert config.deep_research_dedupe is True
     assert config.self_improvement_enabled is True
     assert config.self_improvement_auto_restart is True
+
+
+def test_foundation_prompt_improve_endpoint_returns_payload(client, monkeypatch):
+    monkeypatch.setattr(
+        gui_app_module,
+        "_improve_foundational_prompt",
+        lambda prompt, project_name, assistants: {
+            "recommended_prompt": "improved",
+            "variants": [{"assistant": "codex", "model": "gpt-5.2", "prompt": "improved"}],
+            "warning": "",
+        },
+    )
+    resp = client.post(
+        "/api/project/foundation/improve",
+        json={
+            "prompt": "build a todo app",
+            "project_name": "Todo",
+            "assistants": ["codex"],
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["recommended_prompt"] == "improved"
+    assert data["variants"][0]["assistant"] == "codex"
+
+
+def test_write_licensing_packaging_artifacts_generates_expected_files(tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    generated = gui_app_module._write_licensing_packaging_artifacts(
+        project_path=repo,
+        project_name="Demo Project",
+        description="Demo",
+        strategy="dual_license",
+        include_commercial_tiers=True,
+        owner_contact_email="owner@example.com",
+    )
+    normalized = {Path(item).as_posix() for item in generated}
+    assert ".codex_manager/business/licensing_profile.json" in normalized
+    assert "docs/LICENSING_STRATEGY.md" in normalized
+    assert "docs/COMMERCIAL_OFFERING.md" in normalized
+    assert "docs/PRICING_TIERS.md" in normalized
+    assert (repo / ".codex_manager" / "business" / "licensing_profile.json").is_file()
+    assert (repo / "docs" / "LICENSING_STRATEGY.md").is_file()
+    assert (repo / "docs" / "COMMERCIAL_OFFERING.md").is_file()
+    assert (repo / "docs" / "PRICING_TIERS.md").is_file()
+
+
+def test_write_licensing_packaging_artifacts_records_pending_legal_review(tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    generated = gui_app_module._write_licensing_packaging_artifacts(
+        project_path=repo,
+        project_name="Demo Project",
+        description="Demo",
+        strategy="dual_license",
+        include_commercial_tiers=True,
+        owner_contact_email="owner@example.com",
+        legal_review_required=True,
+        legal_signoff_approved=False,
+        legal_reviewer="Owner",
+        legal_notes="Need counsel sign-off.",
+    )
+    normalized = {Path(item).as_posix() for item in generated}
+    assert ".codex_manager/business/legal_review.json" in normalized
+
+    state_path = repo / ".codex_manager" / "business" / "legal_review.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["required"] is True
+    assert state["approved"] is False
+    assert state["status"] == "pending"
+    assert state["publish_ready"] is False
+
+    strategy_text = (repo / "docs" / "LICENSING_STRATEGY.md").read_text(encoding="utf-8")
+    assert "Legal review checkpoint is **pending**" in strategy_text
+
+
+def test_extract_governance_warnings_flags_claims_and_source_quality():
+    text = (
+        "This launch is guaranteed and risk-free. "
+        "Read details at http://example.com/a and http://example.com/b"
+    )
+    warnings = gui_app_module._extract_governance_warnings(text)
+    assert any("overconfident" in warning.lower() for warning in warnings)
+    assert any("not https" in warning.lower() for warning in warnings)
+    assert any("low-trust source domains" in warning.lower() for warning in warnings)
+
+
+def test_governance_source_policy_endpoint_roundtrip(client, monkeypatch, tmp_path: Path):
+    policy_path = tmp_path / "source_policy.json"
+    monkeypatch.setattr(gui_app_module, "_GOVERNANCE_POLICY_PATH", policy_path)
+    monkeypatch.delenv("CODEX_MANAGER_RESEARCH_ALLOWED_DOMAINS", raising=False)
+    monkeypatch.delenv("CODEX_MANAGER_RESEARCH_BLOCKED_DOMAINS", raising=False)
+    monkeypatch.delenv("DEEP_RESEARCH_ALLOWED_SOURCE_DOMAINS", raising=False)
+    monkeypatch.delenv("DEEP_RESEARCH_BLOCKED_SOURCE_DOMAINS", raising=False)
+
+    save_resp = client.post(
+        "/api/governance/source-policy",
+        json={
+            "research_allowed_domains": "docs.python.org, openai.com",
+            "research_blocked_domains": "example.com",
+            "deep_research_allowed_domains": "arxiv.org",
+            "deep_research_blocked_domains": "x.com",
+        },
+    )
+    save_data = save_resp.get_json()
+    assert save_resp.status_code == 200
+    assert save_data
+    assert save_data["status"] == "saved"
+    assert policy_path.is_file()
+    assert os.getenv("CODEX_MANAGER_RESEARCH_ALLOWED_DOMAINS") == "docs.python.org,openai.com"
+    assert os.getenv("DEEP_RESEARCH_BLOCKED_SOURCE_DOMAINS") == "x.com"
+
+    load_resp = client.get("/api/governance/source-policy")
+    load_data = load_resp.get_json()
+    assert load_resp.status_code == 200
+    assert load_data
+    assert load_data["research_allowed_domains"] == "docs.python.org,openai.com"
+    assert load_data["research_blocked_domains"] == "example.com"
+    assert load_data["deep_research_allowed_domains"] == "arxiv.org"
+    assert load_data["deep_research_blocked_domains"] == "x.com"
+
+
+def test_project_legal_review_signoff_endpoint_updates_state(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    gui_app_module._upsert_legal_review_state(
+        project_path=repo,
+        project_name="repo",
+        required=True,
+        approved=False,
+        reviewer="",
+        notes="Pending",
+        files=["docs/LICENSING_STRATEGY.md"],
+        source="test",
+    )
+
+    resp = client.post(
+        "/api/project/legal-review/signoff",
+        json={
+            "repo_path": str(repo),
+            "approved": True,
+            "reviewer": "Counsel",
+            "notes": "Reviewed for launch.",
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data
+    state = data["legal_review"]
+    assert state["status"] == "approved"
+    assert state["approved"] is True
+    assert state["publish_ready"] is True
+    assert state["reviewer"] == "Counsel"
+    assert state["approved_at"]
 
 
 def test_system_restart_rejects_missing_checkpoint(client):
@@ -467,6 +665,130 @@ def test_system_restart_spawns_replacement_server_with_checkpoint(
     idx = command.index("--pipeline-resume-checkpoint")
     assert command[idx + 1] == str(checkpoint.resolve())
     assert "terminated" in observed
+
+
+def test_model_watchdog_status_endpoint_returns_watchdog_payload(client, monkeypatch):
+    class _WatchdogStub:
+        def status(self):
+            return {
+                "running": True,
+                "config": {"enabled": True, "interval_hours": 24},
+                "state": {"last_status": "ok"},
+                "next_due_at": "2026-02-16T00:00:00Z",
+            }
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+
+    resp = client.get("/api/system/model-watchdog/status")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["running"] is True
+    assert data["config"]["enabled"] is True
+    assert data["state"]["last_status"] == "ok"
+
+
+def test_model_watchdog_alerts_endpoint_returns_watchdog_alerts(client, monkeypatch):
+    class _WatchdogStub:
+        def latest_alerts(self):
+            return {
+                "has_alerts": True,
+                "alerts": [
+                    {
+                        "severity": "warn",
+                        "title": "openai models removed",
+                        "detail": "1 model disappeared",
+                        "action": "Migrate defaults",
+                    }
+                ],
+                "last_generated_at": "2026-02-15T10:00:00Z",
+                "status": {"running": True},
+            }
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+
+    resp = client.get("/api/system/model-watchdog/alerts")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["has_alerts"] is True
+    assert data["alerts"][0]["severity"] == "warn"
+
+
+def test_model_watchdog_run_endpoint_forwards_force_flag(client, monkeypatch):
+    observed: dict[str, object] = {}
+
+    class _WatchdogStub:
+        def run_once(self, *, force: bool = True, reason: str = "manual"):
+            observed["force"] = force
+            observed["reason"] = reason
+            return {"status": "ok", "reason": reason, "catalog_changed": False}
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+
+    resp = client.post("/api/system/model-watchdog/run", json={"force": False})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "ok"
+    assert observed["force"] is False
+    assert observed["reason"] == "manual"
+
+
+def test_model_watchdog_config_endpoint_updates_watchdog(client, monkeypatch):
+    observed: dict[str, object] = {}
+
+    class _WatchdogStub:
+        def __init__(self):
+            self._config = {
+                "enabled": True,
+                "interval_hours": 24,
+                "providers": ["openai"],
+                "request_timeout_seconds": 10,
+                "auto_run_on_start": True,
+                "history_limit": 100,
+            }
+
+        def update_config(self, updates):
+            observed["updates"] = updates
+            self._config.update(updates)
+            return dict(self._config)
+
+        def status(self):
+            return {
+                "running": bool(self._config["enabled"]),
+                "config": dict(self._config),
+                "state": {"last_status": "ok"},
+                "next_due_at": "2026-02-16T00:00:00Z",
+            }
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+
+    resp = client.post(
+        "/api/system/model-watchdog/config",
+        json={
+            "enabled": False,
+            "interval_hours": 72,
+            "providers": ["openai", "google"],
+            "request_timeout_seconds": 15,
+            "auto_run_on_start": False,
+            "history_limit": 200,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "saved"
+    assert observed["updates"]["enabled"] is False
+    assert observed["updates"]["interval_hours"] == 72
+    assert observed["updates"]["providers"] == ["openai", "google"]
+    assert observed["updates"]["request_timeout_seconds"] == 15
+    assert observed["updates"]["auto_run_on_start"] is False
+    assert observed["updates"]["history_limit"] == 200
 
 
 def test_chain_outputs_list_and_read_file(client, tmp_path: Path):
@@ -707,6 +1029,24 @@ def test_pipeline_logs_allows_scientist_report_file(client, monkeypatch):
     assert "science report" in data["content"]
 
 
+def test_pipeline_logs_allows_research_log_file(client, monkeypatch):
+    class _Tracker:
+        def read(self, filename):
+            return "research note\n" if filename == "RESEARCH.md" else ""
+
+    class _Exec:
+        tracker = _Tracker()
+
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _Exec())
+    resp = client.get("/api/pipeline/logs/RESEARCH.md")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["filename"] == "RESEARCH.md"
+    assert "research note" in data["content"]
+
+
 def test_pipeline_logs_reads_from_repo_path_without_active_executor(
     client, monkeypatch, tmp_path: Path
 ):
@@ -880,6 +1220,73 @@ def test_recipes_api_detail_rejects_unknown_id(client):
     assert resp.status_code == 404
     assert data
     assert data["error"] == "not found"
+
+
+def test_owner_todo_wishlist_get_and_save_roundtrip(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+
+    read_resp = client.get(
+        "/api/owner/todo-wishlist",
+        query_string={"repo_path": str(repo)},
+    )
+    read_data = read_resp.get_json()
+    assert read_resp.status_code == 200
+    assert read_data
+    assert read_data["exists"] is False
+    assert "To-Do and Wishlist" in read_data["content"]
+
+    save_resp = client.post(
+        "/api/owner/todo-wishlist/save",
+        json={
+            "repo_path": str(repo),
+            "content": "# To-Do\n\n- [ ] Ship MVP\n- [x] Initialize repo\n",
+        },
+    )
+    save_data = save_resp.get_json()
+    assert save_resp.status_code == 200
+    assert save_data
+    assert save_data["status"] == "saved"
+    assert save_data["has_open_items"] is True
+
+    reread_resp = client.get(
+        "/api/owner/todo-wishlist",
+        query_string={"repo_path": str(repo)},
+    )
+    reread_data = reread_resp.get_json()
+    assert reread_resp.status_code == 200
+    assert reread_data
+    assert reread_data["exists"] is True
+    assert "Ship MVP" in reread_data["content"]
+
+
+def test_owner_todo_wishlist_suggest_endpoint_uses_helper(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(
+        gui_app_module,
+        "_suggest_todo_wishlist_markdown",
+        lambda **_kwargs: (
+            "# To-Do\n\n## High Priority\n- [ ] Add feature flags\n",
+            "Generated by stub",
+        ),
+    )
+
+    resp = client.post(
+        "/api/owner/todo-wishlist/suggest",
+        json={
+            "repo_path": str(repo),
+            "model": "gpt-5.3",
+            "owner_context": "Focus on quality and UX",
+            "existing_markdown": "- [ ] Existing item",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["model"] == "gpt-5.3"
+    assert data["has_open_items"] is True
+    assert "feature flags" in data["content"]
+    assert data["warning"] == "Generated by stub"
 
 
 def test_chain_status_includes_actionable_stop_guidance(client, monkeypatch):
@@ -1262,8 +1669,10 @@ def test_docs_api_lists_curated_docs(client):
     assert "tutorial" in docs
     assert "cli_reference" in docs
     assert "troubleshooting" in docs
+    assert "model_watchdog" in docs
     assert docs["quickstart"]["filename"] == "QUICKSTART.md"
     assert docs["output_artifacts"]["filename"] == "OUTPUTS_AND_ARTIFACTS.md"
+    assert docs["model_watchdog"]["filename"] == "MODEL_WATCHDOG.md"
 
 
 def test_docs_api_returns_doc_content(client):

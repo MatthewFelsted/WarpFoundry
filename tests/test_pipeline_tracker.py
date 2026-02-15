@@ -22,7 +22,14 @@ def test_initialize_creates_templates_and_preserves_existing_content(tmp_path: P
     tracker = LogTracker(tmp_path / "repo")
     tracker.initialize()
 
-    for filename in ("WISHLIST.md", "TESTPLAN.md", "ERRORS.md", "EXPERIMENTS.md", "PROGRESS.md"):
+    for filename in (
+        "WISHLIST.md",
+        "TESTPLAN.md",
+        "ERRORS.md",
+        "EXPERIMENTS.md",
+        "PROGRESS.md",
+        "RESEARCH.md",
+    ):
         assert tracker.path_for(filename).exists()
 
     tracker.write("WISHLIST.md", "custom content")
@@ -64,6 +71,7 @@ def test_get_context_for_phase_builds_expected_sections(tmp_path: Path) -> None:
     tracker.write("TESTPLAN.md", "testplan content")
     tracker.write("ERRORS.md", "errors content")
     tracker.write("EXPERIMENTS.md", "experiments content")
+    tracker.write("RESEARCH.md", "research content")
     tracker.write("PROGRESS.md", "progress content")
 
     ledger = _LedgerStub(response="ledger block")
@@ -82,6 +90,7 @@ def test_get_context_for_phase_builds_expected_sections(tmp_path: Path) -> None:
     assert "## Current TESTPLAN.md" in progress_review
     assert "## Current ERRORS.md" in progress_review
     assert "## Current EXPERIMENTS.md" in progress_review
+    assert "## Current RESEARCH.md" in progress_review
 
     assert tracker.get_context_for_phase("not-a-phase") == ""
 
@@ -151,6 +160,16 @@ def test_initialize_science_creates_expected_files(tmp_path: Path) -> None:
     assert (science_dir / "prompts").is_dir()
     assert (science_dir / "outputs").is_dir()
     assert (science_dir / "snapshots").is_dir()
+
+
+def test_initialize_creates_agent_protocol_file(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    tracker = LogTracker(repo)
+    tracker.initialize()
+
+    protocol = repo / ".codex_manager" / "AGENT_PROTOCOL.md"
+    assert protocol.exists()
+    assert "Agent Protocol" in protocol.read_text(encoding="utf-8")
 
 
 def test_science_helpers_write_jsonl_and_artifacts(tmp_path: Path) -> None:
