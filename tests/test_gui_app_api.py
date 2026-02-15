@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -30,6 +31,38 @@ def _make_repo(tmp_path: Path, *, git: bool) -> Path:
     if git:
         (repo / ".git").mkdir()
     return repo
+
+
+def _run_git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def _make_remote_repo(tmp_path: Path, *, default_branch: str = "main") -> Path:
+    seed = tmp_path / "seed"
+    seed.mkdir(parents=True, exist_ok=True)
+    _run_git("init", "-b", default_branch, cwd=seed)
+    _run_git("config", "user.name", "GUI API Tests", cwd=seed)
+    _run_git("config", "user.email", "gui-api-tests@example.com", cwd=seed)
+
+    (seed / "README.md").write_text("# Seed Repo\n", encoding="utf-8")
+    _run_git("add", "README.md", cwd=seed)
+    _run_git("commit", "-m", "initial", cwd=seed)
+
+    _run_git("checkout", "-b", "dev", cwd=seed)
+    (seed / "DEV.md").write_text("dev branch\n", encoding="utf-8")
+    _run_git("add", "DEV.md", cwd=seed)
+    _run_git("commit", "-m", "dev branch", cwd=seed)
+    _run_git("checkout", default_branch, cwd=seed)
+
+    bare = tmp_path / "remote.git"
+    _run_git("clone", "--bare", str(seed), str(bare), cwd=tmp_path)
+    return bare
 
 
 def _chain_payload(repo_path: Path, **overrides):
@@ -2082,6 +2115,98 @@ def test_browse_dirs_accepts_non_string_path_payload(client, monkeypatch, tmp_pa
     assert data
     assert data["current"] == str(tmp_path.resolve())
     assert isinstance(data["dirs"], list)
+
+
+def test_project_clone_branches_returns_default_and_heads(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+
+    resp = client.post(
+        "/api/project/clone/branches",
+        json={"remote_url": str(remote)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["remote_url"] == str(remote)
+    assert data["default_branch"] == "main"
+    assert "main" in data["branches"]
+    assert "dev" in data["branches"]
+
+
+def test_project_clone_endpoint_clones_and_initializes_codex_manager(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    destination = tmp_path / "workspace"
+    destination.mkdir(parents=True, exist_ok=True)
+
+    resp = client.post(
+        "/api/project/clone",
+        json={
+            "remote_url": str(remote),
+            "destination_dir": str(destination),
+            "project_name": "cloned-repo",
+            "default_branch": "dev",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "cloned"
+    assert data["project_name"] == "cloned-repo"
+    assert data["requested_branch"] == "dev"
+    assert data["checked_out_branch"] == "dev"
+    assert data["codex_manager_initialized"] is True
+
+    cloned = Path(data["path"])
+    assert cloned.is_dir()
+    assert (cloned / ".git").is_dir()
+    assert (cloned / ".codex_manager" / "owner" / "TODO_WISHLIST.md").is_file()
+    assert (cloned / ".codex_manager" / "owner" / "FEATURE_DREAMS.md").is_file()
+    assert (cloned / ".codex_manager" / "owner" / "decision_board.json").is_file()
+    assert (cloned / ".codex_manager" / "logs").is_dir()
+    assert (cloned / ".codex_manager" / "outputs").is_dir()
+    assert (cloned / ".codex_manager" / "state").is_dir()
+
+
+def test_project_clone_endpoint_rejects_existing_target_path(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    destination = tmp_path / "workspace"
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "existing-repo").mkdir(parents=True, exist_ok=True)
+
+    resp = client.post(
+        "/api/project/clone",
+        json={
+            "remote_url": str(remote),
+            "destination_dir": str(destination),
+            "project_name": "existing-repo",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert "Path already exists" in data["error"]
+
+
+def test_project_clone_endpoint_rejects_dash_prefixed_remote_url(client, tmp_path: Path):
+    destination = tmp_path / "workspace"
+    destination.mkdir(parents=True, exist_ok=True)
+
+    resp = client.post(
+        "/api/project/clone",
+        json={
+            "remote_url": "--upload-pack=malicious",
+            "destination_dir": str(destination),
+            "project_name": "safe-name",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Remote URL is invalid" in data["error"]
 
 
 def test_diagnostics_reports_actionable_failures(client, monkeypatch):

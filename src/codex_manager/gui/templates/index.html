@@ -523,6 +523,20 @@ body.mode-medium .easy-only{display:none}
 .new-project-card details .form-row{margin-top:10px}
 .new-project-card .creation-result{margin-top:12px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--success);display:none}
 
+/* Clone Repo modal */
+#clone-repo-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2050;display:flex;align-items:center;justify-content:center;padding:24px}
+#clone-repo-overlay.hidden{display:none}
+.clone-repo-card{max-width:540px;width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.clone-repo-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.clone-repo-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.clone-repo-card .form-row{margin-bottom:12px}
+.clone-repo-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.clone-repo-card .status{font-size:12px;color:var(--text2);margin-top:8px;min-height:1.2em}
+.clone-repo-card .row-with-button{display:flex;gap:8px;align-items:center}
+.clone-repo-card .row-with-button input,.clone-repo-card .row-with-button select{flex:1}
+.clone-repo-card .row-with-button .btn{white-space:nowrap}
+.clone-repo-card .meta{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5}
+
 /* GitHub auth modal */
 #github-auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
 #github-auth-overlay.hidden{display:none}
@@ -809,6 +823,7 @@ body.mode-medium .easy-only{display:none}
       <button type="button" data-mode="expert" onclick="applyMode('expert')" title="Expert: full control">Expert</button>
     </div>
     <button class="btn" type="button" onclick="showGithubAuthModal()">GitHub Auth</button>
+    <button class="btn" type="button" onclick="showCloneRepoModal()">Clone Repo</button>
     <button class="btn btn-primary" onclick="showNewProjectModal()" style="white-space:nowrap">+ New Project</button>
     <select id="config-select" title="Saved configs">
       <option value="">Load config...</option>
@@ -2166,6 +2181,51 @@ body.mode-medium .easy-only{display:none}
 <!-- Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â -->
 <!-- JAVASCRIPT                                                    -->
 <!-- Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â -->
+<!-- Clone Repo modal -->
+<div id="clone-repo-overlay" class="hidden" onclick="if(event.target===this)hideCloneRepoModal()">
+  <div class="clone-repo-card" role="dialog" aria-modal="true" aria-labelledby="clone-repo-title">
+    <h2 id="clone-repo-title">Clone Remote Repo</h2>
+    <p class="subtitle">Paste a GitHub URL, choose a destination, select a branch, and initialize <code>.codex_manager</code>.</p>
+
+    <div class="form-row">
+      <label>GitHub Repo URL</label>
+      <input type="text" id="clone-remote-url" placeholder="https://github.com/owner/repo.git">
+    </div>
+
+    <div class="form-row">
+      <label>Destination Directory</label>
+      <div class="row-with-button">
+        <input type="text" id="clone-destination-dir" placeholder="C:\Users\you\Projects">
+        <button class="btn" type="button" onclick="openBrowse('clone-destination-dir')">Browse</button>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>Project Folder Name <span style="color:var(--text2)">(optional)</span></label>
+      <input type="text" id="clone-project-name" placeholder="repo (auto-detected if blank)">
+    </div>
+
+    <div class="form-row">
+      <label>Default Branch</label>
+      <div class="row-with-button">
+        <select id="clone-default-branch">
+          <option value="__remote_default__">Use remote default branch</option>
+        </select>
+        <button class="btn" type="button" onclick="loadCloneRemoteBranches()">Load Branches</button>
+      </div>
+      <div class="field-help" id="clone-branch-help">Load branch names from the remote (optional).</div>
+    </div>
+
+    <div class="meta">After clone, Codex Manager scaffolding is initialized under <code>.codex_manager/</code>.</div>
+    <div class="status" id="clone-repo-status"></div>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideCloneRepoModal()">Cancel</button>
+      <button class="btn btn-primary" id="clone-repo-btn" type="button" onclick="cloneRemoteRepo()">Clone Repo</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* Ã¢â€â‚¬Ã¢â€â‚¬ State Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 function cloneState(obj) {
@@ -2269,6 +2329,7 @@ const PERMISSION_PROFILE_SUMMARY = {
   custom: 'Manual settings are active. Review sandbox, approval policy, and bypass toggle.',
 };
 const CODEX_MODEL_LABEL = 'GPT-5.3-Codex';
+const CLONE_DEFAULT_BRANCH_SENTINEL = '__remote_default__';
 const _permissionProfileUiState = { chain: null, pipeline: null };
 const _modalFocusReturnTargets = Object.create(null);
 const _modalOverlayIds = [
@@ -2279,6 +2340,7 @@ const _modalOverlayIds = [
   'readonly-warning-overlay',
   'browse-overlay',
   'new-project-overlay',
+  'clone-repo-overlay',
   'github-auth-overlay',
   'todo-wishlist-overlay',
   'feature-dreams-overlay',
@@ -3397,6 +3459,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     hideTodoWishlistModal();
     hideFeatureDreamsModal();
     hideNewProjectModal();
+    hideCloneRepoModal();
     hideGithubAuthModal();
     browseClose();
   });
@@ -3831,6 +3894,175 @@ function showNewProjectModal() {
 
 function hideNewProjectModal() {
   _closeOverlay('new-project-overlay');
+}
+
+function _setCloneRepoStatus(text, tone = 'muted') {
+  const el = document.getElementById('clone-repo-status');
+  if (!el) return;
+  el.textContent = text;
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+function _setCloneBranchHelp(text, tone = 'muted') {
+  const el = document.getElementById('clone-branch-help');
+  if (!el) return;
+  el.textContent = text;
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+function _populateCloneBranchOptions(branches, defaultBranch = '') {
+  const selectEl = document.getElementById('clone-default-branch');
+  if (!selectEl) return;
+
+  const safeBranches = Array.isArray(branches)
+    ? branches
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+    : [];
+
+  const selectedDefault = String(defaultBranch || '').trim();
+  const options = [
+    {
+      value: CLONE_DEFAULT_BRANCH_SENTINEL,
+      label: selectedDefault
+        ? 'Use remote default branch (' + selectedDefault + ')'
+        : 'Use remote default branch',
+    },
+  ];
+
+  safeBranches.forEach(branch => {
+    options.push({ value: branch, label: branch });
+  });
+
+  selectEl.innerHTML = options
+    .map(option => '<option value="' + esc(option.value) + '">' + esc(option.label) + '</option>')
+    .join('');
+
+  if (selectedDefault && safeBranches.includes(selectedDefault)) {
+    selectEl.value = selectedDefault;
+  } else {
+    selectEl.value = CLONE_DEFAULT_BRANCH_SENTINEL;
+  }
+}
+
+function showCloneRepoModal() {
+  const statusEl = document.getElementById('clone-repo-status');
+  if (statusEl) statusEl.textContent = '';
+  const cloneBtn = document.getElementById('clone-repo-btn');
+  if (cloneBtn) cloneBtn.disabled = false;
+  _setCloneBranchHelp('Load branch names from the remote (optional).', 'muted');
+  _openOverlay('clone-repo-overlay', '#clone-remote-url');
+}
+
+function hideCloneRepoModal() {
+  _closeOverlay('clone-repo-overlay');
+}
+
+async function loadCloneRemoteBranches() {
+  const remoteUrl = document.getElementById('clone-remote-url').value.trim();
+  if (!remoteUrl) {
+    toast('Enter a remote URL first', 'error');
+    return;
+  }
+
+  _setCloneBranchHelp('Loading remote branches...', 'muted');
+  try {
+    const resp = await postJson('/api/project/clone/branches', {
+      remote_url: remoteUrl,
+    });
+    if (resp.error) {
+      _setCloneBranchHelp(resp.error, 'error');
+      toast('Could not load remote branches: ' + resp.error, 'error');
+      return;
+    }
+    const branches = Array.isArray(resp.branches) ? resp.branches : [];
+    const defaultBranch = String(resp.default_branch || '').trim();
+    _populateCloneBranchOptions(branches, defaultBranch);
+
+    if (defaultBranch) {
+      _setCloneBranchHelp(
+        'Loaded ' + branches.length + ' branches. Remote default: ' + defaultBranch + '.',
+        'ok',
+      );
+    } else if (branches.length) {
+      _setCloneBranchHelp('Loaded ' + branches.length + ' branches.', 'ok');
+    } else {
+      _setCloneBranchHelp('No remote branches were returned.', 'warn');
+    }
+  } catch (e) {
+    const message = e && e.message ? e.message : String(e);
+    _setCloneBranchHelp(message, 'error');
+    toast('Could not load remote branches: ' + message, 'error');
+  }
+}
+
+async function cloneRemoteRepo() {
+  const remoteUrl = document.getElementById('clone-remote-url').value.trim();
+  const destinationDir = document.getElementById('clone-destination-dir').value.trim();
+  const projectName = document.getElementById('clone-project-name').value.trim();
+  const branchSelect = document.getElementById('clone-default-branch');
+  const selectedBranch = String(branchSelect ? branchSelect.value : '').trim() || CLONE_DEFAULT_BRANCH_SENTINEL;
+
+  if (!remoteUrl) {
+    toast('Enter a remote URL', 'error');
+    return;
+  }
+  if (!destinationDir) {
+    toast('Enter a destination directory', 'error');
+    return;
+  }
+
+  const cloneBtn = document.getElementById('clone-repo-btn');
+  if (cloneBtn) cloneBtn.disabled = true;
+  _setCloneRepoStatus('Cloning repository...', 'muted');
+
+  try {
+    const resp = await postJson('/api/project/clone', {
+      remote_url: remoteUrl,
+      destination_dir: destinationDir,
+      project_name: projectName,
+      default_branch: selectedBranch,
+    });
+
+    if (resp.error) {
+      _setCloneRepoStatus(resp.error, 'error');
+      toast('Clone failed: ' + resp.error, 'error');
+      if (cloneBtn) cloneBtn.disabled = false;
+      return;
+    }
+
+    document.getElementById('repo-path').value = resp.path;
+    config.repo_path = resp.path;
+    validateRepo();
+
+    hideCloneRepoModal();
+    toast('Repository cloned at: ' + resp.path, 'success');
+    if (resp.checked_out_branch) {
+      toast('Checked out branch: ' + String(resp.checked_out_branch), 'info');
+    }
+    loadOwnerDecisionBoard();
+  } catch (e) {
+    const message = e && e.message ? e.message : String(e);
+    _setCloneRepoStatus(message, 'error');
+    toast('Clone failed: ' + message, 'error');
+    if (cloneBtn) cloneBtn.disabled = false;
+  }
 }
 
 function toggleFoundationOptions() {
@@ -6091,6 +6323,18 @@ function resetNewProjectForm() {
   hideNewProjectModal();
 }
 
+function resetCloneRepoForm() {
+  document.getElementById('clone-remote-url').value = '';
+  document.getElementById('clone-destination-dir').value = '';
+  document.getElementById('clone-project-name').value = '';
+  _populateCloneBranchOptions([], '');
+  _setCloneBranchHelp('Load branch names from the remote (optional).', 'muted');
+  _setCloneRepoStatus('', 'muted');
+  const cloneBtn = document.getElementById('clone-repo-btn');
+  if (cloneBtn) cloneBtn.disabled = false;
+  hideCloneRepoModal();
+}
+
 function resetTodoWishlistForm() {
   const repo = _activeRepoPath();
   document.getElementById('todo-wishlist-repo').value = repo;
@@ -6158,6 +6402,7 @@ async function clearEverything() {
 
   resetExecutionPanelsToDefaults();
   resetNewProjectForm();
+  resetCloneRepoForm();
   resetTodoWishlistForm();
   resetFeatureDreamsForm();
   closeRunPlanModal({ action: 'cancel' });

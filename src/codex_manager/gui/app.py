@@ -7,6 +7,7 @@ import logging
 import os
 import queue
 import re
+import shutil
 import string
 import subprocess
 import sys
@@ -134,6 +135,9 @@ _GITHUB_PAT_SECRET_KEY = "pat"
 _GITHUB_SSH_SECRET_KEY = "ssh_private_key"
 _GITHUB_AUTH_METHODS = frozenset({"https", "ssh"})
 _GITHUB_TEST_TIMEOUT_SECONDS = 20
+_GIT_REMOTE_QUERY_TIMEOUT_SECONDS = 20
+_GIT_CLONE_TIMEOUT_SECONDS = 180
+_DEFAULT_BRANCH_SENTINEL = "__remote_default__"
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
@@ -3704,6 +3708,296 @@ def api_browse_dirs():
 
 
 # â”€â”€ Project creation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+def _sanitize_project_folder_name(value: object) -> str:
+    """Return a filesystem-safe project folder name."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    cleaned = "".join(c for c in raw if c.isalnum() or c in "-_. ").strip(" .")
+    return cleaned
+
+
+def _derive_project_name_from_remote(remote_url: str) -> str:
+    """Infer a local project folder name from a git remote URL/path."""
+    raw = str(remote_url or "").strip()
+    if not raw:
+        return ""
+
+    candidate_path = raw
+    parsed = urlparse(raw)
+    if parsed.scheme and parsed.path:
+        candidate_path = parsed.path
+    elif "://" not in raw and ":" in raw:
+        left, right = raw.split(":", 1)
+        # Handle scp-like remotes (git@github.com:owner/repo.git)
+        if "@" in left and right.strip():
+            candidate_path = right
+
+    tail = candidate_path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if tail.lower().endswith(".git"):
+        tail = tail[:-4]
+    return _sanitize_project_folder_name(tail)
+
+
+def _normalize_clone_branch_name(value: object) -> str:
+    """Normalize a branch name supplied by the clone UI."""
+    branch = str(value or "").strip()
+    if not branch or branch == _DEFAULT_BRANCH_SENTINEL:
+        return ""
+    return branch
+
+
+def _valid_clone_branch_name(branch: str) -> bool:
+    """Return True when a branch name looks safe to pass to git clone."""
+    if not branch:
+        return True
+    if branch.startswith("-") or branch.endswith("/") or branch.endswith("."):
+        return False
+    if branch.endswith(".lock") or ".." in branch:
+        return False
+    if any(ch.isspace() for ch in branch):
+        return False
+    return not any(ch in branch for ch in "~^:?*[\\")
+
+
+def _extract_git_error_message(exc: subprocess.CalledProcessError) -> str:
+    """Extract the most useful stderr/stdout detail from a git subprocess error."""
+    stderr = str(exc.stderr or "").strip()
+    if stderr:
+        return stderr
+    stdout = str(exc.stdout or "").strip()
+    if stdout:
+        return stdout
+    return str(exc)
+
+
+def _list_git_remote_branches(remote_url: str) -> tuple[list[str], str]:
+    """Return (branches, default_branch) for a git remote."""
+    symref = subprocess.run(
+        ["git", "ls-remote", "--symref", remote_url, "HEAD"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_REMOTE_QUERY_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if symref.returncode != 0:
+        detail = str(symref.stderr or symref.stdout or "").strip()
+        raise RuntimeError(detail or "git ls-remote --symref failed")
+
+    default_branch = ""
+    for raw_line in symref.stdout.splitlines():
+        line = raw_line.replace("\t", " ").strip()
+        match = re.match(r"^ref:\s+refs/heads/(?P<branch>\S+)\s+HEAD$", line)
+        if match:
+            default_branch = str(match.group("branch") or "").strip()
+            break
+
+    heads = subprocess.run(
+        ["git", "ls-remote", "--heads", remote_url],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_REMOTE_QUERY_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if heads.returncode != 0:
+        detail = str(heads.stderr or heads.stdout or "").strip()
+        raise RuntimeError(detail or "git ls-remote --heads failed")
+
+    seen: set[str] = set()
+    for raw_line in heads.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split("\t", 1)
+        ref = parts[1] if len(parts) == 2 else ""
+        if not ref:
+            tokens = line.split()
+            if len(tokens) >= 2:
+                ref = tokens[1]
+        if not ref.startswith("refs/heads/"):
+            continue
+        branch = ref[len("refs/heads/") :].strip()
+        if branch:
+            seen.add(branch)
+
+    branches = sorted(seen, key=lambda item: item.casefold())
+    if default_branch and default_branch not in seen:
+        branches.insert(0, default_branch)
+
+    if not default_branch:
+        if "main" in seen:
+            default_branch = "main"
+        elif "master" in seen:
+            default_branch = "master"
+        elif branches:
+            default_branch = branches[0]
+
+    return branches, default_branch
+
+
+def _initialize_cloned_repo_codex_manager(repo_path: Path) -> list[str]:
+    """Create baseline .codex_manager artifacts for a freshly-cloned repository."""
+    created: list[str] = []
+    root = repo_path / ".codex_manager"
+
+    for subdir in ("outputs", "state"):
+        path = root / subdir
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+            created.append((Path(".codex_manager") / subdir).as_posix())
+
+    logs_path = root / "logs"
+    protocol_path = root / "AGENT_PROTOCOL.md"
+    logs_missing = not logs_path.exists()
+    protocol_missing = not protocol_path.exists()
+
+    from codex_manager.pipeline.tracker import LogTracker
+
+    LogTracker(repo_path).initialize()
+    if logs_missing:
+        created.append(".codex_manager/logs")
+    if protocol_missing:
+        created.append(".codex_manager/AGENT_PROTOCOL.md")
+
+    todo_path = _todo_wishlist_path(repo_path)
+    if not todo_path.is_file():
+        _write_todo_wishlist(repo_path, "")
+        created.append(todo_path.relative_to(repo_path).as_posix())
+
+    feature_path = _feature_dreams_path(repo_path)
+    if not feature_path.is_file():
+        _write_feature_dreams(repo_path, "")
+        created.append(feature_path.relative_to(repo_path).as_posix())
+
+    board_path = _owner_decision_board_path(repo_path)
+    if not board_path.is_file():
+        _save_decision_board(repo_path, _load_decision_board(repo_path))
+        created.append(board_path.relative_to(repo_path).as_posix())
+
+    return created
+
+
+@app.route("/api/project/clone/branches", methods=["POST"])
+def api_project_clone_branches():
+    """Return branch choices for a remote git repository."""
+    data = request.get_json(silent=True) or {}
+    remote_url = str(data.get("remote_url") or "").strip()
+    if not remote_url:
+        return jsonify({"error": "Remote URL is required."}), 400
+    if remote_url.startswith("-"):
+        return jsonify({"error": "Remote URL is invalid."}), 400
+
+    try:
+        branches, default_branch = _list_git_remote_branches(remote_url)
+        return jsonify(
+            {
+                "remote_url": remote_url,
+                "branches": branches,
+                "default_branch": default_branch,
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Timed out while querying remote branches."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not query remote branches: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/project/clone", methods=["POST"])
+def api_project_clone():
+    """Clone a remote repository into a selected destination and initialize .codex_manager."""
+    data = request.get_json(silent=True) or {}
+    remote_url = str(data.get("remote_url") or "").strip()
+    destination_dir = str(data.get("destination_dir") or "").strip()
+    requested_project_name = str(data.get("project_name") or "").strip()
+    branch_raw = str(data.get("default_branch") or "").strip()
+    requested_branch = _normalize_clone_branch_name(branch_raw)
+
+    if not remote_url:
+        return jsonify({"error": "Remote URL is required."}), 400
+    if remote_url.startswith("-"):
+        return jsonify({"error": "Remote URL is invalid."}), 400
+    if not destination_dir:
+        return jsonify({"error": "Destination directory is required."}), 400
+    if branch_raw and not _valid_clone_branch_name(requested_branch):
+        return jsonify({"error": f"Invalid branch name: {branch_raw}"}), 400
+
+    destination = Path(destination_dir).expanduser()
+    if not destination.is_dir():
+        return jsonify({"error": f"Destination directory does not exist: {destination_dir}"}), 400
+
+    inferred_name = requested_project_name or _derive_project_name_from_remote(remote_url)
+    safe_name = _sanitize_project_folder_name(inferred_name)
+    if not safe_name:
+        return jsonify(
+            {
+                "error": (
+                    "Project folder name is required. Provide project_name or use a remote URL "
+                    "that includes a repository name."
+                )
+            }
+        ), 400
+
+    project_path = destination / safe_name
+    if project_path.exists():
+        return jsonify({"error": f"Path already exists: {project_path}"}), 409
+
+    clone_args = ["git", "clone"]
+    if requested_branch:
+        clone_args.extend(["--branch", requested_branch])
+    clone_args.extend([remote_url, safe_name])
+
+    try:
+        subprocess.run(
+            clone_args,
+            cwd=str(destination),
+            capture_output=True,
+            text=True,
+            timeout=_GIT_CLONE_TIMEOUT_SECONDS,
+            check=True,
+        )
+        if not (project_path / ".git").is_dir():
+            return jsonify({"error": f"Clone failed: git metadata missing at {project_path}"}), 500
+
+        resolved_project_path = project_path.resolve()
+        created_artifacts = _initialize_cloned_repo_codex_manager(resolved_project_path)
+
+        checkout_branch = ""
+        with suppress(Exception):
+            branch_result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(resolved_project_path),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if branch_result.returncode == 0:
+                checkout_branch = str(branch_result.stdout or "").strip()
+
+        return jsonify(
+            {
+                "status": "cloned",
+                "path": str(resolved_project_path),
+                "remote_url": remote_url,
+                "project_name": safe_name,
+                "checked_out_branch": checkout_branch,
+                "requested_branch": requested_branch,
+                "codex_manager_initialized": True,
+                "codex_manager_created": created_artifacts,
+            }
+        )
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(project_path, ignore_errors=True)
+        return jsonify({"error": "Git clone timed out."}), 504
+    except subprocess.CalledProcessError as exc:
+        shutil.rmtree(project_path, ignore_errors=True)
+        return jsonify({"error": f"Git clone failed: {_extract_git_error_message(exc)}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/project/create", methods=["POST"])
