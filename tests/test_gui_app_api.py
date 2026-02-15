@@ -2295,10 +2295,17 @@ def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path
     assert clean_data
     assert clean_data["branch"] == "main"
     assert clean_data["has_tracking_branch"] is True
+    assert clean_data["tracking_remote"] == "origin"
     assert clean_data["ahead"] == 0
     assert clean_data["behind"] == 0
     assert clean_data["dirty"] is False
     assert clean_data["clean"] is True
+    assert "last_fetch_epoch_ms" in clean_data
+    assert "last_fetch_at" in clean_data
+    if clean_data["last_fetch_epoch_ms"] is not None:
+        assert isinstance(clean_data["last_fetch_epoch_ms"], int)
+        assert clean_data["last_fetch_epoch_ms"] > 0
+        assert str(clean_data["last_fetch_at"] or "").endswith("Z")
 
     (local / "UNTRACKED.txt").write_text("dirty file\n", encoding="utf-8")
     dirty_resp = client.get("/api/git/sync/status", query_string={"repo_path": str(local)})
@@ -2707,6 +2714,9 @@ def test_git_sync_fetch_then_pull_updates_behind_count(client, tmp_path: Path):
     assert fetch_data
     assert fetch_data["status"] == "fetched"
     assert fetch_data["sync"]["behind"] == 1
+    assert isinstance(fetch_data["sync"]["last_fetch_epoch_ms"], int)
+    assert fetch_data["sync"]["last_fetch_epoch_ms"] > 0
+    assert str(fetch_data["sync"]["last_fetch_at"] or "").endswith("Z")
 
     pull_resp = client.post("/api/git/sync/pull", json={"repo_path": str(local)})
     pull_data = pull_resp.get_json()

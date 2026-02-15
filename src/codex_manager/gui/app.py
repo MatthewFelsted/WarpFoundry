@@ -3822,6 +3822,45 @@ def _resolve_stash_ref(repo: Path) -> str:
     return str(stash_ref.stdout or "").strip()
 
 
+def _resolve_git_fetch_head_path(repo: Path) -> Path | None:
+    """Resolve FETCH_HEAD for a repository, returning None when unavailable."""
+    result = _run_git_sync_command(repo, "rev-parse", "--git-path", "FETCH_HEAD")
+    if result.returncode != 0:
+        return None
+
+    raw_path = str(result.stdout or "").strip()
+    if not raw_path:
+        return None
+
+    fetch_head = Path(raw_path)
+    if fetch_head.is_absolute():
+        return fetch_head
+    return (repo / fetch_head).resolve()
+
+
+def _git_last_fetch_metadata(repo: Path) -> tuple[int | None, str | None]:
+    """Return ``(epoch_ms, iso_utc)`` for FETCH_HEAD mtime when available."""
+    fetch_head = _resolve_git_fetch_head_path(repo)
+    if fetch_head is None:
+        return None, None
+
+    try:
+        stat_result = fetch_head.stat()
+    except OSError:
+        return None, None
+
+    if stat_result.st_mtime_ns <= 0:
+        return None, None
+
+    epoch_ms = stat_result.st_mtime_ns // 1_000_000
+    iso_utc = (
+        datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+    return epoch_ms, iso_utc
+
+
 def _extract_tracking_remote_name(tracking_branch: str) -> str:
     """Extract remote name from ``<remote>/<branch>`` tracking refs."""
     tracking = str(tracking_branch or "").strip()
@@ -3927,7 +3966,9 @@ def _git_clear_push_default_remote(repo: Path) -> None:
 def _git_sync_remotes_payload(repo: Path) -> dict[str, object]:
     """Return configured remotes plus default/tracking metadata for remote management UI."""
     status = _git_sync_status_payload(repo)
-    tracking_remote = _extract_tracking_remote_name(str(status.get("tracking_branch") or ""))
+    tracking_remote = str(status.get("tracking_remote") or "").strip()
+    if not tracking_remote:
+        tracking_remote = _extract_tracking_remote_name(str(status.get("tracking_branch") or ""))
     configured_default = _git_configured_push_default_remote(repo)
 
     names_result = _run_git_sync_command(repo, "remote")
@@ -4339,6 +4380,7 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
     )
     has_tracking_branch = tracking_result.returncode == 0
     tracking_branch = str(tracking_result.stdout or "").strip() if has_tracking_branch else ""
+    tracking_remote = _extract_tracking_remote_name(tracking_branch)
 
     ahead: int | None = None
     behind: int | None = None
@@ -4373,11 +4415,13 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
         if y != " ":
             unstaged_changes += 1
 
+    last_fetch_epoch_ms, last_fetch_at = _git_last_fetch_metadata(repo)
     dirty = bool(staged_changes or unstaged_changes or untracked_changes)
     return {
         "repo_path": str(repo),
         "branch": branch,
         "tracking_branch": tracking_branch,
+        "tracking_remote": tracking_remote,
         "has_tracking_branch": has_tracking_branch,
         "ahead": ahead,
         "behind": behind,
@@ -4386,6 +4430,8 @@ def _git_sync_status_payload(repo: Path) -> dict[str, object]:
         "staged_changes": staged_changes,
         "unstaged_changes": unstaged_changes,
         "untracked_changes": untracked_changes,
+        "last_fetch_epoch_ms": last_fetch_epoch_ms,
+        "last_fetch_at": last_fetch_at,
         "checked_at_epoch_ms": int(time.time() * 1000),
     }
 

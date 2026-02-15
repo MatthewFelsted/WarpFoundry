@@ -92,10 +92,21 @@ header{
 .git-sync-branch-input{min-width:135px;width:160px}
 .git-sync-option{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text2);padding:0 2px;white-space:nowrap}
 .git-sync-option input[type="checkbox"]{margin-right:0}
-.git-sync-indicator{font-size:11px;color:var(--text2);padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--bg);white-space:nowrap;min-height:24px;display:inline-flex;align-items:center;max-width:320px;overflow:hidden;text-overflow:ellipsis}
-.git-sync-indicator[data-tone="ok"]{color:var(--success);border-color:rgba(71,192,123,.55);background:rgba(71,192,123,.1)}
-.git-sync-indicator[data-tone="warn"]{color:var(--warning);border-color:rgba(223,170,88,.55);background:rgba(223,170,88,.12)}
-.git-sync-indicator[data-tone="error"]{color:var(--danger);border-color:rgba(255,111,111,.55);background:rgba(255,111,111,.1)}
+.git-sync-widget{display:flex;flex-direction:column;gap:5px;min-width:290px;max-width:430px;padding:7px 8px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(7,11,17,.72)}
+.git-sync-widget[data-tone="ok"]{border-color:rgba(71,192,123,.55);background:rgba(71,192,123,.1)}
+.git-sync-widget[data-tone="warn"]{border-color:rgba(223,170,88,.55);background:rgba(223,170,88,.12)}
+.git-sync-widget[data-tone="error"]{border-color:rgba(255,111,111,.55);background:rgba(255,111,111,.1)}
+.git-sync-widget-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.git-sync-widget-title{font-size:10px;color:var(--text3);letter-spacing:.45px;text-transform:uppercase;white-space:nowrap}
+.git-sync-widget-head .btn{padding:3px 8px;font-size:11px;min-height:0}
+.git-sync-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 10px}
+.git-sync-widget-item{display:flex;gap:5px;align-items:center;min-width:0;font-size:11px}
+.git-sync-widget-key{color:var(--text3);font-size:10px;letter-spacing:.2px;text-transform:uppercase;white-space:nowrap}
+.git-sync-widget-value{color:var(--text);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.git-sync-indicator{font-size:11px;color:var(--text2);min-height:1.1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.git-sync-indicator[data-tone="ok"]{color:var(--success)}
+.git-sync-indicator[data-tone="warn"]{color:var(--warning)}
+.git-sync-indicator[data-tone="error"]{color:var(--danger)}
 
 /* Docs modal */
 #docs-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2500;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -856,7 +867,8 @@ body.mode-medium .easy-only{display:none}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
-  .git-sync-indicator{max-width:100%}
+  .git-sync-widget{width:100%;max-width:100%;min-width:0}
+  .git-sync-widget-grid{grid-template-columns:1fr}
   #toast-stack{right:12px;bottom:12px}
   .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal{max-height:88vh}
   .science-cards{grid-template-columns:1fr}
@@ -953,7 +965,19 @@ body.mode-medium .easy-only{display:none}
         <input id="git-sync-allow-dirty-switch" type="checkbox">
         allow dirty switch
       </label>
-      <span class="git-sync-indicator" id="git-sync-indicator" data-tone="muted" title="Select a repository path to view sync status">No repo selected</span>
+      <div class="git-sync-widget" id="git-sync-widget" data-tone="muted" title="Select a repository path to view sync status">
+        <div class="git-sync-widget-head">
+          <span class="git-sync-widget-title">Sync Status</span>
+          <button class="btn" id="git-sync-refresh-btn" type="button" onclick="refreshGitSyncStatusNow()">Refresh</button>
+        </div>
+        <div class="git-sync-widget-grid">
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">Branch</span><span class="git-sync-widget-value" id="git-sync-widget-branch">n/a</span></span>
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">Remote</span><span class="git-sync-widget-value" id="git-sync-widget-remote">none</span></span>
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">Ahead/Behind</span><span class="git-sync-widget-value" id="git-sync-widget-ahead-behind">n/a</span></span>
+          <span class="git-sync-widget-item"><span class="git-sync-widget-key">Last Fetch</span><span class="git-sync-widget-value" id="git-sync-widget-last-fetch">never</span></span>
+        </div>
+        <span class="git-sync-indicator" id="git-sync-indicator" data-tone="muted" title="Select a repository path to view sync status">No repo selected</span>
+      </div>
     </div>
     <button class="btn" type="button" onclick="showGithubAuthModal()">GitHub Auth</button>
     <button class="btn" type="button" onclick="showCloneRepoModal()">Clone Repo</button>
@@ -3790,12 +3814,82 @@ function _activeRepoPathForGitSync() {
 }
 
 function _setGitSyncIndicator(text, tone = 'muted', title = '') {
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  const widget = document.getElementById('git-sync-widget');
+  if (widget) {
+    widget.dataset.tone = toneValue;
+  }
   const el = document.getElementById('git-sync-indicator');
   if (!el) return;
-  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
   el.dataset.tone = toneValue;
   el.textContent = String(text || '');
   el.title = String(title || text || '');
+}
+
+function _setGitSyncWidgetValue(elementId, value, title = '') {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.textContent = String(value || '');
+  el.title = String(title || value || '');
+}
+
+function _clearGitSyncWidgetDetails() {
+  _setGitSyncWidgetValue('git-sync-widget-branch', 'n/a', 'No active repository selected.');
+  _setGitSyncWidgetValue('git-sync-widget-remote', 'none', 'No upstream tracking remote configured.');
+  _setGitSyncWidgetValue('git-sync-widget-ahead-behind', 'n/a', 'Ahead/behind counts are unavailable.');
+  _setGitSyncWidgetValue('git-sync-widget-last-fetch', 'never', 'No fetch metadata available yet.');
+}
+
+function _formatGitSyncLastFetch(sync) {
+  const epochRaw = sync ? sync.last_fetch_epoch_ms : null;
+  const epochMs = Number(epochRaw);
+  if (!Number.isFinite(epochMs) || epochMs <= 0) {
+    return {
+      label: 'never',
+      title: 'No fetch metadata available yet. Run Fetch, Pull, or Stash + Pull.',
+    };
+  }
+
+  const when = new Date(epochMs);
+  if (Number.isNaN(when.getTime())) {
+    return {
+      label: 'unknown',
+      title: 'Last fetch time is present but could not be parsed.',
+    };
+  }
+
+  const minutesAgo = Math.max(0, Math.floor((Date.now() - epochMs) / 60000));
+  let ageLabel = 'just now';
+  if (minutesAgo === 1) ageLabel = '1 minute ago';
+  else if (minutesAgo > 1 && minutesAgo < 60) ageLabel = String(minutesAgo) + ' minutes ago';
+  else if (minutesAgo >= 60 && minutesAgo < 120) ageLabel = '1 hour ago';
+  else if (minutesAgo >= 120 && minutesAgo < 1440) ageLabel = String(Math.floor(minutesAgo / 60)) + ' hours ago';
+  else if (minutesAgo >= 1440 && minutesAgo < 2880) ageLabel = '1 day ago';
+  else if (minutesAgo >= 2880) ageLabel = String(Math.floor(minutesAgo / 1440)) + ' days ago';
+
+  const localLabel = when.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const localFull = when.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const utcRaw = String((sync && sync.last_fetch_at) || '').trim();
+  const titleParts = [];
+  if (utcRaw) titleParts.push('UTC: ' + utcRaw);
+  titleParts.push('Local: ' + localFull);
+  titleParts.push('Age: ' + ageLabel);
+  return {
+    label: localLabel,
+    title: titleParts.join('\n'),
+  };
 }
 
 function _setGitSyncPullRequestUrl(rawUrl) {
@@ -3910,7 +4004,15 @@ function _gitSyncAllowDirtySwitchEnabled() {
 function _syncGitSyncButtonState() {
   const hasRepoPath = !!_activeRepoPathForGitSync();
   const disabled = !hasRepoPath || !!gitSyncBusyAction;
-  ['git-sync-fetch-btn', 'git-sync-pull-btn', 'git-sync-push-btn', 'git-sync-stash-pull-btn', 'git-sync-commit-panel-btn', 'git-sync-remotes-btn'].forEach(id => {
+  [
+    'git-sync-fetch-btn',
+    'git-sync-pull-btn',
+    'git-sync-push-btn',
+    'git-sync-stash-pull-btn',
+    'git-sync-commit-panel-btn',
+    'git-sync-remotes-btn',
+    'git-sync-refresh-btn',
+  ].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
   });
@@ -3941,6 +4043,8 @@ function _syncGitSyncButtonState() {
 function _renderGitSyncState(sync) {
   const branch = String((sync && sync.branch) || 'HEAD').trim() || 'HEAD';
   const trackingBranch = String((sync && sync.tracking_branch) || '').trim();
+  const trackingRemote = String((sync && sync.tracking_remote) || '').trim()
+    || (trackingBranch.includes('/') ? trackingBranch.split('/', 1)[0].trim() : '');
   const aheadRaw = sync ? sync.ahead : null;
   const behindRaw = sync ? sync.behind : null;
   const aheadKnown = aheadRaw !== null && aheadRaw !== undefined && Number.isFinite(Number(aheadRaw));
@@ -3957,18 +4061,46 @@ function _renderGitSyncState(sync) {
     : 'no upstream';
   const dirtyLabel = dirty ? ('dirty (' + changeCount + ')') : 'clean';
   const summary = branch + ' | ' + divergence + ' | ' + dirtyLabel;
+  const lastFetch = _formatGitSyncLastFetch(sync);
 
   let tone = 'ok';
   if (!trackingBranch || !aheadKnown || !behindKnown) tone = 'muted';
   if (dirty || (behindKnown && behind > 0)) tone = 'warn';
 
+  _setGitSyncWidgetValue(
+    'git-sync-widget-branch',
+    branch,
+    'Current branch: ' + branch,
+  );
+  _setGitSyncWidgetValue(
+    'git-sync-widget-remote',
+    trackingRemote || 'none',
+    trackingBranch
+      ? ('Tracking branch: ' + trackingBranch)
+      : 'No upstream tracking branch configured.',
+  );
+  _setGitSyncWidgetValue(
+    'git-sync-widget-ahead-behind',
+    (aheadKnown && behindKnown) ? (ahead + ' / ' + behind) : 'n/a',
+    (aheadKnown && behindKnown)
+      ? ('Ahead: ' + ahead + ', Behind: ' + behind)
+      : 'Ahead/behind unavailable (set upstream tracking to enable).',
+  );
+  _setGitSyncWidgetValue(
+    'git-sync-widget-last-fetch',
+    lastFetch.label,
+    lastFetch.title,
+  );
+
   let title = 'Branch: ' + branch;
-  title += '\nTracking: ' + (trackingBranch || 'none');
+  title += '\nTracking branch: ' + (trackingBranch || 'none');
+  title += '\nTracking remote: ' + (trackingRemote || 'none');
   if (aheadKnown && behindKnown) {
     title += '\nAhead: ' + ahead + ', Behind: ' + behind;
   } else {
     title += '\nAhead/Behind: unavailable (set upstream tracking to enable)';
   }
+  title += '\nLast fetch: ' + lastFetch.label;
   title += '\nChanges: staged ' + staged + ', unstaged ' + unstaged + ', untracked ' + untracked;
 
   _setGitSyncIndicator(summary, tone, title);
@@ -4000,6 +4132,7 @@ async function refreshGitSyncStatus(opts = {}) {
     gitCommitWorkflowState = null;
     _setGitSyncPullRequestUrl('');
     _clearGitSyncBranchOptions();
+    _clearGitSyncWidgetDetails();
     _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
     if (_isGitRemoteModalOpen()) {
       _clearGitRemoteView('Set a repository path first.');
@@ -4023,6 +4156,7 @@ async function refreshGitSyncStatus(opts = {}) {
   }
   if (response.error) {
     gitSyncState = null;
+    _clearGitSyncWidgetDetails();
     const message = String(response.error || 'Unknown error');
     _setGitSyncIndicator(message, 'error', message);
     if (!opts.silent) toast('Could not load git sync status: ' + message, 'error');
@@ -4089,6 +4223,16 @@ async function refreshGitSyncBranches(opts = {}) {
 
 async function refreshGitSyncBranchesNow() {
   await refreshGitSyncBranches({ silent: false, force: true });
+}
+
+async function refreshGitSyncStatusNow() {
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'warn');
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+    return;
+  }
+  await refreshGitSyncStatus({ repoPath, silent: false, force: true });
 }
 
 async function _runGitSyncAction(actionKey) {
