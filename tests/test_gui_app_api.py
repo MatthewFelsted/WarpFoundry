@@ -1884,6 +1884,12 @@ def test_index_includes_git_branch_switcher_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
+    assert 'id="git-sync-open-pr-btn"' in html
+    assert 'onclick="gitSyncOpenPullRequest()"' in html
+    assert 'id="git-sync-copy-pr-btn"' in html
+    assert 'onclick="gitSyncCopyPullRequestUrl()"' in html
+    assert "function gitSyncOpenPullRequest()" in html
+    assert "async function gitSyncCopyPullRequestUrl()" in html
     assert 'id="git-sync-branch-select"' in html
     assert 'id="git-sync-branch-refresh-btn"' in html
     assert 'onclick="refreshGitSyncBranchesNow()"' in html
@@ -2476,6 +2482,8 @@ def test_git_sync_push_pushes_local_commit(client, tmp_path: Path):
     assert data
     assert data["status"] == "pushed"
     assert data["set_upstream"] is False
+    assert data["pull_request"]["available"] is False
+    assert data["pull_request_url"] == ""
     assert data["sync"]["ahead"] == 0
     assert data["sync"]["behind"] == 0
     assert data["sync"]["dirty"] is False
@@ -2510,6 +2518,53 @@ def test_git_sync_push_with_set_upstream_for_new_branch(client, tmp_path: Path):
 
     upstream = _run_git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}", cwd=local).stdout
     assert upstream.strip() == "origin/feature/sync-push-upstream"
+
+
+def test_git_sync_push_returns_pull_request_url_for_github_remote(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    sync_payload = {
+        "branch": "feature/pr-helper",
+        "tracking_branch": "origin/feature/pr-helper",
+        "has_tracking_branch": True,
+        "ahead": 0,
+        "behind": 0,
+        "dirty": False,
+        "staged_changes": 0,
+        "unstaged_changes": 0,
+        "untracked_changes": 0,
+    }
+
+    monkeypatch.setattr(gui_app_module, "_resolve_git_sync_repo", lambda _raw: (repo, "", 200))
+    monkeypatch.setattr(gui_app_module, "_git_sync_status_payload", lambda _repo: dict(sync_payload))
+
+    def _fake_run_git_sync(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        if args[:1] == ("push",):
+            return subprocess.CompletedProcess(["git", *args], 0, stdout="ok", stderr="")
+        if args == ("remote", "get-url", "origin"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                0,
+                stdout="https://github.com/example/demo-repo.git\n",
+                stderr="",
+            )
+        if args == ("symbolic-ref", "--short", "refs/remotes/origin/HEAD"):
+            return subprocess.CompletedProcess(["git", *args], 0, stdout="origin/main\n", stderr="")
+        return subprocess.CompletedProcess(["git", *args], 1, stdout="", stderr="unexpected")
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run_git_sync)
+
+    resp = client.post("/api/git/sync/push", json={"repo_path": str(repo)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    expected_url = "https://github.com/example/demo-repo/compare/main...feature%2Fpr-helper?expand=1"
+    assert data["pull_request_url"] == expected_url
+    assert data["pull_request"]["available"] is True
+    assert data["pull_request"]["url"] == expected_url
+    assert data["pull_request"]["base_branch"] == "main"
+    assert data["pull_request"]["head_branch"] == "feature/pr-helper"
 
 
 def test_git_sync_push_reports_auth_failures_with_recovery_steps(client, monkeypatch, tmp_path: Path):

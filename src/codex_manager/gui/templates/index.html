@@ -842,6 +842,22 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" id="git-sync-fetch-btn" type="button" onclick="gitSyncFetch()">Fetch</button>
       <button class="btn" id="git-sync-pull-btn" type="button" onclick="gitSyncPull()">Pull</button>
       <button class="btn btn-success" id="git-sync-push-btn" type="button" onclick="gitSyncPush()">Push</button>
+      <button
+        class="btn"
+        id="git-sync-open-pr-btn"
+        type="button"
+        onclick="gitSyncOpenPullRequest()"
+        title="Push a branch to generate a GitHub pull request URL."
+        disabled
+      >Open PR</button>
+      <button
+        class="btn"
+        id="git-sync-copy-pr-btn"
+        type="button"
+        onclick="gitSyncCopyPullRequestUrl()"
+        title="Push a branch to generate a GitHub pull request URL."
+        disabled
+      >Copy PR URL</button>
       <label class="git-sync-option" for="git-sync-set-upstream" title="When enabled, Push runs with --set-upstream for the current branch.">
         <input id="git-sync-set-upstream" type="checkbox">
         set upstream
@@ -2354,6 +2370,7 @@ const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 let gitSyncState = null;
 let gitSyncBranchState = null;
 let gitSyncBusyAction = '';
+let gitSyncPullRequestUrl = '';
 let gitSyncRefreshTimer = null;
 let gitSyncPollTimer = null;
 const GIT_SYNC_POLL_INTERVAL_MS = 20000;
@@ -3567,6 +3584,20 @@ function _setGitSyncIndicator(text, tone = 'muted', title = '') {
   el.title = String(title || text || '');
 }
 
+function _setGitSyncPullRequestUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  gitSyncPullRequestUrl = url;
+  const defaultTitle = 'Push a branch to generate a GitHub pull request URL.';
+  const openBtn = document.getElementById('git-sync-open-pr-btn');
+  if (openBtn) {
+    openBtn.title = url ? ('Open pull request URL: ' + url) : defaultTitle;
+  }
+  const copyBtn = document.getElementById('git-sync-copy-pr-btn');
+  if (copyBtn) {
+    copyBtn.title = url ? ('Copy pull request URL: ' + url) : defaultTitle;
+  }
+}
+
 function _gitSyncBranchValue(branchType, branchName) {
   const type = String(branchType || '').trim().toLowerCase();
   const branch = String(branchName || '').trim();
@@ -3669,6 +3700,11 @@ function _syncGitSyncButtonState() {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
   });
+  const hasPullRequestUrl = !!String(gitSyncPullRequestUrl || '').trim();
+  const openPrBtn = document.getElementById('git-sync-open-pr-btn');
+  if (openPrBtn) openPrBtn.disabled = disabled || !hasPullRequestUrl;
+  const copyPrBtn = document.getElementById('git-sync-copy-pr-btn');
+  if (copyPrBtn) copyPrBtn.disabled = disabled || !hasPullRequestUrl;
   const setUpstream = document.getElementById('git-sync-set-upstream');
   if (setUpstream) setUpstream.disabled = disabled;
   const branchRefreshBtn = document.getElementById('git-sync-branch-refresh-btn');
@@ -3744,6 +3780,7 @@ async function refreshGitSyncStatus(opts = {}) {
   if (!repoPath) {
     gitSyncState = null;
     gitSyncBranchState = null;
+    _setGitSyncPullRequestUrl('');
     _clearGitSyncBranchOptions();
     _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
     _syncGitSyncButtonState();
@@ -3866,6 +3903,9 @@ async function _runGitSyncAction(actionKey) {
   };
   const action = actions[actionKey];
   if (!action) return;
+  if (actionKey === 'push') {
+    _setGitSyncPullRequestUrl('');
+  }
 
   gitSyncBusyAction = actionKey;
   _syncGitSyncButtonState();
@@ -3890,8 +3930,25 @@ async function _runGitSyncAction(actionKey) {
   if (actionKey === 'stash_pull' && response.stash_created) {
     toast('Local changes were stashed before pull.', 'info');
   }
-  if (actionKey === 'push' && response.set_upstream && response.remote && response.branch) {
-    toast('Upstream set to ' + response.remote + '/' + response.branch + '.', 'info');
+  if (actionKey === 'push') {
+    const pullRequest = (response && typeof response.pull_request === 'object' && response.pull_request)
+      ? response.pull_request
+      : null;
+    const pullRequestUrl = String(
+      (pullRequest && pullRequest.url) || response.pull_request_url || ''
+    ).trim();
+    _setGitSyncPullRequestUrl(pullRequestUrl);
+    if (response.set_upstream && response.remote && response.branch) {
+      toast('Upstream set to ' + response.remote + '/' + response.branch + '.', 'info');
+    }
+    if (pullRequestUrl) {
+      toast('Pull request URL ready. Use Open PR or Copy PR URL.', 'info');
+    } else {
+      const reason = String((pullRequest && pullRequest.reason) || '').trim();
+      if (reason) {
+        toast('Push completed; PR URL unavailable: ' + reason, 'info');
+      }
+    }
   }
 
   if (response.sync) {
@@ -3922,6 +3979,48 @@ async function gitSyncPull() {
 
 async function gitSyncPush() {
   await _runGitSyncAction('push');
+}
+
+function gitSyncOpenPullRequest() {
+  const url = String(gitSyncPullRequestUrl || '').trim();
+  if (!url) {
+    toast('No pull request URL is available yet.', 'info');
+    _syncGitSyncButtonState();
+    return;
+  }
+  const popup = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!popup) {
+    toast('Could not open pull request URL. Use Copy PR URL instead.', 'error');
+    return;
+  }
+  toast('Opened pull request URL.', 'success');
+}
+
+async function gitSyncCopyPullRequestUrl() {
+  const url = String(gitSyncPullRequestUrl || '').trim();
+  if (!url) {
+    toast('No pull request URL is available yet.', 'info');
+    _syncGitSyncButtonState();
+    return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    }
+    toast('Copied pull request URL.', 'success');
+  } catch (e) {
+    toast('Could not copy pull request URL.', 'error');
+  }
 }
 
 async function gitSyncStashAndPull() {
@@ -3983,6 +4082,7 @@ async function gitSyncSwitchBranch() {
     gitSyncState = response.sync;
     _renderGitSyncState(response.sync);
   }
+  _setGitSyncPullRequestUrl('');
   if (response.branches) {
     gitSyncBranchState = response.branches;
     _renderGitSyncBranchOptions(response.branches, {
@@ -4043,6 +4143,7 @@ async function gitSyncCreateBranch() {
     gitSyncState = response.sync;
     _renderGitSyncState(response.sync);
   }
+  _setGitSyncPullRequestUrl('');
   if (response.branches) {
     gitSyncBranchState = response.branches;
     _renderGitSyncBranchOptions(response.branches, {

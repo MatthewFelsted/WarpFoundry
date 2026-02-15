@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Timer
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from flask import Flask, Response, jsonify, render_template, request
@@ -3908,6 +3908,92 @@ def _git_push_error_status_and_label(error_type: str) -> tuple[int, str]:
     return 502, "unexpected"
 
 
+def _git_remote_url(repo: Path, remote: str) -> str:
+    """Return the configured URL for a git remote, or empty string when unknown."""
+    result = _run_git_sync_command(repo, "remote", "get-url", remote)
+    if result.returncode != 0:
+        return ""
+    return str(result.stdout or "").strip()
+
+
+def _github_repo_web_base(remote_url: str) -> str:
+    """Return ``https://github.com/<owner>/<repo>`` for GitHub remotes, else empty string."""
+    raw = str(remote_url or "").strip()
+    if not raw:
+        return ""
+
+    host = ""
+    path = ""
+    parsed = urlparse(raw)
+    if parsed.scheme and parsed.netloc:
+        host = str(parsed.hostname or parsed.netloc).strip().lower()
+        path = str(parsed.path or "").strip()
+    elif "://" not in raw and ":" in raw:
+        left, right = raw.split(":", 1)
+        # Handle scp-like SSH remotes (git@github.com:owner/repo.git)
+        if "@" in left and right.strip():
+            host = left.split("@", 1)[1].strip().lower()
+            path = "/" + right.strip()
+
+    if host != "github.com":
+        return ""
+
+    normalized = path.strip().strip("/")
+    if normalized.lower().endswith(".git"):
+        normalized = normalized[:-4]
+    parts = [part.strip() for part in normalized.split("/") if part.strip()]
+    if len(parts) < 2:
+        return ""
+
+    owner = parts[0]
+    repo_name = parts[1]
+    return f"https://github.com/{owner}/{repo_name}"
+
+
+def _git_remote_default_branch(repo: Path, remote: str) -> str:
+    """Resolve ``<remote>/HEAD`` to the remote's default branch when available."""
+    result = _run_git_sync_command(repo, "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD")
+    if result.returncode != 0:
+        return ""
+    remote_head = str(result.stdout or "").strip()
+    prefix = f"{remote}/"
+    if remote_head.startswith(prefix):
+        return remote_head[len(prefix) :].strip()
+    return remote_head.rsplit("/", 1)[-1].strip()
+
+
+def _git_push_pull_request_payload(*, repo: Path, remote: str, head_branch: str) -> dict[str, object]:
+    """Build pull-request helper payload for GitHub remotes after push."""
+    head = str(head_branch or "").strip()
+    remote_url = _git_remote_url(repo, remote)
+    repo_web_base = _github_repo_web_base(remote_url)
+    default_branch = _git_remote_default_branch(repo, remote) if repo_web_base else ""
+    payload: dict[str, object] = {
+        "provider": "github",
+        "remote": remote,
+        "remote_url": remote_url,
+        "base_branch": default_branch or None,
+        "head_branch": head or None,
+        "available": False,
+        "url": "",
+    }
+
+    if not repo_web_base:
+        payload["reason"] = "Remote is not a github.com repository URL."
+        return payload
+    if not head:
+        payload["reason"] = "Current branch is unavailable."
+        return payload
+
+    if default_branch and default_branch != head:
+        compare_ref = f"{quote(default_branch, safe='')}...{quote(head, safe='')}"
+    else:
+        compare_ref = quote(head, safe="")
+    payload["url"] = f"{repo_web_base}/compare/{compare_ref}?expand=1"
+    payload["available"] = True
+    return payload
+
+
 def _git_sync_status_payload(repo: Path) -> dict[str, object]:
     """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
     branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -4712,6 +4798,11 @@ def api_git_sync_push():
             if set_upstream
             else "Push completed."
         )
+        pull_request = _git_push_pull_request_payload(
+            repo=repo,
+            remote=remote,
+            head_branch=branch,
+        )
         return jsonify(
             {
                 "status": "pushed",
@@ -4722,6 +4813,8 @@ def api_git_sync_push():
                 "message": message,
                 "stdout": _truncate_command_output(push_result.stdout),
                 "stderr": _truncate_command_output(push_result.stderr),
+                "pull_request": pull_request,
+                "pull_request_url": str(pull_request.get("url") or ""),
                 "sync": _git_sync_status_payload(repo),
             }
         )
