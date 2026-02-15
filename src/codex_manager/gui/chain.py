@@ -12,7 +12,6 @@ import re
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -2398,60 +2397,66 @@ class ChainExecutor:
         brain: BrainManager,
         start_time: float,
     ) -> bool:
-        """Execute enabled steps in parallel using a thread pool.
+        """Execute enabled steps for a shared repository safely.
 
-        Each step runs in its own thread.  Since they all operate on the
-        same git repo, we commit/revert after *all* steps finish (not per
-        step) to avoid git conflicts.
-
-        Returns True if the loop should be aborted.
+        Parallel execution against a single working tree is unsafe because
+        each step may independently mutate files, commit, or reset state.
+        This method therefore falls back to deterministic sequential
+        execution while preserving the same stop/token accounting behavior.
         """
         if self._consume_stop_after_step_request(context="parallel batch"):
             return True
 
         self._log(
-            "info",
-            f"Running {len(enabled_steps)} steps in parallel (Codex + Claude Code)",
+            "warn",
+            "Parallel mode requested, but shared-repo step execution is race-prone. "
+            "Running this batch sequentially for correctness.",
         )
         self.state.current_step_name = f"Parallel batch ({len(enabled_steps)} steps)"
         self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
 
         # Map step id -> original index in config.steps
         step_index_map = {s.id: i for i, s in enumerate(config.steps)}
+        ordered_steps = sorted(enabled_steps, key=lambda step: step_index_map.get(step.id, 0))
+        for step in ordered_steps:
+            step_idx = step_index_map.get(step.id, 0)
+            agent_key = step.agent or "codex"
+            runner = runners.get(agent_key, runners["codex"])
+            step_label = step.name or step.job_type
+            step_loops = max(1, step.loop_count)
+            self.state.current_step = step_idx
+            for step_rep in range(1, step_loops + 1):
+                self._pause_event.wait()
+                if self._stop_event.is_set():
+                    self.state.stop_reason = "user_stopped"
+                    return True
+                if self._consume_stop_after_step_request(context="parallel batch repetition"):
+                    return True
 
-        futures_map: dict[object, tuple[int, TaskStep]] = {}
-        with ThreadPoolExecutor(max_workers=len(enabled_steps)) as pool:
-            for step in enabled_steps:
-                step_idx = step_index_map.get(step.id, 0)
-                agent_key = step.agent or "codex"
-                runner = runners.get(agent_key, runners["codex"])
+                rep_tag = f" (rep {step_rep}/{step_loops})" if step_loops > 1 else ""
+                self.state.current_step_name = f"{step_label}{rep_tag}"
+                self.state.current_step_started_at_epoch_ms = int(time.time() * 1000)
                 self._log(
                     "info",
-                    f"  Dispatching: {step.name or step.job_type} -> {runner.name}",
+                    f"  Running: {step_label} [{runner.name}]{rep_tag}",
                 )
-                fut = pool.submit(
-                    self._execute_step,
-                    runner,
-                    evaluator,
-                    repo,
-                    config,
-                    loop_num,
-                    step_idx,
-                    step,
-                    brain,
-                )
-                futures_map[fut] = (step_idx, step)
 
-            # Collect results as they complete
-            for fut in as_completed(futures_map):
-                step_idx, step = futures_map[fut]
                 try:
-                    result = fut.result()
+                    result = self._execute_step(
+                        runner,
+                        evaluator,
+                        repo,
+                        config,
+                        loop_num,
+                        step_idx,
+                        step,
+                        brain,
+                    )
                 except Exception as exc:
                     result = StepResult(
                         loop_number=loop_num,
                         step_index=step_idx,
-                        step_name=step.name or step.job_type,
+                        step_name=step_label,
                         job_type=step.job_type,
                         agent_used=step.agent,
                         agent_success=False,
@@ -2481,6 +2486,15 @@ class ChainExecutor:
                 self.state.elapsed_seconds = time.monotonic() - start_time
                 if self._check_strict_token_budget(config):
                     return True
+                if result.terminate_repeats and step_rep < step_loops:
+                    self._log(
+                        "info",
+                        (
+                            f"Skipping remaining repetitions for {step_label} "
+                            f"after {TERMINATE_STEP_TAG}."
+                        ),
+                    )
+                    break
         return self._consume_stop_after_step_request(context="parallel batch")
 
     # ------------------------------------------------------------------

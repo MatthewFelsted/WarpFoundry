@@ -264,6 +264,23 @@ class _CommitRunner:
         )
 
 
+class _CountingRunner:
+    name = "StubCodex"
+    calls: ClassVar[int] = 0
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        self.__class__.calls += 1
+        return RunResult(
+            success=True,
+            exit_code=0,
+            final_message=f"counted run {self.__class__.calls}",
+            usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+
 def test_chain_skips_remaining_repeats_after_terminate_tag(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
@@ -1080,3 +1097,52 @@ def test_chain_brain_logbook_init_failure_does_not_abort_run(monkeypatch, tmp_pa
     assert _TerminateRunner.calls == 1
     assert executor.state.total_steps_completed == 1
     assert executor.state.results
+
+
+def test_chain_parallel_mode_preserves_step_loop_counts(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _CountingRunner.calls = 0
+    monkeypatch.setattr(chain_module, "CodexRunner", _CountingRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Parallel loop-count guard",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        parallel_execution=True,
+        stop_on_convergence=False,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Discover",
+                job_type="feature_discovery",
+                prompt_mode="custom",
+                custom_prompt="Collect findings.",
+                loop_count=2,
+                enabled=True,
+                agent="codex",
+            ),
+            TaskStep(
+                name="Refine",
+                job_type="feature_discovery",
+                prompt_mode="custom",
+                custom_prompt="Refine findings.",
+                loop_count=3,
+                enabled=True,
+                agent="codex",
+            ),
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert _CountingRunner.calls == 5
+    assert executor.state.total_steps_completed == 5
+    assert len(executor.state.results) == 5
