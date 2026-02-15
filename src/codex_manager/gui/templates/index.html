@@ -377,6 +377,32 @@ summary:focus-visible{
 .results-table tr:last-child td{border-bottom:none}
 .results-table tr:hover td{background:var(--surface2)}
 .results-table td .state-card{margin:4px 0}
+.results-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.results-head .field-help{margin-top:2px}
+.run-compare-summary{font-size:12px;color:var(--text2);margin-top:6px}
+.run-compare-run-label{display:flex;flex-direction:column;gap:4px}
+.run-compare-badges{display:flex;flex-wrap:wrap;gap:4px}
+.run-compare-badge{
+  display:inline-block;
+  padding:2px 6px;
+  border-radius:10px;
+  font-size:10px;
+  border:1px solid var(--border-soft);
+  color:var(--text2);
+  background:rgba(160,190,228,.08);
+  text-transform:uppercase;
+  letter-spacing:.3px;
+}
+.run-compare-badge.best-overall{
+  border-color:rgba(71,192,123,.45);
+  color:var(--success);
+  background:rgba(71,192,123,.12);
+}
 .file-changes-cell{min-width:230px;max-width:420px}
 .file-changes-empty{color:var(--text2);font-size:12px}
 .file-changes-details{display:block}
@@ -1794,6 +1820,35 @@ body.mode-medium .easy-only{display:none}
         </thead>
         <tbody id="pipe-results-body">
           <tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="results-section">
+    <div class="results-head">
+      <h3>Recent Run Comparison</h3>
+      <button class="btn" type="button" onclick="refreshPipelineRunComparison()">Refresh</button>
+    </div>
+    <div class="run-compare-summary" id="pipe-run-compare-summary">
+      Compare recent finished runs to identify the most effective configuration.
+    </div>
+    <div class="results-wrap">
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>Ended</th>
+            <th>Run</th>
+            <th>Configuration</th>
+            <th>Duration</th>
+            <th>Tokens</th>
+            <th>Tests</th>
+            <th>Stop Reason</th>
+            <th>Commits</th>
+          </tr>
+        </thead>
+        <tbody id="pipe-run-compare-body">
+          <tr><td colspan="8"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -5731,6 +5786,8 @@ function resetExecutionPanelsToDefaults() {
   renderStopGuidance('pipe-stop-guidance', null, false);
   document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card">Configure phases and click Start Pipeline...</div>';
   document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
+  document.getElementById('pipe-run-compare-summary').textContent = 'Compare recent finished runs to identify the most effective configuration.';
+  document.getElementById('pipe-run-compare-body').innerHTML = '<tr><td colspan="8"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
   document.getElementById('pipe-show-debug-logs').checked = false;
 
   setLogContentState(document.getElementById('log-file-content'), 'Select a log file above to view its contents.');
@@ -5961,9 +6018,11 @@ function switchTab(tabId) {
     const repoPath = String(document.getElementById('pipe-repo-path').value || '').trim();
     if (repoPath) {
       schedulePipelineResumeRefresh(repoPath, { delayMs: 0, silent: true });
+      refreshPipelineRunComparison({ repoPath, silent: true });
     } else {
       pipelineResumeState = null;
       renderPipelineResumeCard();
+      refreshPipelineRunComparison({ repoPath: '', silent: true });
     }
   }
 }
@@ -6382,6 +6441,7 @@ function validatePipeRepo() {
     document.getElementById('pipe-repo-status').textContent = '';
     pipelineResumeState = null;
     renderPipelineResumeCard();
+    refreshPipelineRunComparison({ repoPath: '', silent: true });
     return;
   }
   pipeRepoTimeout = setTimeout(async () => {
@@ -6394,6 +6454,7 @@ function validatePipeRepo() {
       else                { el.textContent = '\u274c'; el.title = 'Path not found'; }
       maybeAutoEnableVectorMemory('pipeline', r);
       schedulePipelineResumeRefresh(path, { delayMs: 0, silent: true });
+      refreshPipelineRunComparison({ repoPath: path, silent: true });
     } catch(e) {}
   }, 400);
 }
@@ -6760,6 +6821,7 @@ async function pollPipeStatus() {
       pipelinePollTimer = null;
       if (pipelineSSE) { pipelineSSE.close(); pipelineSSE = null; }
       schedulePipelineResumeRefresh(pipeConfig.repo_path, { delayMs: 0, silent: true });
+      refreshPipelineRunComparison({ repoPath: pipeConfig.repo_path, silent: true });
     }
   } catch(e) {}
 }
@@ -6885,6 +6947,146 @@ function updatePipeResults(results) {
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Log File Viewer Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
+
+function _formatRunCompareTimestamp(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'n/a';
+  const ts = Date.parse(raw);
+  if (!Number.isFinite(ts)) return raw;
+  return new Date(ts).toLocaleString();
+}
+
+function _formatRunCompareDuration(value) {
+  const seconds = Number(value || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'n/a';
+  return _formatElapsedSeconds(Math.round(seconds));
+}
+
+function _runCompareBadgeLabel(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (key === 'best_overall') return 'Best Overall';
+  if (key === 'fastest') return 'Fastest';
+  if (key === 'lowest_tokens') return 'Lowest Tokens';
+  if (key === 'strongest_tests') return 'Strongest Tests';
+  return key || 'signal';
+}
+
+function _runCompareBadgeClass(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return key === 'best_overall' ? 'run-compare-badge best-overall' : 'run-compare-badge';
+}
+
+function _renderRunCompareBadges(badges) {
+  const items = Array.isArray(badges) ? badges : [];
+  if (!items.length) return '';
+  return '<div class="run-compare-badges">' + items.map(item => {
+    return '<span class="' + _runCompareBadgeClass(item) + '">' + esc(_runCompareBadgeLabel(item)) + '</span>';
+  }).join('') + '</div>';
+}
+
+function _runCompareTestsBadgeClass(run) {
+  const tests = (run && typeof run === 'object' && run.tests && typeof run.tests === 'object')
+    ? run.tests
+    : {};
+  const failed = Number(tests.failed || 0) + Number(tests.error || 0);
+  const passed = Number(tests.passed || 0);
+  const skipped = Number(tests.skipped || 0);
+  if (failed > 0) return 'badge-fail';
+  if (passed > 0) return 'badge-pass';
+  if (skipped > 0) return 'badge-skip';
+  return 'badge-error';
+}
+
+function renderPipelineRunComparison(payload) {
+  const body = document.getElementById('pipe-run-compare-body');
+  const summaryEl = document.getElementById('pipe-run-compare-summary');
+  if (!body || !summaryEl) return;
+
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const runs = Array.isArray(data.runs) ? data.runs : [];
+  if (!runs.length) {
+    const msg = data.message || 'No completed runs were found in history yet.';
+    body.innerHTML = '<tr><td colspan="8"><div class="state-card">' + esc(msg) + '</div></td></tr>';
+    summaryEl.textContent = msg;
+    return;
+  }
+
+  const bestBy = data.best_by && typeof data.best_by === 'object' ? data.best_by : {};
+  const bestOverallId = String(bestBy.overall_run_id || '').trim();
+  const bestOverall = runs.find(run => String(run.run_id || '') === bestOverallId) || null;
+  summaryEl.textContent = bestOverall
+    ? ('Best overall so far: ' + String(bestOverall.configuration || 'n/a'))
+    : 'Compare recent finished runs to identify the most effective configuration.';
+
+  body.innerHTML = runs.map(run => {
+    const scope = String(run.scope || '').trim().toLowerCase();
+    const scopeLabel = scope === 'pipeline' ? 'Pipeline' : 'Chain';
+    const mode = String(run.mode || 'unknown');
+    const testsSummary = String(run.tests_summary || 'n/a');
+    const stopReason = String(run.stop_reason || 'unknown');
+    const tokens = Number(run.token_usage || 0);
+    const tokenText = Number.isFinite(tokens) && tokens > 0 ? tokens.toLocaleString() : '0';
+    const commitCount = Number(run.commit_count || 0);
+    const runLabel = '<div class="run-compare-run-label">'
+      + '<span>' + esc(scopeLabel + ' / ' + mode) + '</span>'
+      + _renderRunCompareBadges(run.badges)
+      + '</div>';
+    return '<tr>'
+      + '<td>' + esc(_formatRunCompareTimestamp(run.finished_at)) + '</td>'
+      + '<td>' + runLabel + '</td>'
+      + '<td>' + esc(String(run.configuration || 'n/a')) + '</td>'
+      + '<td>' + esc(_formatRunCompareDuration(run.duration_seconds)) + '</td>'
+      + '<td>' + esc(tokenText) + '</td>'
+      + '<td><span class="badge ' + _runCompareTestsBadgeClass(run) + '">' + esc(testsSummary) + '</span></td>'
+      + '<td>' + esc(stopReason) + '</td>'
+      + '<td>' + esc(String(Number.isFinite(commitCount) ? commitCount : 0)) + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+async function refreshPipelineRunComparison(opts = {}) {
+  const body = document.getElementById('pipe-run-compare-body');
+  const summaryEl = document.getElementById('pipe-run-compare-summary');
+  const repoPath = String(
+    opts.repoPath || pipeConfig.repo_path || document.getElementById('pipe-repo-path').value || ''
+  ).trim();
+  if (!repoPath) {
+    if (body) {
+      body.innerHTML = '<tr><td colspan="8"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
+    }
+    if (summaryEl) {
+      summaryEl.textContent = 'Compare recent finished runs to identify the most effective configuration.';
+    }
+    return;
+  }
+
+  if (body && opts.silent !== true) {
+    body.innerHTML = '<tr><td colspan="8"><div class="state-card loading">Loading recent runs...</div></td></tr>';
+  }
+
+  try {
+    const url = '/api/pipeline/run-comparison?repo_path='
+      + encodeURIComponent(repoPath)
+      + '&limit=12'
+      + '&scope=all';
+    const resp = await api(url);
+    const currentRepoPath = String(document.getElementById('pipe-repo-path').value || '').trim();
+    if (currentRepoPath && currentRepoPath !== repoPath) return;
+    if (resp && resp.error) {
+      renderPipelineRunComparison({
+        runs: [],
+        message: resp.error,
+      });
+      return;
+    }
+    renderPipelineRunComparison(resp || {});
+  } catch (_err) {
+    renderPipelineRunComparison({
+      runs: [],
+      message: 'Could not load run comparison metrics.',
+    });
+  }
+}
 
 async function viewLogFile(filename) {
   document.querySelectorAll('#log-file-tabs button').forEach(b => {

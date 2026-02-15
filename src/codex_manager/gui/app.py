@@ -625,6 +625,419 @@ def _pipeline_logs_dir(repo: Path) -> Path:
     return repo / ".codex_manager" / "logs"
 
 
+def _history_jsonl_path(repo: Path) -> Path:
+    """Return the run-history JSONL path for *repo*."""
+    return _pipeline_logs_dir(repo) / "HISTORY.jsonl"
+
+
+def _parse_iso_epoch_ms(value: object) -> int:
+    """Parse ISO-8601 timestamps into epoch milliseconds."""
+    raw = str(value or "").strip()
+    if not raw:
+        return 0
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(raw)
+    except ValueError:
+        return 0
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return int(stamp.timestamp() * 1000)
+
+
+def _run_comparison_scope(value: object) -> str:
+    """Normalize run-comparison scope filter."""
+    scope = str(value or "all").strip().lower()
+    if scope in {"chain", "pipeline"}:
+        return scope
+    return "all"
+
+
+def _run_comparison_limit(value: object) -> int:
+    """Normalize run-comparison list limit."""
+    parsed = _safe_int(value, 12)
+    return max(1, min(50, parsed))
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Coerce *value* to float where possible."""
+    try:
+        if isinstance(value, bool):
+            return float(int(value))
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _run_configuration_label(scope: str, context: dict[str, object]) -> str:
+    """Return a compact run-configuration summary label."""
+    mode = str(context.get("mode") or "unknown").strip() or "unknown"
+    unlimited = bool(context.get("unlimited"))
+
+    if scope == "chain":
+        max_loops = _safe_int(context.get("max_loops"), 0)
+        loops = "infinite" if unlimited else (str(max_loops) if max_loops > 0 else "?")
+        steps = context.get("steps")
+        step_count = len(steps) if isinstance(steps, list) else 0
+        return f"mode={mode}, loops={loops}, steps={step_count}"
+
+    max_cycles = _safe_int(context.get("max_cycles"), 0)
+    cycles = "infinite" if unlimited else (str(max_cycles) if max_cycles > 0 else "?")
+    phase_order = context.get("phase_order")
+    phase_count = len(phase_order) if isinstance(phase_order, list) else 0
+    science = "on" if bool(context.get("science_enabled")) else "off"
+    brain = "on" if bool(context.get("brain_enabled")) else "off"
+    return (
+        f"mode={mode}, cycles={cycles}, phases={phase_count}, "
+        f"science={science}, brain={brain}"
+    )
+
+
+def _run_tests_summary(tests: dict[str, int]) -> str:
+    """Build a compact tests summary string."""
+    passed = _safe_int(tests.get("passed"), 0)
+    failed_total = _safe_int(tests.get("failed"), 0) + _safe_int(tests.get("error"), 0)
+    skipped = _safe_int(tests.get("skipped"), 0)
+    unknown = _safe_int(tests.get("unknown"), 0)
+    summary = f"{passed} passed / {failed_total} failed / {skipped} skipped"
+    if unknown > 0:
+        summary += f" / {unknown} unknown"
+    return summary
+
+
+def _run_test_score(tests: dict[str, int]) -> int:
+    """Return a simple quality score for test outcomes."""
+    passed = _safe_int(tests.get("passed"), 0)
+    failed = _safe_int(tests.get("failed"), 0)
+    errored = _safe_int(tests.get("error"), 0)
+    unknown = _safe_int(tests.get("unknown"), 0)
+    return (passed * 3) - (failed * 4) - (errored * 5) - unknown
+
+
+def _run_overall_score(run: dict[str, object]) -> float:
+    """Rank a run by tests first, then efficiency."""
+    tests = run.get("tests")
+    tests_payload = tests if isinstance(tests, dict) else {}
+    test_score = float(_run_test_score(tests_payload))
+    commit_bonus = min(5.0, float(_safe_int(run.get("commit_count"), 0))) * 0.3
+    duration_penalty = max(0.0, _safe_float(run.get("duration_seconds"), 0.0)) / 600.0
+    token_penalty = max(0.0, float(_safe_int(run.get("token_usage"), 0))) / 1_500_000.0
+    return round(test_score + commit_bonus - duration_penalty - token_penalty, 3)
+
+
+def _new_run_aggregate(
+    *,
+    scope: str,
+    event_id: str,
+    timestamp: str,
+    context: dict[str, object],
+) -> dict[str, object]:
+    """Initialize an in-progress run aggregate from a ``run_started`` event."""
+    started_epoch_ms = _parse_iso_epoch_ms(timestamp)
+    return {
+        "run_id": event_id or f"{scope}_run_{started_epoch_ms}",
+        "scope": scope,
+        "started_at": timestamp,
+        "started_at_epoch_ms": started_epoch_ms,
+        "mode": str(context.get("mode") or "unknown").strip() or "unknown",
+        "configuration": _run_configuration_label(scope, context),
+        "run_name": str(context.get("chain_name") or "").strip(),
+        "tests": {
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "error": 0,
+            "unknown": 0,
+        },
+        "result_events": 0,
+        "_token_usage_from_results": 0,
+        "_commit_shas": set(),
+    }
+
+
+def _record_run_result_event(run: dict[str, object], context: dict[str, object]) -> None:
+    """Merge ``step_result``/``phase_result`` metrics into an in-progress run."""
+    tests = run.get("tests")
+    if not isinstance(tests, dict):
+        tests = {}
+        run["tests"] = tests
+
+    raw_outcome = str(context.get("test_outcome") or "").strip().lower()
+    outcome = raw_outcome if raw_outcome in {"passed", "failed", "skipped", "error"} else "unknown"
+    tests[outcome] = _safe_int(tests.get(outcome), 0) + 1
+    run["result_events"] = _safe_int(run.get("result_events"), 0) + 1
+
+    token_usage = _safe_int(context.get("total_tokens"), 0)
+    if token_usage <= 0:
+        token_usage = _safe_int(context.get("input_tokens"), 0) + _safe_int(
+            context.get("output_tokens"), 0
+        )
+    run["_token_usage_from_results"] = _safe_int(run.get("_token_usage_from_results"), 0) + max(
+        0, token_usage
+    )
+
+    commit_sha = str(context.get("commit_sha") or "").strip()
+    commits = run.get("_commit_shas")
+    if isinstance(commits, set) and commit_sha and commit_sha.lower() != "none":
+        commits.add(commit_sha)
+
+
+def _finalize_run_aggregate(
+    run: dict[str, object],
+    *,
+    event_id: str,
+    timestamp: str,
+    summary: str,
+    context: dict[str, object],
+) -> dict[str, object]:
+    """Finalize a run aggregate from a ``run_finished`` event."""
+    finished_epoch_ms = _parse_iso_epoch_ms(timestamp)
+    started_epoch_ms = _safe_int(run.get("started_at_epoch_ms"), 0)
+
+    duration_seconds = _safe_float(context.get("elapsed_seconds"), 0.0)
+    if duration_seconds <= 0 and finished_epoch_ms > 0 and started_epoch_ms > 0:
+        duration_seconds = round(max(0, finished_epoch_ms - started_epoch_ms) / 1000.0, 1)
+
+    token_usage = _safe_int(context.get("total_tokens"), 0)
+    if token_usage <= 0:
+        token_usage = _safe_int(run.get("_token_usage_from_results"), 0)
+
+    stop_reason = str(context.get("stop_reason") or "").strip()
+    if not stop_reason:
+        match = re.search(r"stop_reason='([^']+)'", str(summary or ""))
+        if match:
+            stop_reason = str(match.group(1) or "").strip()
+    if not stop_reason:
+        stop_reason = "unknown"
+
+    commits = run.get("_commit_shas")
+    commit_count = len(commits) if isinstance(commits, set) else 0
+
+    tests = run.get("tests")
+    tests_payload = tests if isinstance(tests, dict) else {}
+    tests_summary = _run_tests_summary(tests_payload)
+
+    run_id = str(run.get("run_id") or "").strip()
+    if not run_id:
+        run_id = event_id or f"{run.get('scope', 'run')}_{finished_epoch_ms}"
+
+    finalized = {
+        "run_id": run_id,
+        "scope": str(run.get("scope") or "unknown"),
+        "mode": str(run.get("mode") or "unknown"),
+        "configuration": str(run.get("configuration") or ""),
+        "run_name": str(run.get("run_name") or ""),
+        "started_at": str(run.get("started_at") or ""),
+        "started_at_epoch_ms": started_epoch_ms,
+        "finished_at": timestamp,
+        "finished_at_epoch_ms": finished_epoch_ms,
+        "duration_seconds": round(max(0.0, duration_seconds), 1),
+        "token_usage": max(0, token_usage),
+        "tests": {
+            "passed": _safe_int(tests_payload.get("passed"), 0),
+            "failed": _safe_int(tests_payload.get("failed"), 0),
+            "skipped": _safe_int(tests_payload.get("skipped"), 0),
+            "error": _safe_int(tests_payload.get("error"), 0),
+            "unknown": _safe_int(tests_payload.get("unknown"), 0),
+        },
+        "tests_summary": tests_summary,
+        "result_events": _safe_int(run.get("result_events"), 0),
+        "stop_reason": stop_reason,
+        "commit_count": commit_count,
+    }
+    finalized["overall_score"] = _run_overall_score(finalized)
+    return finalized
+
+
+def _empty_run_comparison_payload(
+    *,
+    repo: Path | None,
+    scope: str,
+    limit: int,
+    message: str,
+) -> dict[str, object]:
+    """Return an empty run-comparison payload in a consistent shape."""
+    return {
+        "available": False,
+        "repo_path": str(repo) if repo is not None else "",
+        "history_path": str(_history_jsonl_path(repo).resolve()) if repo is not None else "",
+        "scope": scope,
+        "limit": limit,
+        "runs": [],
+        "best_by": {
+            "overall_run_id": "",
+            "fastest_run_id": "",
+            "lowest_token_run_id": "",
+            "strongest_tests_run_id": "",
+        },
+        "message": message,
+    }
+
+
+def _pipeline_run_comparison(
+    repo: Path,
+    *,
+    scope: str = "all",
+    limit: int = 12,
+) -> dict[str, object]:
+    """Build recent run-comparison rows from ``HISTORY.jsonl`` events."""
+    history_path = _history_jsonl_path(repo)
+    if not history_path.is_file():
+        return _empty_run_comparison_payload(
+            repo=repo,
+            scope=scope,
+            limit=limit,
+            message="Run history is not available yet for this repository.",
+        )
+
+    try:
+        raw = _read_text_utf8_resilient(history_path)
+    except Exception as exc:
+        return _empty_run_comparison_payload(
+            repo=repo,
+            scope=scope,
+            limit=limit,
+            message=f"Could not read run history: {exc}",
+        )
+
+    open_runs: dict[str, dict[str, object]] = {}
+    finished_runs: list[dict[str, object]] = []
+    result_event_by_scope = {
+        "chain": "step_result",
+        "pipeline": "phase_result",
+    }
+
+    for line in raw.splitlines():
+        row = line.strip()
+        if not row:
+            continue
+        try:
+            event = json.loads(row)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        scope_key = str(event.get("scope") or "").strip().lower()
+        if scope_key not in {"chain", "pipeline"}:
+            continue
+
+        event_name = str(event.get("event") or "").strip().lower()
+        timestamp = str(event.get("timestamp") or "").strip()
+        event_id = str(event.get("id") or "").strip()
+        summary = str(event.get("summary") or "").strip()
+        context_obj = event.get("context")
+        context = context_obj if isinstance(context_obj, dict) else {}
+
+        if event_name == "run_started":
+            open_runs[scope_key] = _new_run_aggregate(
+                scope=scope_key,
+                event_id=event_id,
+                timestamp=timestamp,
+                context=context,
+            )
+            continue
+
+        if event_name == result_event_by_scope[scope_key]:
+            run = open_runs.get(scope_key)
+            if run is not None:
+                _record_run_result_event(run, context)
+            continue
+
+        if event_name == "run_finished":
+            run = open_runs.pop(scope_key, None)
+            if run is None:
+                run = _new_run_aggregate(
+                    scope=scope_key,
+                    event_id=event_id,
+                    timestamp=timestamp,
+                    context={},
+                )
+            finalized = _finalize_run_aggregate(
+                run,
+                event_id=event_id,
+                timestamp=timestamp,
+                summary=summary,
+                context=context,
+            )
+            finished_runs.append(finalized)
+
+    if scope in {"chain", "pipeline"}:
+        finished_runs = [run for run in finished_runs if str(run.get("scope")) == scope]
+
+    finished_runs.sort(
+        key=lambda run: (
+            _safe_int(run.get("finished_at_epoch_ms"), 0),
+            _safe_int(run.get("started_at_epoch_ms"), 0),
+        ),
+        reverse=True,
+    )
+    runs = finished_runs[:limit]
+    if not runs:
+        return _empty_run_comparison_payload(
+            repo=repo,
+            scope=scope,
+            limit=limit,
+            message="No completed runs were found in history yet.",
+        )
+
+    best_overall = max(runs, key=lambda run: _safe_float(run.get("overall_score"), -999999.0))
+
+    duration_candidates = [run for run in runs if _safe_float(run.get("duration_seconds"), 0.0) > 0]
+    best_fastest = (
+        min(duration_candidates, key=lambda run: _safe_float(run.get("duration_seconds"), 0.0))
+        if duration_candidates
+        else None
+    )
+
+    token_candidates = [run for run in runs if _safe_int(run.get("token_usage"), 0) > 0]
+    best_lowest_tokens = (
+        min(token_candidates, key=lambda run: _safe_int(run.get("token_usage"), 0))
+        if token_candidates
+        else None
+    )
+
+    best_tests = max(
+        runs,
+        key=lambda run: (
+            _run_test_score(run.get("tests") if isinstance(run.get("tests"), dict) else {}),
+            -_safe_float(run.get("duration_seconds"), 0.0),
+            -_safe_int(run.get("token_usage"), 0),
+        ),
+    )
+
+    for run in runs:
+        badges: list[str] = []
+        if run.get("run_id") == best_overall.get("run_id"):
+            badges.append("best_overall")
+        if best_fastest is not None and run.get("run_id") == best_fastest.get("run_id"):
+            badges.append("fastest")
+        if best_lowest_tokens is not None and run.get("run_id") == best_lowest_tokens.get("run_id"):
+            badges.append("lowest_tokens")
+        if run.get("run_id") == best_tests.get("run_id"):
+            badges.append("strongest_tests")
+        run["badges"] = badges
+
+    return {
+        "available": True,
+        "repo_path": str(repo),
+        "history_path": str(history_path.resolve()),
+        "scope": scope,
+        "limit": limit,
+        "runs": runs,
+        "best_by": {
+            "overall_run_id": str(best_overall.get("run_id") or ""),
+            "fastest_run_id": str(best_fastest.get("run_id") or "") if best_fastest else "",
+            "lowest_token_run_id": (
+                str(best_lowest_tokens.get("run_id") or "") if best_lowest_tokens else ""
+            ),
+            "strongest_tests_run_id": str(best_tests.get("run_id") or ""),
+        },
+        "message": "",
+    }
+
+
 def _extract_markdown_section_lines(
     markdown: str,
     *,
@@ -3641,6 +4054,26 @@ def api_pipeline_log(filename: str):
             "logs_dir": str(log_path.parent),
         }
     )
+
+
+@app.route("/api/pipeline/run-comparison")
+def api_pipeline_run_comparison():
+    """Return recent run-comparison metrics from HISTORY.jsonl."""
+    scope = _run_comparison_scope(request.args.get("scope"))
+    limit = _run_comparison_limit(request.args.get("limit"))
+    repo = _resolve_pipeline_logs_repo(request.args.get("repo_path", ""))
+    if repo is None:
+        return jsonify(
+            _empty_run_comparison_payload(
+                repo=None,
+                scope=scope,
+                limit=limit,
+                message=(
+                    "Set Repository Path in the Pipeline panel to compare recent run metrics."
+                ),
+            )
+        )
+    return jsonify(_pipeline_run_comparison(repo, scope=scope, limit=limit))
 
 
 @app.route("/api/pipeline/science-dashboard")

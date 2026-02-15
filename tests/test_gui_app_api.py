@@ -1210,6 +1210,188 @@ def test_pipeline_logs_rejects_invalid_filename_when_executor_missing(client, mo
     assert "Invalid log file" in data["error"]
 
 
+def test_pipeline_run_comparison_returns_unavailable_without_repo_hint(client, monkeypatch):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    resp = client.get("/api/pipeline/run-comparison")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is False
+    assert data["runs"] == []
+    assert "Set Repository Path" in data["message"]
+
+
+def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "hist_chain_start",
+            "timestamp": "2026-02-15T10:00:00+00:00",
+            "scope": "chain",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Chain run started.",
+            "context": {
+                "mode": "apply",
+                "max_loops": 3,
+                "unlimited": False,
+                "steps": ["Implement", "Test"],
+            },
+        },
+        {
+            "id": "hist_chain_step_1",
+            "timestamp": "2026-02-15T10:00:20+00:00",
+            "scope": "chain",
+            "event": "step_result",
+            "level": "info",
+            "summary": "Step result",
+            "context": {
+                "test_outcome": "passed",
+                "input_tokens": 50,
+                "output_tokens": 10,
+                "commit_sha": "abc111",
+            },
+        },
+        {
+            "id": "hist_chain_step_2",
+            "timestamp": "2026-02-15T10:00:30+00:00",
+            "scope": "chain",
+            "event": "step_result",
+            "level": "warn",
+            "summary": "Step result",
+            "context": {
+                "test_outcome": "failed",
+                "input_tokens": 20,
+                "output_tokens": 8,
+                "commit_sha": "",
+            },
+        },
+        {
+            "id": "hist_chain_finish",
+            "timestamp": "2026-02-15T10:00:45+00:00",
+            "scope": "chain",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Chain finished with stop_reason='max_loops_reached'.",
+            "context": {
+                "stop_reason": "max_loops_reached",
+                "total_tokens": 123,
+                "elapsed_seconds": 45.5,
+            },
+        },
+        {
+            "id": "hist_pipe_start",
+            "timestamp": "2026-02-15T11:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {
+                "mode": "dry-run",
+                "max_cycles": 2,
+                "unlimited": False,
+                "phase_order": ["ideation", "implementation"],
+                "science_enabled": True,
+                "brain_enabled": False,
+            },
+        },
+        {
+            "id": "hist_pipe_phase_1",
+            "timestamp": "2026-02-15T11:00:15+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Phase result",
+            "context": {
+                "test_outcome": "skipped",
+                "total_tokens": 200,
+                "commit_sha": "def222",
+            },
+        },
+        {
+            "id": "hist_pipe_phase_2",
+            "timestamp": "2026-02-15T11:00:40+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Phase result",
+            "context": {
+                "test_outcome": "passed",
+                "input_tokens": 25,
+                "output_tokens": 5,
+                "commit_sha": "def222",
+            },
+        },
+        {
+            "id": "hist_pipe_finish",
+            "timestamp": "2026-02-15T11:01:30+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "warn",
+            "summary": "Pipeline finished with stop_reason='budget_exhausted'.",
+            "context": {
+                "stop_reason": "budget_exhausted",
+                "total_tokens": 230,
+                "elapsed_seconds": 90.0,
+            },
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/run-comparison",
+        query_string={"repo_path": str(repo), "limit": "5", "scope": "all"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is True
+    assert data["repo_path"] == str(repo.resolve())
+    assert len(data["runs"]) == 2
+
+    newest = data["runs"][0]
+    oldest = data["runs"][1]
+
+    assert newest["scope"] == "pipeline"
+    assert newest["duration_seconds"] == 90.0
+    assert newest["token_usage"] == 230
+    assert newest["tests"]["passed"] == 1
+    assert newest["tests"]["skipped"] == 1
+    assert newest["commit_count"] == 1
+    assert "phases=2" in newest["configuration"]
+
+    assert oldest["scope"] == "chain"
+    assert oldest["duration_seconds"] == 45.5
+    assert oldest["token_usage"] == 123
+    assert oldest["tests"]["passed"] == 1
+    assert oldest["tests"]["failed"] == 1
+    assert oldest["commit_count"] == 1
+    assert "steps=2" in oldest["configuration"]
+
+    assert data["best_by"]["fastest_run_id"] == oldest["run_id"]
+    assert data["best_by"]["lowest_token_run_id"] == oldest["run_id"]
+
+    pipeline_only = client.get(
+        "/api/pipeline/run-comparison",
+        query_string={"repo_path": str(repo), "scope": "pipeline"},
+    ).get_json()
+    assert pipeline_only
+    assert pipeline_only["available"] is True
+    assert len(pipeline_only["runs"]) == 1
+    assert pipeline_only["runs"][0]["scope"] == "pipeline"
+
+
 def test_pipeline_science_dashboard_returns_structured_payload(
     client, monkeypatch, tmp_path: Path
 ):
@@ -1507,6 +1689,9 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert "async function startFreshPipelineRun()" in html
     assert "/api/pipeline/resume-state?repo_path=" in html
     assert "/api/pipeline/resume-state/clear" in html
+    assert 'id="pipe-run-compare-body"' in html
+    assert "async function refreshPipelineRunComparison" in html
+    assert "/api/pipeline/run-comparison?repo_path=" in html
     assert 'id="pipe-smoke-test-cmd"' in html
     assert "default_test_policy" in html
     assert "data-phase-test-policy" in html
