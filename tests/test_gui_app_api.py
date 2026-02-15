@@ -2321,6 +2321,127 @@ def test_git_sync_stash_pull_stashes_local_changes_then_pulls(client, tmp_path: 
     assert "codex-manager:auto-stash-before-pull" in stash_list
 
 
+def test_git_sync_push_pushes_local_commit(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-push")
+
+    (local / "LOCAL_PUSH.md").write_text("local push update\n", encoding="utf-8")
+    _run_git("add", "LOCAL_PUSH.md", cwd=local)
+    _run_git("commit", "-m", "local push update", cwd=local)
+
+    resp = client.post("/api/git/sync/push", json={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "pushed"
+    assert data["set_upstream"] is False
+    assert data["sync"]["ahead"] == 0
+    assert data["sync"]["behind"] == 0
+    assert data["sync"]["dirty"] is False
+
+    verifier = _clone_tracking_repo(tmp_path, remote, clone_name="verify-sync-push")
+    assert (verifier / "LOCAL_PUSH.md").is_file()
+
+
+def test_git_sync_push_with_set_upstream_for_new_branch(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-push-upstream")
+    _run_git("checkout", "-b", "feature/sync-push-upstream", cwd=local)
+
+    (local / "FEATURE_PUSH.md").write_text("feature push update\n", encoding="utf-8")
+    _run_git("add", "FEATURE_PUSH.md", cwd=local)
+    _run_git("commit", "-m", "feature push update", cwd=local)
+
+    resp = client.post(
+        "/api/git/sync/push",
+        json={"repo_path": str(local), "set_upstream": True},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "pushed"
+    assert data["set_upstream"] is True
+    assert data["remote"] == "origin"
+    assert data["branch"] == "feature/sync-push-upstream"
+    assert data["sync"]["tracking_branch"] == "origin/feature/sync-push-upstream"
+    assert data["sync"]["has_tracking_branch"] is True
+
+    upstream = _run_git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}", cwd=local).stdout
+    assert upstream.strip() == "origin/feature/sync-push-upstream"
+
+
+def test_git_sync_push_reports_auth_failures_with_recovery_steps(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_resolve_git_sync_repo", lambda _raw: (repo, "", 200))
+    monkeypatch.setattr(
+        gui_app_module,
+        "_git_sync_status_payload",
+        lambda _repo: {"branch": "main", "tracking_branch": "origin/main"},
+    )
+
+    def _fake_run_git_sync(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        assert args
+        return subprocess.CompletedProcess(
+            ["git", *args],
+            1,
+            stdout="",
+            stderr=(
+                "remote: Invalid username or token.\n"
+                "fatal: Authentication failed for 'https://github.com/example/repo.git/'"
+            ),
+        )
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run_git_sync)
+
+    resp = client.post("/api/git/sync/push", json={"repo_path": str(repo)})
+    data = resp.get_json()
+
+    assert resp.status_code == 401
+    assert data
+    assert data["error_type"] == "auth"
+    assert "authentication/authorization" in data["error"]
+    assert isinstance(data["recovery_steps"], list)
+    assert any("GitHub Auth" in step for step in data["recovery_steps"])
+
+
+def test_git_sync_push_reports_non_fast_forward_with_recovery_steps(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_resolve_git_sync_repo", lambda _raw: (repo, "", 200))
+    monkeypatch.setattr(
+        gui_app_module,
+        "_git_sync_status_payload",
+        lambda _repo: {"branch": "main", "tracking_branch": "origin/main"},
+    )
+
+    def _fake_run_git_sync(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        assert args
+        return subprocess.CompletedProcess(
+            ["git", *args],
+            1,
+            stdout="",
+            stderr=(
+                "! [rejected]        main -> main (non-fast-forward)\n"
+                "error: failed to push some refs to 'origin'"
+            ),
+        )
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run_git_sync)
+
+    resp = client.post("/api/git/sync/push", json={"repo_path": str(repo)})
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert data["error_type"] == "non_fast_forward"
+    assert "non-fast-forward" in data["error"]
+    assert isinstance(data["recovery_steps"], list)
+    assert any("Fetch" in step for step in data["recovery_steps"])
+
+
 def test_git_sync_status_requires_repo_path(client):
     resp = client.get("/api/git/sync/status")
     data = resp.get_json()

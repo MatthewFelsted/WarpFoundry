@@ -3822,6 +3822,92 @@ def _resolve_stash_ref(repo: Path) -> str:
     return str(stash_ref.stdout or "").strip()
 
 
+def _extract_tracking_remote_name(tracking_branch: str) -> str:
+    """Extract remote name from ``<remote>/<branch>`` tracking refs."""
+    tracking = str(tracking_branch or "").strip()
+    if "/" not in tracking:
+        return ""
+    return tracking.split("/", 1)[0].strip()
+
+
+def _normalize_git_sync_remote_name(value: object) -> str:
+    """Normalize requested push remote, defaulting to origin."""
+    remote = str(value or "").strip()
+    return remote or "origin"
+
+
+def _valid_git_sync_remote_name(remote: str) -> bool:
+    """Return True when a remote name is safe to pass to git push."""
+    if not remote:
+        return False
+    if remote.startswith("-"):
+        return False
+    if any(ch.isspace() for ch in remote):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z0-9._/-]+", remote))
+
+
+def _classify_git_push_failure(result: subprocess.CompletedProcess[str]) -> str:
+    """Classify common git push failures for explicit UX messaging."""
+    text = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
+    auth_tokens = (
+        "authentication failed",
+        "invalid username or token",
+        "permission denied",
+        "could not read username",
+        "could not read password",
+        "support for password authentication was removed",
+        "repository not found",
+    )
+    if any(token in text for token in auth_tokens):
+        return "auth"
+    if "non-fast-forward" in text or "fetch first" in text:
+        return "non_fast_forward"
+    if "failed to push some refs" in text and "rejected" in text:
+        return "non_fast_forward"
+    if "has no upstream branch" in text or "set-upstream" in text:
+        return "upstream_missing"
+    return "unknown"
+
+
+def _git_push_recovery_steps(*, error_type: str, remote: str, branch: str) -> list[str]:
+    """Provide concise guided recovery steps for common push failures."""
+    push_cmd = f"git push {remote} {branch}"
+    push_upstream_cmd = f"git push --set-upstream {remote} {branch}"
+    if error_type == "auth":
+        return [
+            "Verify credentials in the GitHub Auth modal and rerun Test connection.",
+            "For HTTPS remotes use a PAT with repo write access; for SSH remotes verify your key is loaded and authorized on GitHub.",
+            f"Retry push after fixing auth: {push_cmd}",
+        ]
+    if error_type == "non_fast_forward":
+        return [
+            "Run Fetch, then Pull (or Stash + Pull if your worktree is dirty) to integrate remote changes.",
+            "Resolve merge/rebase conflicts locally and commit the result.",
+            f"Retry push: {push_cmd}",
+        ]
+    if error_type == "upstream_missing":
+        return [
+            "Enable set-upstream in Push and retry.",
+            f"Equivalent command: {push_upstream_cmd}",
+        ]
+    return [
+        "Inspect stderr/stdout from git push for the exact rejection reason.",
+        "Run Fetch to refresh remote refs, then retry push.",
+    ]
+
+
+def _git_push_error_status_and_label(error_type: str) -> tuple[int, str]:
+    """Map push failure classification to API status code + label."""
+    if error_type == "auth":
+        return 401, "authentication/authorization"
+    if error_type == "non_fast_forward":
+        return 409, "non-fast-forward"
+    if error_type == "upstream_missing":
+        return 409, "missing upstream tracking"
+    return 502, "unexpected"
+
+
 def _git_sync_status_payload(repo: Path) -> dict[str, object]:
     """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
     branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -4262,6 +4348,101 @@ def api_git_sync_stash_pull():
         )
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Git stash/pull timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/push", methods=["POST"])
+def api_git_sync_push():
+    """Push local commits for the active branch, optionally setting upstream."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    set_upstream = _safe_bool(data.get("set_upstream"), default=False)
+    requested_remote = str(data.get("remote") or "").strip()
+    requested_branch = str(data.get("branch") or "").strip()
+
+    if requested_remote and not _valid_git_sync_remote_name(requested_remote):
+        return jsonify({"error": f"Invalid remote name: {requested_remote}"}), 400
+    if requested_branch and not _valid_clone_branch_name(requested_branch):
+        return jsonify({"error": f"Invalid branch name: {requested_branch}"}), 400
+
+    try:
+        status_before = _git_sync_status_payload(repo)
+        active_branch = str(status_before.get("branch") or "").strip() or "HEAD"
+        branch = requested_branch or active_branch
+        if branch == "HEAD":
+            return jsonify(
+                {
+                    "error": (
+                        "Cannot push from detached HEAD. Checkout a branch first or pass an explicit "
+                        "branch name."
+                    )
+                }
+            ), 400
+
+        tracking_branch = str(status_before.get("tracking_branch") or "").strip()
+        default_remote = _extract_tracking_remote_name(tracking_branch) or "origin"
+        remote = _normalize_git_sync_remote_name(requested_remote or default_remote)
+        if not _valid_git_sync_remote_name(remote):
+            return jsonify({"error": f"Invalid remote name: {remote}"}), 400
+
+        push_args: list[str] = ["push"]
+        if set_upstream:
+            push_args.extend(["--set-upstream", remote, branch])
+        elif requested_remote or requested_branch:
+            push_args.extend([remote, branch])
+
+        push_result = _run_git_sync_command(repo, *push_args)
+        if push_result.returncode != 0:
+            detail = _extract_git_process_error(push_result, f"git {' '.join(push_args)} failed")
+            error_type = _classify_git_push_failure(push_result)
+            status_code, label = _git_push_error_status_and_label(error_type)
+            return (
+                jsonify(
+                    {
+                        "error": f"Git push failed ({label}): {detail}",
+                        "error_type": error_type,
+                        "repo_path": str(repo),
+                        "remote": remote,
+                        "branch": branch,
+                        "set_upstream": set_upstream,
+                        "recovery_steps": _git_push_recovery_steps(
+                            error_type=error_type,
+                            remote=remote,
+                            branch=branch,
+                        ),
+                        "stdout": _truncate_command_output(push_result.stdout),
+                        "stderr": _truncate_command_output(push_result.stderr),
+                    }
+                ),
+                status_code,
+            )
+
+        message = (
+            f"Push completed and upstream set to {remote}/{branch}."
+            if set_upstream
+            else "Push completed."
+        )
+        return jsonify(
+            {
+                "status": "pushed",
+                "repo_path": str(repo),
+                "remote": remote,
+                "branch": branch,
+                "set_upstream": set_upstream,
+                "message": message,
+                "stdout": _truncate_command_output(push_result.stdout),
+                "stderr": _truncate_command_output(push_result.stderr),
+                "sync": _git_sync_status_payload(repo),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git push timed out."}), 504
     except RuntimeError as exc:
         return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
     except Exception as exc:
