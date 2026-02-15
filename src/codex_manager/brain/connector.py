@@ -763,6 +763,20 @@ def _connect_anthropic(
 # ══════════════════════════════════════════════════════════════════
 
 
+def _resolve_ollama_model(model: str) -> str:
+    stripped = (model or "").strip()
+    if stripped.lower().startswith("ollama:"):
+        value = stripped.split(":", 1)[1]
+    elif stripped.lower().startswith("ollama/"):
+        value = stripped.split("/", 1)[1]
+    else:
+        value = stripped
+    value = value.strip()
+    if not value:
+        raise ValueError("Ollama model name is missing. Use 'ollama:<model>'.")
+    return value
+
+
 def connect(
     model: str,
     prompt: str,
@@ -802,15 +816,15 @@ def connect(
     per_request_timeout = (
         DEFAULT_PER_REQUEST_TIMEOUT_S if per_request_timeout is None else float(per_request_timeout)
     )
-    m = model.lower().strip()
+    provider = provider_from_model(model)
 
     try:
-        if m.startswith("ollama:") or m.startswith("ollama/"):
+        if provider == "ollama":
             if not _is_ollama_running():
                 _maybe_start_ollama()
             if not _is_ollama_running():
                 raise RuntimeError("Ollama server not running. Start with 'ollama serve'.")
-            local_model = model.split(":", 1)[1] if ":" in model else model.split("/", 1)[1]
+            local_model = _resolve_ollama_model(model)
             return _connect_ollama(
                 local_model,
                 prompt,
@@ -820,50 +834,25 @@ def connect(
                 max_output_tokens=max_output_tokens,
                 temperature=temperature,
             )
-        elif "gpt" in m or "o1" in m or "o3" in m or "o4" in m:
-            return _connect_openai(
-                model,
-                prompt,
-                text_only,
-                per_request_timeout,
-                disable_cache=disable_cache,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
-            )
-        elif "gemini" in m:
-            return _connect_gemini(
-                model,
-                prompt,
-                text_only,
-                per_request_timeout,
-                disable_cache=disable_cache,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
-            )
-        elif "grok" in m:
-            return _connect_xai(
-                model,
-                prompt,
-                text_only,
-                per_request_timeout,
-                disable_cache=disable_cache,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
-            )
-        elif any(k in m for k in ("claude", "opus", "sonnet", "haiku")):
-            return _connect_anthropic(
-                model,
-                prompt,
-                text_only,
-                per_request_timeout,
-                disable_cache=disable_cache,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
-            )
-        else:
+        connector = {
+            "openai": _connect_openai,
+            "gemini": _connect_gemini,
+            "xai": _connect_xai,
+            "anthropic": _connect_anthropic,
+        }.get(provider)
+        if connector is None:
             raise ValueError(
                 f"Unsupported model '{model}'. Supported: GPT, Gemini, Grok, Claude, ollama:<model>"
             )
+        return connector(
+            model,
+            prompt,
+            text_only,
+            per_request_timeout,
+            disable_cache=disable_cache,
+            max_output_tokens=max_output_tokens,
+            temperature=temperature,
+        )
     except Exception as e:
         if recovery_hints is not None:
             try:
@@ -885,7 +874,9 @@ def prompt_all(
     per_request_timeout = (
         DEFAULT_PER_REQUEST_TIMEOUT_S if per_request_timeout is None else float(per_request_timeout)
     )
-    models = models or ALL_MODELS
+    models = ALL_MODELS if models is None else list(models)
+    if not models:
+        return []
 
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=len(models)) as ex:

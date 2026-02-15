@@ -116,3 +116,76 @@ def test_connector_env_boolean_aliases_and_path_expansion(
     assert connector.DEFAULT_RECONNECT_WAIT_S == 12
     assert expected_cache_path == connector._CACHE_PATH
     assert connector.OLLAMA_BASE_URL == "http://localhost:11434"
+
+
+def test_connect_dispatches_using_provider_from_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    connector = _reload_connector(monkeypatch, tmp_path, env={})
+    observed: list[dict[str, object]] = []
+
+    def fake_openai(
+        model: str,
+        prompt: str,
+        text_only: bool,
+        timeout_s: float,
+        *,
+        disable_cache: bool = False,
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        observed.append(
+            {
+                "model": model,
+                "prompt": prompt,
+                "text_only": text_only,
+                "timeout_s": timeout_s,
+                "disable_cache": disable_cache,
+                "max_output_tokens": max_output_tokens,
+                "temperature": temperature,
+            }
+        )
+        return "stub-response"
+
+    monkeypatch.setattr(connector, "provider_from_model", lambda _model: "openai")
+    monkeypatch.setattr(connector, "_connect_openai", fake_openai)
+
+    result = connector.connect(
+        "custom-model-name",
+        "audit this",
+        text_only=False,
+        per_request_timeout=12.5,
+        disable_cache=True,
+        max_output_tokens=512,
+        temperature=0.2,
+    )
+
+    assert result == "stub-response"
+    assert observed == [
+        {
+            "model": "custom-model-name",
+            "prompt": "audit this",
+            "text_only": False,
+            "timeout_s": 12.5,
+            "disable_cache": True,
+            "max_output_tokens": 512,
+            "temperature": 0.2,
+        }
+    ]
+
+
+def test_prompt_all_respects_explicit_empty_models(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    connector = _reload_connector(monkeypatch, tmp_path, env={})
+    called: list[str] = []
+
+    def fake_connect(*_args, **_kwargs):
+        called.append("called")
+        return "unused"
+
+    monkeypatch.setattr(connector, "connect", fake_connect)
+    assert connector.prompt_all("ping", models=[]) == []
+    assert called == []

@@ -9,23 +9,33 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
-import math
 import threading
 import uuid
 from pathlib import Path
 from typing import Any
 
+from codex_manager.logbook_utils import (
+    SanitizeOptions,
+    append_jsonl,
+    ensure_log_paths,
+    rotate_file,
+    rotate_if_needed,
+    sanitize_json_value,
+    truncate_text,
+)
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_BYTES = 1_200_000
 _DEFAULT_MAX_ARCHIVES = 24
-
-
-def _truncate(text: str, max_len: int) -> str:
-    clean = (text or "").strip()
-    if len(clean) <= max_len:
-        return clean
-    return clean[: max_len - 3] + "..."
+_SANITIZE_OPTIONS = SanitizeOptions(
+    max_depth=5,
+    max_list_items=80,
+    max_dict_items=80,
+    max_key_len=120,
+    max_str_len=2000,
+    fallback_repr_len=400,
+)
 
 
 class HistoryLogbook:
@@ -67,11 +77,11 @@ class HistoryLogbook:
         payload = {
             "id": f"hist_{uuid.uuid4().hex[:12]}",
             "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "scope": _truncate(scope, 40),
-            "event": _truncate(event, 80),
-            "level": _truncate(level, 16),
-            "summary": _truncate(summary, 800),
-            "context": self._sanitize(context or {}),
+            "scope": truncate_text(scope, 40),
+            "event": truncate_text(event, 80),
+            "level": truncate_text(level, 16),
+            "summary": truncate_text(summary, 800),
+            "context": sanitize_json_value(context or {}, options=_SANITIZE_OPTIONS),
         }
 
         try:
@@ -86,12 +96,13 @@ class HistoryLogbook:
             logger.warning("Could not append history log entry: %s", exc)
 
     def _ensure_paths(self) -> None:
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
-        if not self.markdown_path.exists():
-            self.markdown_path.write_text(self._markdown_header(), encoding="utf-8")
-        if not self.jsonl_path.exists():
-            self.jsonl_path.touch()
+        ensure_log_paths(
+            logs_dir=self.logs_dir,
+            archive_dir=self.archive_dir,
+            markdown_path=self.markdown_path,
+            jsonl_path=self.jsonl_path,
+            markdown_header=self._markdown_header(),
+        )
         if not self.meta_path.exists():
             month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")
             self.meta_path.write_text(json.dumps({"active_month": month}), encoding="utf-8")
@@ -125,37 +136,21 @@ class HistoryLogbook:
         self.meta_path.write_text(json.dumps({"active_month": now_month}), encoding="utf-8")
 
     def _rotate_if_needed(self, path: Path) -> None:
-        if not path.exists():
-            return
-        if path.stat().st_size < self.max_bytes:
-            return
-        self._rotate_file(path)
+        rotate_if_needed(
+            path=path,
+            max_bytes=self.max_bytes,
+            archive_dir=self.archive_dir,
+            markdown_header=self._markdown_header(),
+            max_archives=self.max_archives,
+        )
 
     def _rotate_file(self, path: Path) -> None:
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        target = self.archive_dir / f"{path.stem}-{stamp}{path.suffix}"
-        idx = 1
-        while target.exists():
-            idx += 1
-            target = self.archive_dir / f"{path.stem}-{stamp}-{idx}{path.suffix}"
-        path.replace(target)
-        if path.suffix.lower() == ".md":
-            path.write_text(self._markdown_header(), encoding="utf-8")
-        else:
-            path.touch()
-        self._prune_archives(path.stem, path.suffix)
-
-    def _prune_archives(self, stem: str, suffix: str) -> None:
-        files = sorted(
-            self.archive_dir.glob(f"{stem}-*{suffix}"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
+        rotate_file(
+            path=path,
+            archive_dir=self.archive_dir,
+            markdown_header=self._markdown_header(),
+            max_archives=self.max_archives,
         )
-        for old in files[self.max_archives :]:
-            try:
-                old.unlink(missing_ok=True)
-            except Exception:
-                continue
 
     def _append_markdown(self, payload: dict[str, Any]) -> None:
         details = self._format_markdown_context(payload["context"])
@@ -195,34 +190,4 @@ class HistoryLogbook:
         return "```json\n" + json.dumps(context, indent=2, ensure_ascii=True) + "\n```"
 
     def _append_jsonl(self, payload: dict[str, Any]) -> None:
-        with self.jsonl_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n")
-
-    def _sanitize(self, value: Any, depth: int = 0) -> Any:
-        if depth > 5:
-            return "[truncated-depth]"
-        if value is None:
-            return None
-        if isinstance(value, str):
-            return _truncate(value, 2000)
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not math.isfinite(value):
-                return None
-            return value
-        if isinstance(value, list):
-            return [self._sanitize(v, depth + 1) for v in value[:80]]
-        if isinstance(value, tuple):
-            return [self._sanitize(v, depth + 1) for v in value[:80]]
-        if isinstance(value, dict):
-            out: dict[str, Any] = {}
-            for i, (k, v) in enumerate(value.items()):
-                if i >= 80:
-                    out["__truncated__"] = f"{len(value) - 80} more key(s)"
-                    break
-                out[_truncate(str(k), 120)] = self._sanitize(v, depth + 1)
-            return out
-        return _truncate(repr(value), 400)
+        append_jsonl(self.jsonl_path, payload)
