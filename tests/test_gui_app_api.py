@@ -1884,6 +1884,14 @@ def test_index_includes_git_branch_switcher_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
+    assert 'id="git-sync-commit-panel-btn"' in html
+    assert 'onclick="showGitCommitModal()"' in html
+    assert 'id="git-commit-overlay"' in html
+    assert 'id="git-commit-files-body"' in html
+    assert 'id="git-commit-message"' in html
+    assert "async function showGitCommitModal()" in html
+    assert "async function refreshGitCommitWorkflowNow()" in html
+    assert "async function gitCommitCreate()" in html
     assert 'id="git-sync-open-pr-btn"' in html
     assert 'onclick="gitSyncOpenPullRequest()"' in html
     assert 'id="git-sync-copy-pr-btn"' in html
@@ -1899,6 +1907,10 @@ def test_index_includes_git_branch_switcher_controls(client):
     assert "/api/git/sync/branches?repo_path=" in html
     assert "/api/git/sync/checkout" in html
     assert "/api/git/sync/branch/create" in html
+    assert "/api/git/sync/commit/workflow?repo_path=" in html
+    assert "/api/git/sync/commit/stage" in html
+    assert "/api/git/sync/commit/unstage" in html
+    assert "/api/git/sync/commit/create" in html
     assert "allow dirty switch" in html
 
 
@@ -2403,6 +2415,111 @@ def test_git_sync_branch_create_blocks_dirty_worktree_without_allow_dirty(client
     assert data["error_type"] == "dirty_worktree"
     assert isinstance(data["recovery_steps"], list)
     assert data["sync"]["dirty"] is True
+
+
+def test_git_commit_workflow_lists_changes_and_last_commit(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-commit-workflow")
+
+    (local / "STAGED_FILE.txt").write_text("staged change\n", encoding="utf-8")
+    _run_git("add", "STAGED_FILE.txt", cwd=local)
+    (local / "README.md").write_text("# Updated README\n", encoding="utf-8")
+    (local / "UNTRACKED_FILE.txt").write_text("untracked change\n", encoding="utf-8")
+
+    resp = client.get("/api/git/sync/commit/workflow", query_string={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    files = {str(item["path"]): item for item in data["files"]}
+    assert files["STAGED_FILE.txt"]["staged"] is True
+    assert files["STAGED_FILE.txt"]["can_unstage"] is True
+    assert files["README.md"]["unstaged"] is True
+    assert files["README.md"]["can_stage"] is True
+    assert files["UNTRACKED_FILE.txt"]["untracked"] is True
+    assert data["counts"]["staged"] >= 1
+    assert data["counts"]["unstaged"] >= 1
+    assert data["counts"]["untracked"] >= 1
+
+    last_commit = data["last_commit"]
+    assert last_commit["available"] is True
+    assert last_commit["hash"]
+    assert last_commit["author_name"] == "GUI API Tests"
+    assert last_commit["authored_at"]
+
+
+def test_git_commit_stage_then_unstage_file(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-commit-stage-unstage")
+    (local / "STAGE_ROUNDTRIP.txt").write_text("roundtrip\n", encoding="utf-8")
+
+    stage_resp = client.post(
+        "/api/git/sync/commit/stage",
+        json={"repo_path": str(local), "paths": ["STAGE_ROUNDTRIP.txt"]},
+    )
+    stage_data = stage_resp.get_json()
+
+    assert stage_resp.status_code == 200
+    assert stage_data
+    assert stage_data["status"] == "staged"
+    assert "STAGE_ROUNDTRIP.txt" in stage_data["paths"]
+    staged_entry = {
+        str(item["path"]): item for item in stage_data["workflow"]["files"]
+    }["STAGE_ROUNDTRIP.txt"]
+    assert staged_entry["staged"] is True
+
+    unstage_resp = client.post(
+        "/api/git/sync/commit/unstage",
+        json={"repo_path": str(local), "paths": ["STAGE_ROUNDTRIP.txt"]},
+    )
+    unstage_data = unstage_resp.get_json()
+
+    assert unstage_resp.status_code == 200
+    assert unstage_data
+    assert unstage_data["status"] == "unstaged"
+    unstage_entry = {
+        str(item["path"]): item for item in unstage_data["workflow"]["files"]
+    }["STAGE_ROUNDTRIP.txt"]
+    assert unstage_entry["staged"] is False
+    assert unstage_entry["untracked"] is True
+
+
+def test_git_commit_create_commits_staged_changes(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-commit-create")
+    (local / "COMMIT_CREATE.txt").write_text("commit create\n", encoding="utf-8")
+    _run_git("add", "COMMIT_CREATE.txt", cwd=local)
+
+    resp = client.post(
+        "/api/git/sync/commit/create",
+        json={"repo_path": str(local), "message": "add commit workflow coverage"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "committed"
+    assert data["commit"]["available"] is True
+    assert data["commit"]["subject"] == "add commit workflow coverage"
+    assert data["workflow"]["counts"]["staged"] == 0
+
+    subject = _run_git("log", "-1", "--pretty=%s", cwd=local).stdout.strip()
+    assert subject == "add commit workflow coverage"
+
+
+def test_git_commit_create_requires_staged_changes(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-commit-create-empty")
+
+    resp = client.post(
+        "/api/git/sync/commit/create",
+        json={"repo_path": str(local), "message": "should fail"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert "No staged changes to commit" in data["error"]
 
 
 def test_git_sync_fetch_then_pull_updates_behind_count(client, tmp_path: Path):

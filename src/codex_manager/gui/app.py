@@ -3994,6 +3994,194 @@ def _git_push_pull_request_payload(*, repo: Path, remote: str, head_branch: str)
     return payload
 
 
+def _git_name_only_paths(repo: Path, *args: str) -> set[str]:
+    """Return unique file paths from a git command that outputs one path per line."""
+    result = _run_git_sync_command(repo, *args)
+    if result.returncode != 0:
+        detail = _extract_git_process_error(result, f"git {' '.join(args)} failed")
+        raise RuntimeError(detail)
+
+    paths: set[str] = set()
+    for raw_line in str(result.stdout or "").splitlines():
+        path = raw_line.strip()
+        if path:
+            paths.add(path)
+    return paths
+
+
+def _git_last_commit_summary(repo: Path) -> dict[str, object]:
+    """Return last-commit metadata for commit workflow UIs."""
+    log_format = "%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s"
+    result = _run_git_sync_command(repo, "log", "-1", f"--pretty=format:{log_format}")
+    if result.returncode != 0:
+        detail = _extract_git_process_error(result, "git log -1 failed")
+        lowered = detail.lower()
+        no_commit_tokens = (
+            "does not have any commits yet",
+            "unknown revision or path not in the working tree",
+            "ambiguous argument 'head'",
+        )
+        if any(token in lowered for token in no_commit_tokens):
+            return {
+                "available": False,
+                "hash": "",
+                "short_hash": "",
+                "author_name": "",
+                "author_email": "",
+                "authored_at": "",
+                "authored_at_epoch_ms": None,
+                "subject": "",
+            }
+        raise RuntimeError(detail)
+
+    parts = str(result.stdout or "").split("\x1f")
+    while len(parts) < 6:
+        parts.append("")
+    commit_hash, short_hash, author_name, author_email, authored_at, subject = [
+        str(part or "").strip() for part in parts[:6]
+    ]
+
+    authored_at_epoch_ms: int | None = None
+    if authored_at:
+        normalized = authored_at.replace("Z", "+00:00")
+        with suppress(ValueError):
+            authored_at_epoch_ms = int(datetime.fromisoformat(normalized).timestamp() * 1000)
+
+    return {
+        "available": bool(commit_hash),
+        "hash": commit_hash,
+        "short_hash": short_hash,
+        "author_name": author_name,
+        "author_email": author_email,
+        "authored_at": authored_at,
+        "authored_at_epoch_ms": authored_at_epoch_ms,
+        "subject": subject,
+    }
+
+
+def _git_commit_workflow_payload(repo: Path) -> dict[str, object]:
+    """Return changed-file stage state plus last commit summary for commit workflows."""
+    staged_paths = _git_name_only_paths(repo, "diff", "--name-only", "--cached")
+    unstaged_paths = _git_name_only_paths(repo, "diff", "--name-only")
+    untracked_paths = _git_name_only_paths(repo, "ls-files", "--others", "--exclude-standard")
+    all_paths = sorted(staged_paths | unstaged_paths | untracked_paths, key=lambda item: item.casefold())
+
+    files: list[dict[str, object]] = []
+    for path in all_paths:
+        staged = path in staged_paths
+        unstaged = path in unstaged_paths
+        untracked = path in untracked_paths
+        files.append(
+            {
+                "path": path,
+                "staged": staged,
+                "unstaged": unstaged,
+                "untracked": untracked,
+                "can_stage": untracked or unstaged,
+                "can_unstage": staged,
+            }
+        )
+
+    stageable_paths = [str(item["path"]) for item in files if bool(item.get("can_stage"))]
+    unstageable_paths = [str(item["path"]) for item in files if bool(item.get("can_unstage"))]
+    counts = {
+        "staged": len(staged_paths),
+        "unstaged": len(unstaged_paths),
+        "untracked": len(untracked_paths),
+        "total_changed": len(all_paths),
+    }
+
+    return {
+        "repo_path": str(repo),
+        "files": files,
+        "counts": counts,
+        "stageable_paths": stageable_paths,
+        "unstageable_paths": unstageable_paths,
+        "has_changes": bool(all_paths),
+        "has_staged_changes": bool(staged_paths),
+        "has_stageable_changes": bool(stageable_paths),
+        "last_commit": _git_last_commit_summary(repo),
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
+def _normalize_git_commit_paths(raw_paths: object) -> list[str]:
+    """Normalize and validate commit-workflow file path selections."""
+    if raw_paths is None:
+        return []
+    if isinstance(raw_paths, str):
+        values = [raw_paths]
+    elif isinstance(raw_paths, (list, tuple, set)):
+        values = list(raw_paths)
+    else:
+        raise ValueError("paths must be a string or a list of strings.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values:
+        path = str(raw_value or "").strip()
+        if not path:
+            continue
+        if "\x00" in path:
+            raise ValueError("paths entries may not include NUL bytes.")
+        if Path(path).is_absolute():
+            raise ValueError(f"Absolute paths are not allowed: {path}")
+        if path.startswith("-"):
+            raise ValueError(f"Invalid path (cannot start with '-'): {path}")
+        if path in seen:
+            continue
+        seen.add(path)
+        normalized.append(path)
+    return normalized
+
+
+def _resolve_git_commit_target_paths(
+    *,
+    available_paths: set[str],
+    requested_paths: list[str],
+    include_all: bool,
+    action_label: str,
+) -> list[str]:
+    """Resolve selected paths for stage/unstage actions from request payload."""
+    if include_all:
+        targets = sorted(available_paths, key=lambda item: item.casefold())
+        if not targets:
+            raise ValueError(f"No files available to {action_label}.")
+        return targets
+
+    if not requested_paths:
+        raise ValueError("paths is required unless all=true.")
+
+    invalid = [path for path in requested_paths if path not in available_paths]
+    if invalid:
+        preview = ", ".join(invalid[:3])
+        suffix = " ..." if len(invalid) > 3 else ""
+        raise ValueError(
+            f"Cannot {action_label} paths outside the current change set: {preview}{suffix}"
+        )
+    return requested_paths
+
+
+def _git_commit_user_error_status(message: str) -> int:
+    """Map commit-workflow user input errors to API status codes."""
+    lowered = str(message or "").lower()
+    if "current change set" in lowered or "no files available" in lowered:
+        return 409
+    return 400
+
+
+def _git_unstage_paths(repo: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
+    """Unstage paths, including fallback support for unborn HEAD repositories."""
+    restore_result = _run_git_sync_command(repo, "restore", "--staged", "--", *paths)
+    if restore_result.returncode == 0:
+        return restore_result
+
+    fallback_result = _run_git_sync_command(repo, "rm", "--cached", "--quiet", "--", *paths)
+    if fallback_result.returncode == 0:
+        return fallback_result
+    return restore_result
+
+
 def _git_sync_status_payload(repo: Path) -> dict[str, object]:
     """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
     branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
@@ -4587,6 +4775,213 @@ def api_git_sync_branch_create():
         return jsonify({"error": "Git branch creation timed out."}), 504
     except RuntimeError as exc:
         return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/commit/workflow")
+def api_git_sync_commit_workflow():
+    """Return stage/unstage candidates, commit summary, and last commit metadata."""
+    repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        workflow = _git_commit_workflow_payload(repo)
+        workflow["sync"] = _git_sync_status_payload(repo)
+        return jsonify(workflow)
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git commit workflow query timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not load commit workflow data: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/commit/stage", methods=["POST"])
+def api_git_sync_commit_stage():
+    """Stage selected file paths (or all stageable paths) for commit."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    include_all = _safe_bool(data.get("all"), default=False)
+    try:
+        requested_paths = _normalize_git_commit_paths(data.get("paths"))
+        workflow_before = _git_commit_workflow_payload(repo)
+        available_paths = {
+            str(path)
+            for path in workflow_before.get("stageable_paths", [])
+            if isinstance(path, str) and path.strip()
+        }
+        target_paths = _resolve_git_commit_target_paths(
+            available_paths=available_paths,
+            requested_paths=requested_paths,
+            include_all=include_all,
+            action_label="stage",
+        )
+
+        if include_all:
+            stage_result = _run_git_sync_command(repo, "add", "--all")
+        else:
+            stage_result = _run_git_sync_command(repo, "add", "--", *target_paths)
+        if stage_result.returncode != 0:
+            detail = _extract_git_process_error(stage_result, "git add failed")
+            return jsonify({"error": f"Git stage failed: {detail}"}), 502
+
+        workflow_after = _git_commit_workflow_payload(repo)
+        sync_after = _git_sync_status_payload(repo)
+        return jsonify(
+            {
+                "status": "staged",
+                "repo_path": str(repo),
+                "all": include_all,
+                "paths": target_paths,
+                "message": (
+                    f"Staged {len(target_paths)} file(s)."
+                    if not include_all
+                    else "Staged all pending changes."
+                ),
+                "stdout": _truncate_command_output(stage_result.stdout),
+                "stderr": _truncate_command_output(stage_result.stderr),
+                "workflow": workflow_after,
+                "sync": sync_after,
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), _git_commit_user_error_status(str(exc))
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git stage operation timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not load commit workflow data: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/commit/unstage", methods=["POST"])
+def api_git_sync_commit_unstage():
+    """Unstage selected file paths (or all staged paths)."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    include_all = _safe_bool(data.get("all"), default=False)
+    try:
+        requested_paths = _normalize_git_commit_paths(data.get("paths"))
+        workflow_before = _git_commit_workflow_payload(repo)
+        available_paths = {
+            str(path)
+            for path in workflow_before.get("unstageable_paths", [])
+            if isinstance(path, str) and path.strip()
+        }
+        target_paths = _resolve_git_commit_target_paths(
+            available_paths=available_paths,
+            requested_paths=requested_paths,
+            include_all=include_all,
+            action_label="unstage",
+        )
+
+        unstage_result = _git_unstage_paths(repo, target_paths)
+        if unstage_result.returncode != 0:
+            detail = _extract_git_process_error(unstage_result, "git unstage failed")
+            return jsonify({"error": f"Git unstage failed: {detail}"}), 502
+
+        workflow_after = _git_commit_workflow_payload(repo)
+        sync_after = _git_sync_status_payload(repo)
+        return jsonify(
+            {
+                "status": "unstaged",
+                "repo_path": str(repo),
+                "all": include_all,
+                "paths": target_paths,
+                "message": (
+                    f"Unstaged {len(target_paths)} file(s)."
+                    if not include_all
+                    else "Unstaged all staged files."
+                ),
+                "stdout": _truncate_command_output(unstage_result.stdout),
+                "stderr": _truncate_command_output(unstage_result.stderr),
+                "workflow": workflow_after,
+                "sync": sync_after,
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), _git_commit_user_error_status(str(exc))
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git unstage operation timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not load commit workflow data: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/commit/create", methods=["POST"])
+def api_git_sync_commit_create():
+    """Create a commit using staged changes and a user-supplied commit message."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    commit_message_raw = str(data.get("message") or "")
+    commit_message = commit_message_raw.strip()
+    if not commit_message:
+        return jsonify({"error": "Commit message is required."}), 400
+
+    try:
+        workflow_before = _git_commit_workflow_payload(repo)
+        counts = workflow_before.get("counts")
+        staged_count = _safe_int(counts.get("staged"), default=0) if isinstance(counts, dict) else 0
+        if staged_count <= 0:
+            return jsonify({"error": "No staged changes to commit. Stage files first."}), 409
+
+        commit_result = _run_git_sync_command(repo, "commit", "-m", commit_message_raw)
+        if commit_result.returncode != 0:
+            detail = _extract_git_process_error(commit_result, "git commit failed")
+            lowered = detail.lower()
+            if "nothing to commit" in lowered:
+                return jsonify({"error": "No staged changes to commit. Stage files first."}), 409
+            if "author identity unknown" in lowered or "please tell me who you are" in lowered:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                "Git commit failed: user identity is not configured. Set git user.name "
+                                "and user.email, then retry."
+                            ),
+                            "error_type": "identity_missing",
+                            "recovery_steps": [
+                                "Run `git config user.name \"Your Name\"`.",
+                                "Run `git config user.email \"you@example.com\"`.",
+                                "Retry the commit action.",
+                            ],
+                        }
+                    ),
+                    400,
+                )
+            return jsonify({"error": f"Git commit failed: {detail}"}), 502
+
+        workflow_after = _git_commit_workflow_payload(repo)
+        sync_after = _git_sync_status_payload(repo)
+        return jsonify(
+            {
+                "status": "committed",
+                "repo_path": str(repo),
+                "message": "Commit created.",
+                "commit_message": commit_message_raw,
+                "commit": workflow_after.get("last_commit"),
+                "stdout": _truncate_command_output(commit_result.stdout),
+                "stderr": _truncate_command_output(commit_result.stderr),
+                "workflow": workflow_after,
+                "sync": sync_after,
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git commit operation timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not load commit workflow data: {exc}"}), 502
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

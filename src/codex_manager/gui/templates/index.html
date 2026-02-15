@@ -564,6 +564,37 @@ body.mode-medium .easy-only{display:none}
 .github-auth-card details summary{cursor:pointer;font-size:12px;color:var(--text2);font-weight:600}
 .github-auth-card .meta{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5}
 
+#git-commit-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2250;display:flex;align-items:center;justify-content:center;padding:24px}
+#git-commit-overlay.hidden{display:none}
+.git-commit-card{width:900px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.git-commit-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.git-commit-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:12px}
+.git-commit-card .status{font-size:12px;color:var(--text2);margin-top:8px;min-height:1.2em}
+.git-commit-card .status[data-tone="ok"]{color:var(--success)}
+.git-commit-card .status[data-tone="warn"]{color:var(--warning)}
+.git-commit-card .status[data-tone="error"]{color:var(--danger)}
+.git-commit-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.git-commit-meta{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,360px);gap:12px;margin-bottom:12px}
+.git-commit-card-block{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:10px}
+.git-commit-card-block h3{margin-bottom:6px}
+.git-commit-last-commit{font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.git-commit-file-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.git-commit-file-toolbar .summary{font-size:12px;color:var(--text2)}
+.git-commit-file-list{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
+.git-commit-file-table{width:100%;border-collapse:collapse;font-size:12px}
+.git-commit-file-table th,.git-commit-file-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.git-commit-file-table thead th{position:sticky;top:0;background:var(--surface2);z-index:1;font-size:11px;color:var(--text2);letter-spacing:.2px;text-transform:uppercase}
+.git-commit-file-table tbody tr:last-child td{border-bottom:none}
+.git-commit-file-table td.path{font-family:var(--mono);word-break:break-all}
+.git-commit-file-actions{display:flex;gap:6px;flex-wrap:wrap}
+.git-commit-state-badges{display:flex;gap:5px;flex-wrap:wrap}
+.git-commit-state-badge{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--text2);background:rgba(19,29,43,.7)}
+.git-commit-state-badge.staged{color:var(--success);border-color:rgba(71,192,123,.45);background:rgba(71,192,123,.12)}
+.git-commit-state-badge.unstaged{color:var(--warning);border-color:rgba(223,170,88,.45);background:rgba(223,170,88,.12)}
+.git-commit-state-badge.untracked{color:var(--accent2);border-color:rgba(110,199,255,.45);background:rgba(110,199,255,.12)}
+.git-commit-message{margin-top:12px}
+.git-commit-message textarea{min-height:100px}
+
 #todo-wishlist-overlay,#feature-dreams-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
 #todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden{display:none}
 .todo-wishlist-card,.feature-dreams-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -788,6 +819,7 @@ body.mode-medium .easy-only{display:none}
   .mode-toggle{min-width:200px}
   .science-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
   .science-grid{grid-template-columns:1fr}
+  .git-commit-meta{grid-template-columns:1fr}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
@@ -842,6 +874,7 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" id="git-sync-fetch-btn" type="button" onclick="gitSyncFetch()">Fetch</button>
       <button class="btn" id="git-sync-pull-btn" type="button" onclick="gitSyncPull()">Pull</button>
       <button class="btn btn-success" id="git-sync-push-btn" type="button" onclick="gitSyncPush()">Push</button>
+      <button class="btn" id="git-sync-commit-panel-btn" type="button" onclick="showGitCommitModal()">Commit</button>
       <button
         class="btn"
         id="git-sync-open-pr-btn"
@@ -2078,6 +2111,67 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- Commit workflow modal -->
+<div id="git-commit-overlay" class="hidden" onclick="if(event.target===this)hideGitCommitModal()">
+  <div class="git-commit-card" role="dialog" aria-modal="true" aria-labelledby="git-commit-title">
+    <h2 id="git-commit-title">Commit Workflow</h2>
+    <p class="subtitle">Stage or unstage files, write a commit message, and review the most recent commit summary.</p>
+
+    <div class="git-commit-meta">
+      <div class="git-commit-card-block">
+        <h3>Repository</h3>
+        <div class="field-help" id="git-commit-repo-path">No repo selected</div>
+      </div>
+      <div class="git-commit-card-block">
+        <h3>Last Commit</h3>
+        <div class="git-commit-last-commit" id="git-commit-last-summary">No commits yet.</div>
+      </div>
+    </div>
+
+    <div class="git-commit-file-toolbar">
+      <div class="summary" id="git-commit-change-summary">No changes loaded.</div>
+      <button class="btn" id="git-commit-refresh-btn" type="button" onclick="refreshGitCommitWorkflowNow()">Refresh</button>
+      <button class="btn" id="git-commit-stage-all-btn" type="button" onclick="gitCommitStageAll()">Stage All</button>
+      <button class="btn" id="git-commit-unstage-all-btn" type="button" onclick="gitCommitUnstageAll()">Unstage All</button>
+    </div>
+
+    <div class="git-commit-file-list">
+      <table class="git-commit-file-table">
+        <thead>
+          <tr>
+            <th style="width:46%">Path</th>
+            <th style="width:32%">State</th>
+            <th style="width:22%">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="git-commit-files-body">
+          <tr>
+            <td colspan="3" style="color:var(--text2)">Select a repository path to load changed files.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="git-commit-message">
+      <label for="git-commit-message">Commit Message</label>
+      <textarea
+        id="git-commit-message"
+        rows="5"
+        placeholder="Describe the change you are committing..."
+        oninput="_syncGitCommitControls()"
+      ></textarea>
+      <div class="field-help">Commits use this message exactly as entered.</div>
+    </div>
+
+    <div class="status" id="git-commit-status" data-tone="muted"></div>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideGitCommitModal()">Close</button>
+      <button class="btn btn-success" id="git-commit-create-btn" type="button" onclick="gitCommitCreate()">Commit</button>
+    </div>
+  </div>
+</div>
+
 <!-- GitHub Auth modal -->
 <div id="github-auth-overlay" class="hidden" onclick="if(event.target===this)hideGithubAuthModal()">
   <div class="github-auth-card" role="dialog" aria-modal="true" aria-labelledby="github-auth-title">
@@ -2369,6 +2463,7 @@ let githubAuthState = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 let gitSyncState = null;
 let gitSyncBranchState = null;
+let gitCommitWorkflowState = null;
 let gitSyncBusyAction = '';
 let gitSyncPullRequestUrl = '';
 let gitSyncRefreshTimer = null;
@@ -2414,6 +2509,7 @@ const _modalOverlayIds = [
   'browse-overlay',
   'new-project-overlay',
   'clone-repo-overlay',
+  'git-commit-overlay',
   'github-auth-overlay',
   'todo-wishlist-overlay',
   'feature-dreams-overlay',
@@ -3537,6 +3633,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeDocsModal();
     hideTodoWishlistModal();
     hideFeatureDreamsModal();
+    hideGitCommitModal();
     hideNewProjectModal();
     hideCloneRepoModal();
     hideGithubAuthModal();
@@ -3696,7 +3793,7 @@ function _gitSyncAllowDirtySwitchEnabled() {
 function _syncGitSyncButtonState() {
   const hasRepoPath = !!_activeRepoPathForGitSync();
   const disabled = !hasRepoPath || !!gitSyncBusyAction;
-  ['git-sync-fetch-btn', 'git-sync-pull-btn', 'git-sync-push-btn', 'git-sync-stash-pull-btn'].forEach(id => {
+  ['git-sync-fetch-btn', 'git-sync-pull-btn', 'git-sync-push-btn', 'git-sync-stash-pull-btn', 'git-sync-commit-panel-btn'].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
   });
@@ -3720,6 +3817,7 @@ function _syncGitSyncButtonState() {
   if (branchCreateBtn) branchCreateBtn.disabled = disabled || !branchName;
   const allowDirty = document.getElementById('git-sync-allow-dirty-switch');
   if (allowDirty) allowDirty.disabled = disabled;
+  _syncGitCommitControls();
 }
 
 function _renderGitSyncState(sync) {
@@ -3780,9 +3878,13 @@ async function refreshGitSyncStatus(opts = {}) {
   if (!repoPath) {
     gitSyncState = null;
     gitSyncBranchState = null;
+    gitCommitWorkflowState = null;
     _setGitSyncPullRequestUrl('');
     _clearGitSyncBranchOptions();
     _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
+    if (_isGitCommitModalOpen()) {
+      _clearGitCommitWorkflowView('Set a repository path first.');
+    }
     _syncGitSyncButtonState();
     return;
   }
@@ -3814,6 +3916,9 @@ async function refreshGitSyncStatus(opts = {}) {
     force: !!opts.force,
     preferredBranch: String(response.branch || '').trim(),
   });
+  if (_isGitCommitModalOpen()) {
+    await refreshGitCommitWorkflow({ repoPath, silent: true, force: !!opts.force });
+  }
   _syncGitSyncButtonState();
 }
 
@@ -3965,6 +4070,9 @@ async function _runGitSyncAction(actionKey) {
   } else {
     await refreshGitSyncBranches({ repoPath, silent: true, force: true });
   }
+  if (_isGitCommitModalOpen()) {
+    await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
+  }
 
   toast(String(response.message || action.successFallback), 'success');
 }
@@ -4091,6 +4199,9 @@ async function gitSyncSwitchBranch() {
   } else {
     await refreshGitSyncBranches({ repoPath, silent: true, force: true });
   }
+  if (_isGitCommitModalOpen()) {
+    await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
+  }
 
   toast(String(response.message || 'Branch switched.'), 'success');
 }
@@ -4152,9 +4263,373 @@ async function gitSyncCreateBranch() {
   } else {
     await refreshGitSyncBranches({ repoPath, silent: true, force: true });
   }
+  if (_isGitCommitModalOpen()) {
+    await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
+  }
   _syncGitSyncButtonState();
 
   toast(String(response.message || 'Branch created.'), 'success');
+}
+
+function _isGitCommitModalOpen() {
+  const overlay = document.getElementById('git-commit-overlay');
+  return !!(overlay && !overlay.classList.contains('hidden'));
+}
+
+function _setGitCommitRepoPathLabel(path) {
+  const repoEl = document.getElementById('git-commit-repo-path');
+  if (!repoEl) return;
+  const repoPath = String(path || '').trim();
+  repoEl.textContent = repoPath || 'No repo selected';
+  repoEl.title = repoPath || 'No repository selected';
+}
+
+function _setGitCommitStatus(text, tone = 'muted') {
+  const el = document.getElementById('git-commit-status');
+  if (!el) return;
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
+  el.textContent = String(text || '');
+}
+
+function _formatGitCommitTimestamp(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return 'n/a';
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return value;
+  return new Date(ts).toLocaleString();
+}
+
+function _renderGitCommitLastSummary(lastCommit) {
+  const el = document.getElementById('git-commit-last-summary');
+  if (!el) return;
+  if (!lastCommit || !lastCommit.available) {
+    el.textContent = 'No commits yet.';
+    return;
+  }
+  const shortHash = String(lastCommit.short_hash || '').trim();
+  const fullHash = String(lastCommit.hash || '').trim();
+  const author = String(lastCommit.author_name || '').trim() || 'Unknown author';
+  const authoredAt = _formatGitCommitTimestamp(lastCommit.authored_at);
+  const subject = String(lastCommit.subject || '').trim() || '(no subject)';
+  const hashLabel = shortHash || fullHash || 'n/a';
+  const lines = [
+    'Hash: ' + hashLabel,
+    'Author: ' + author,
+    'Time: ' + authoredAt,
+    'Subject: ' + subject,
+  ];
+  el.textContent = lines.join('\n');
+  if (fullHash) {
+    el.title = 'Full hash: ' + fullHash;
+  }
+}
+
+function _renderGitCommitFileRows(files) {
+  const tbody = document.getElementById('git-commit-files-body');
+  if (!tbody) return;
+  const rows = Array.isArray(files) ? files : [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text2)">No changed files in this repository.</td></tr>';
+    return;
+  }
+
+  const busy = !!gitSyncBusyAction;
+  tbody.innerHTML = rows.map(entry => {
+    const path = String(entry && entry.path || '').trim();
+    if (!path) return '';
+    const canStage = !!(entry && entry.can_stage);
+    const canUnstage = !!(entry && entry.can_unstage);
+    const encodedPath = encodeURIComponent(path);
+
+    const badges = [];
+    if (entry && entry.staged) badges.push('<span class="git-commit-state-badge staged">staged</span>');
+    if (entry && entry.unstaged) badges.push('<span class="git-commit-state-badge unstaged">unstaged</span>');
+    if (entry && entry.untracked) badges.push('<span class="git-commit-state-badge untracked">untracked</span>');
+    if (!badges.length) badges.push('<span class="git-commit-state-badge">clean</span>');
+
+    const stageDisabled = busy || !canStage;
+    const unstageDisabled = busy || !canUnstage;
+    return '<tr>'
+      + '<td class="path">' + esc(path) + '</td>'
+      + '<td><div class="git-commit-state-badges">' + badges.join('') + '</div></td>'
+      + '<td><div class="git-commit-file-actions">'
+      + '<button class="btn" type="button" data-kind="stage" data-enabled="' + (canStage ? '1' : '0') + '" onclick="gitCommitStagePath(decodeURIComponent(\'' + encodedPath + '\'))"'
+      + (stageDisabled ? ' disabled' : '') + '>Stage</button>'
+      + '<button class="btn" type="button" data-kind="unstage" data-enabled="' + (canUnstage ? '1' : '0') + '" onclick="gitCommitUnstagePath(decodeURIComponent(\'' + encodedPath + '\'))"'
+      + (unstageDisabled ? ' disabled' : '') + '>Unstage</button>'
+      + '</div></td>'
+      + '</tr>';
+  }).join('');
+}
+
+function _syncGitCommitControls() {
+  const busy = !!gitSyncBusyAction;
+  const hasRepo = !!_activeRepoPathForGitSync();
+  const disabled = busy || !hasRepo;
+  const workflow = gitCommitWorkflowState && typeof gitCommitWorkflowState === 'object'
+    ? gitCommitWorkflowState
+    : null;
+  const counts = workflow && workflow.counts && typeof workflow.counts === 'object'
+    ? workflow.counts
+    : {};
+  const stagedCount = Number(counts && counts.staged || 0);
+  const stageablePaths = Array.isArray(workflow && workflow.stageable_paths) ? workflow.stageable_paths : [];
+  const unstageablePaths = Array.isArray(workflow && workflow.unstageable_paths) ? workflow.unstageable_paths : [];
+  const messageEl = document.getElementById('git-commit-message');
+  const commitMessage = String(messageEl ? messageEl.value : '').trim();
+
+  const refreshBtn = document.getElementById('git-commit-refresh-btn');
+  if (refreshBtn) refreshBtn.disabled = disabled;
+  const stageAllBtn = document.getElementById('git-commit-stage-all-btn');
+  if (stageAllBtn) stageAllBtn.disabled = disabled || stageablePaths.length <= 0;
+  const unstageAllBtn = document.getElementById('git-commit-unstage-all-btn');
+  if (unstageAllBtn) unstageAllBtn.disabled = disabled || unstageablePaths.length <= 0;
+  document.querySelectorAll('#git-commit-files-body button[data-enabled]').forEach(btn => {
+    const canRun = String(btn.getAttribute('data-enabled') || '') === '1';
+    btn.disabled = disabled || !canRun;
+  });
+  if (messageEl) messageEl.disabled = !hasRepo || busy;
+  const createBtn = document.getElementById('git-commit-create-btn');
+  if (createBtn) createBtn.disabled = disabled || stagedCount <= 0 || !commitMessage;
+}
+
+function _applyGitCommitWorkflowResponse(payload, opts = {}) {
+  if (!payload || typeof payload !== 'object') return;
+  gitCommitWorkflowState = payload;
+  _setGitCommitRepoPathLabel(payload.repo_path || _activeRepoPathForGitSync());
+  _renderGitCommitFileRows(payload.files || []);
+  _renderGitCommitLastSummary(payload.last_commit || null);
+  const counts = payload && payload.counts && typeof payload.counts === 'object'
+    ? payload.counts
+    : {};
+  const staged = Number(counts.staged || 0);
+  const unstaged = Number(counts.unstaged || 0);
+  const untracked = Number(counts.untracked || 0);
+  const total = Number(counts.total_changed || (staged + unstaged + untracked) || 0);
+  const summaryEl = document.getElementById('git-commit-change-summary');
+  if (summaryEl) {
+    summaryEl.textContent = 'Changed files: ' + total + ' | staged ' + staged + ', unstaged ' + unstaged + ', untracked ' + untracked;
+  }
+  if (payload.sync) {
+    gitSyncState = payload.sync;
+    _renderGitSyncState(payload.sync);
+  }
+  if (opts.statusText) {
+    _setGitCommitStatus(opts.statusText, opts.statusTone || 'muted');
+  }
+  _syncGitCommitControls();
+}
+
+function _clearGitCommitWorkflowView(message = 'No repository selected.') {
+  gitCommitWorkflowState = null;
+  _setGitCommitRepoPathLabel('');
+  const summaryEl = document.getElementById('git-commit-change-summary');
+  if (summaryEl) summaryEl.textContent = 'No changes loaded.';
+  _renderGitCommitFileRows([]);
+  _renderGitCommitLastSummary(null);
+  _setGitCommitStatus(message, 'muted');
+  _syncGitCommitControls();
+}
+
+async function showGitCommitModal() {
+  _openOverlay('git-commit-overlay', '#git-commit-message');
+  const repoPath = _activeRepoPathForGitSync();
+  _setGitCommitRepoPathLabel(repoPath);
+  if (!repoPath) {
+    _clearGitCommitWorkflowView('Set a repository path first.');
+    return;
+  }
+  await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
+}
+
+function hideGitCommitModal() {
+  _closeOverlay('git-commit-overlay');
+}
+
+async function refreshGitCommitWorkflow(opts = {}) {
+  const repoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (!repoPath) {
+    _clearGitCommitWorkflowView('Set a repository path first.');
+    return;
+  }
+  _setGitCommitRepoPathLabel(repoPath);
+  if (gitSyncBusyAction && !opts.force) {
+    _syncGitCommitControls();
+    return;
+  }
+
+  if (!opts.silent) {
+    _setGitCommitStatus('Loading commit workflow...', 'muted');
+  }
+  const response = await api('/api/git/sync/commit/workflow?repo_path=' + encodeURIComponent(repoPath));
+  const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (repoPath !== currentRepoPath) {
+    return;
+  }
+  if (response.error) {
+    gitCommitWorkflowState = null;
+    const message = String(response.error || 'Unknown error');
+    _setGitCommitStatus(message, 'error');
+    if (!opts.silent) toast('Could not load commit workflow: ' + message, 'error');
+    _syncGitCommitControls();
+    return;
+  }
+
+  _applyGitCommitWorkflowResponse(
+    response,
+    opts.silent
+      ? {}
+      : {
+          statusText: String(response.message || 'Commit workflow updated.'),
+          statusTone: 'ok',
+        }
+  );
+}
+
+async function refreshGitCommitWorkflowNow() {
+  await refreshGitCommitWorkflow({ silent: false, force: true });
+}
+
+async function _runGitCommitWorkflowAction(actionKey, endpoint, payload, opts = {}) {
+  if (gitSyncBusyAction) return null;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    _clearGitCommitWorkflowView('Set a repository path first.');
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+    return null;
+  }
+
+  const runningText = String(opts.running || 'Applying commit workflow action...');
+  gitSyncBusyAction = actionKey;
+  _syncGitSyncButtonState();
+  _setGitCommitStatus(runningText, 'muted');
+
+  const requestPayload = Object.assign({ repo_path: repoPath }, payload || {});
+  const response = await postJson(endpoint, requestPayload);
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitCommitStatus(message, 'error');
+    toast(String(opts.failurePrefix || 'Commit workflow action failed: ') + message, 'error');
+    const recoverySteps = Array.isArray(response.recovery_steps) ? response.recovery_steps : [];
+    if (recoverySteps.length) {
+      toast('Recovery: ' + recoverySteps.join(' | '), 'info');
+    }
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    if (_isGitCommitModalOpen()) {
+      await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
+    }
+    return null;
+  }
+
+  if (response.workflow) {
+    _applyGitCommitWorkflowResponse(response.workflow, {
+      statusText: String(response.message || opts.successFallback || 'Commit workflow updated.'),
+      statusTone: 'ok',
+    });
+  } else if (_isGitCommitModalOpen()) {
+    await refreshGitCommitWorkflow({ repoPath, silent: true, force: true });
+  }
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  } else {
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+  }
+
+  toast(String(response.message || opts.successFallback || 'Commit workflow action completed.'), 'success');
+  return response;
+}
+
+async function gitCommitStagePath(path) {
+  const filePath = String(path || '').trim();
+  if (!filePath) return;
+  await _runGitCommitWorkflowAction(
+    'git_commit_stage_path',
+    '/api/git/sync/commit/stage',
+    { paths: [filePath] },
+    {
+      running: 'Staging ' + filePath + '...',
+      successFallback: 'File staged.',
+      failurePrefix: 'Stage failed: ',
+    }
+  );
+}
+
+async function gitCommitUnstagePath(path) {
+  const filePath = String(path || '').trim();
+  if (!filePath) return;
+  await _runGitCommitWorkflowAction(
+    'git_commit_unstage_path',
+    '/api/git/sync/commit/unstage',
+    { paths: [filePath] },
+    {
+      running: 'Unstaging ' + filePath + '...',
+      successFallback: 'File unstaged.',
+      failurePrefix: 'Unstage failed: ',
+    }
+  );
+}
+
+async function gitCommitStageAll() {
+  await _runGitCommitWorkflowAction(
+    'git_commit_stage_all',
+    '/api/git/sync/commit/stage',
+    { all: true },
+    {
+      running: 'Staging all pending changes...',
+      successFallback: 'All pending changes staged.',
+      failurePrefix: 'Stage all failed: ',
+    }
+  );
+}
+
+async function gitCommitUnstageAll() {
+  await _runGitCommitWorkflowAction(
+    'git_commit_unstage_all',
+    '/api/git/sync/commit/unstage',
+    { all: true },
+    {
+      running: 'Unstaging all staged changes...',
+      successFallback: 'All staged changes unstaged.',
+      failurePrefix: 'Unstage all failed: ',
+    }
+  );
+}
+
+async function gitCommitCreate() {
+  const messageEl = document.getElementById('git-commit-message');
+  const message = String(messageEl ? messageEl.value : '').trim();
+  if (!message) {
+    toast('Enter a commit message first.', 'warn');
+    _syncGitCommitControls();
+    return;
+  }
+  const response = await _runGitCommitWorkflowAction(
+    'git_commit_create',
+    '/api/git/sync/commit/create',
+    { message },
+    {
+      running: 'Creating commit...',
+      successFallback: 'Commit created.',
+      failurePrefix: 'Commit failed: ',
+    }
+  );
+  if (!response) return;
+
+  if (messageEl) messageEl.value = '';
+  const commit = response.commit && typeof response.commit === 'object' ? response.commit : null;
+  const hashLabel = String((commit && (commit.short_hash || commit.hash)) || '').trim();
+  if (hashLabel) {
+    _setGitCommitStatus('Commit created: ' + hashLabel, 'ok');
+  } else {
+    _setGitCommitStatus('Commit created.', 'ok');
+  }
+  _syncGitCommitControls();
 }
 
 function syncTodoWishlistRepoFromMain() {
