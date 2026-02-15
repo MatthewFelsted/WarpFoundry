@@ -828,6 +828,10 @@ def _todo_wishlist_path(repo: Path) -> Path:
     return repo / ".codex_manager" / "owner" / "TODO_WISHLIST.md"
 
 
+def _feature_dreams_path(repo: Path) -> Path:
+    return repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md"
+
+
 def _default_todo_wishlist_markdown(project_name: str) -> str:
     name = str(project_name or "Project").strip() or "Project"
     return (
@@ -847,10 +851,37 @@ def _default_todo_wishlist_markdown(project_name: str) -> str:
     )
 
 
+def _default_feature_dreams_markdown(project_name: str) -> str:
+    name = str(project_name or "Project").strip() or "Project"
+    return (
+        f"# {name} Feature Dreams\n\n"
+        "Execution order: top to bottom. Keep this file feature-only.\n\n"
+        "## P0 - Highest Value / Lowest Effort\n\n"
+        "- [ ] [S] Add one high-impact feature that improves core user value.\n"
+        "- [ ] [M] Add one workflow automation feature that removes repetitive steps.\n\n"
+        "## P1 - Product Leverage\n\n"
+        "- [ ] [M] Add one feature that improves onboarding or discoverability.\n"
+        "- [ ] [M] Add one feature that improves reliability or observability for users.\n\n"
+        "## P2 - Advanced Features\n\n"
+        "- [ ] [L] Add one differentiated long-term feature bet to revisit later.\n\n"
+        "## Notes\n\n"
+        "- Mark completed items as `- [x] ...`.\n"
+        "- Keep items concrete and implementation-ready.\n"
+        "- Use effort tags `[S]`, `[M]`, `[L]` for prioritization.\n"
+    )
+
+
 def _read_todo_wishlist(repo: Path) -> str:
     path = _todo_wishlist_path(repo)
     if not path.is_file():
         return _default_todo_wishlist_markdown(repo.name)
+    return _read_text_utf8_resilient(path)
+
+
+def _read_feature_dreams(repo: Path) -> str:
+    path = _feature_dreams_path(repo)
+    if not path.is_file():
+        return _default_feature_dreams_markdown(repo.name)
     return _read_text_utf8_resilient(path)
 
 
@@ -862,7 +893,19 @@ def _write_todo_wishlist(repo: Path, content: str) -> Path:
     return path
 
 
+def _write_feature_dreams(repo: Path, content: str) -> Path:
+    path = _feature_dreams_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clean = str(content or "").strip() or _default_feature_dreams_markdown(repo.name)
+    path.write_text(clean + "\n", encoding="utf-8")
+    return path
+
+
 def _todo_wishlist_has_open_items(text: str) -> bool:
+    return bool(re.search(r"^\s*[-*]\s+\[\s\]\s+", str(text or ""), flags=re.MULTILINE))
+
+
+def _feature_dreams_has_open_items(text: str) -> bool:
     return bool(re.search(r"^\s*[-*]\s+\[\s\]\s+", str(text or ""), flags=re.MULTILINE))
 
 
