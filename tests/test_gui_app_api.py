@@ -65,6 +65,30 @@ def _make_remote_repo(tmp_path: Path, *, default_branch: str = "main") -> Path:
     return bare
 
 
+def _clone_tracking_repo(tmp_path: Path, remote: Path, *, clone_name: str = "local") -> Path:
+    local = tmp_path / clone_name
+    _run_git("clone", str(remote), str(local), cwd=tmp_path)
+    _run_git("config", "user.name", "GUI API Tests", cwd=local)
+    _run_git("config", "user.email", "gui-api-tests@example.com", cwd=local)
+    return local
+
+
+def _push_remote_update(
+    tmp_path: Path,
+    remote: Path,
+    *,
+    clone_name: str,
+    filename: str,
+    content: str,
+    message: str,
+) -> None:
+    updater = _clone_tracking_repo(tmp_path, remote, clone_name=clone_name)
+    (updater / filename).write_text(content, encoding="utf-8")
+    _run_git("add", filename, cwd=updater)
+    _run_git("commit", "-m", message, cwd=updater)
+    _run_git("push", "origin", "HEAD", cwd=updater)
+
+
 def _chain_payload(repo_path: Path, **overrides):
     payload = {
         "name": "Test Chain",
@@ -2207,6 +2231,103 @@ def test_project_clone_endpoint_rejects_dash_prefixed_remote_url(client, tmp_pat
     assert resp.status_code == 400
     assert data
     assert "Remote URL is invalid" in data["error"]
+
+
+def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-status")
+
+    clean_resp = client.get("/api/git/sync/status", query_string={"repo_path": str(local)})
+    clean_data = clean_resp.get_json()
+
+    assert clean_resp.status_code == 200
+    assert clean_data
+    assert clean_data["branch"] == "main"
+    assert clean_data["has_tracking_branch"] is True
+    assert clean_data["ahead"] == 0
+    assert clean_data["behind"] == 0
+    assert clean_data["dirty"] is False
+    assert clean_data["clean"] is True
+
+    (local / "UNTRACKED.txt").write_text("dirty file\n", encoding="utf-8")
+    dirty_resp = client.get("/api/git/sync/status", query_string={"repo_path": str(local)})
+    dirty_data = dirty_resp.get_json()
+
+    assert dirty_resp.status_code == 200
+    assert dirty_data
+    assert dirty_data["dirty"] is True
+    assert dirty_data["untracked_changes"] >= 1
+
+
+def test_git_sync_fetch_then_pull_updates_behind_count(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-pull")
+    _push_remote_update(
+        tmp_path,
+        remote,
+        clone_name="updater-sync-pull",
+        filename="REMOTE.md",
+        content="upstream update\n",
+        message="remote update",
+    )
+
+    fetch_resp = client.post("/api/git/sync/fetch", json={"repo_path": str(local)})
+    fetch_data = fetch_resp.get_json()
+
+    assert fetch_resp.status_code == 200
+    assert fetch_data
+    assert fetch_data["status"] == "fetched"
+    assert fetch_data["sync"]["behind"] == 1
+
+    pull_resp = client.post("/api/git/sync/pull", json={"repo_path": str(local)})
+    pull_data = pull_resp.get_json()
+
+    assert pull_resp.status_code == 200
+    assert pull_data
+    assert pull_data["status"] == "pulled"
+    assert pull_data["sync"]["behind"] == 0
+    assert pull_data["sync"]["dirty"] is False
+    assert (local / "REMOTE.md").is_file()
+
+
+def test_git_sync_stash_pull_stashes_local_changes_then_pulls(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-stash-pull")
+    _push_remote_update(
+        tmp_path,
+        remote,
+        clone_name="updater-sync-stash",
+        filename="REMOTE_STASH.md",
+        content="remote stash pull update\n",
+        message="remote update for stash pull",
+    )
+
+    (local / "README.md").write_text("# Local Dirty Change\n", encoding="utf-8")
+    (local / "LOCAL_ONLY.txt").write_text("local worktree edits\n", encoding="utf-8")
+
+    resp = client.post("/api/git/sync/stash-pull", json={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "stashed_and_pulled"
+    assert data["stash_created"] is True
+    assert data["stash_ref"]
+    assert data["sync"]["behind"] == 0
+    assert data["sync"]["dirty"] is False
+    assert (local / "REMOTE_STASH.md").is_file()
+
+    stash_list = _run_git("stash", "list", cwd=local).stdout
+    assert "codex-manager:auto-stash-before-pull" in stash_list
+
+
+def test_git_sync_status_requires_repo_path(client):
+    resp = client.get("/api/git/sync/status")
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "repo_path is required" in data["error"]
 
 
 def test_diagnostics_reports_actionable_failures(client, monkeypatch):

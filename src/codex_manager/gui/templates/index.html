@@ -81,6 +81,12 @@ header{
 .header-actions select{min-width:120px;max-width:180px}
 .header-doc-links{display:flex;gap:6px;align-items:center}
 .header-doc-links .btn{padding:5px 9px;font-size:12px}
+.git-sync-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);background:rgba(7,11,17,.55)}
+.git-sync-controls .btn{padding:5px 10px;font-size:12px}
+.git-sync-indicator{font-size:11px;color:var(--text2);padding:4px 8px;border:1px solid var(--border);border-radius:999px;background:var(--bg);white-space:nowrap;min-height:24px;display:inline-flex;align-items:center;max-width:320px;overflow:hidden;text-overflow:ellipsis}
+.git-sync-indicator[data-tone="ok"]{color:var(--success);border-color:rgba(71,192,123,.55);background:rgba(71,192,123,.1)}
+.git-sync-indicator[data-tone="warn"]{color:var(--warning);border-color:rgba(223,170,88,.55);background:rgba(223,170,88,.12)}
+.git-sync-indicator[data-tone="error"]{color:var(--danger);border-color:rgba(255,111,111,.55);background:rgba(255,111,111,.1)}
 
 /* Docs modal */
 #docs-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2500;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -776,6 +782,7 @@ body.mode-medium .easy-only{display:none}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
+  .git-sync-indicator{max-width:100%}
   #toast-stack{right:12px;bottom:12px}
   .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal{max-height:88vh}
   .science-cards{grid-template-columns:1fr}
@@ -821,6 +828,12 @@ body.mode-medium .easy-only{display:none}
       <button type="button" data-mode="easy" onclick="applyMode('easy')" title="Autopilot: pick a recipe and go">Autopilot</button>
       <button type="button" data-mode="medium" onclick="applyMode('medium')" title="Customize: build and tweak steps">Customize</button>
       <button type="button" data-mode="expert" onclick="applyMode('expert')" title="Expert: full control">Expert</button>
+    </div>
+    <div class="git-sync-controls">
+      <button class="btn" id="git-sync-fetch-btn" type="button" onclick="gitSyncFetch()">Fetch</button>
+      <button class="btn" id="git-sync-pull-btn" type="button" onclick="gitSyncPull()">Pull</button>
+      <button class="btn btn-warning" id="git-sync-stash-pull-btn" type="button" onclick="gitSyncStashAndPull()">Stash + Pull</button>
+      <span class="git-sync-indicator" id="git-sync-indicator" data-tone="muted" title="Select a repository path to view sync status">No repo selected</span>
     </div>
     <button class="btn" type="button" onclick="showGithubAuthModal()">GitHub Auth</button>
     <button class="btn" type="button" onclick="showCloneRepoModal()">Clone Repo</button>
@@ -2301,6 +2314,11 @@ let watchdogAlertDigest = '';
 let watchdogMigrationSuggestions = [];
 let githubAuthState = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
+let gitSyncState = null;
+let gitSyncBusyAction = '';
+let gitSyncRefreshTimer = null;
+let gitSyncPollTimer = null;
+const GIT_SYNC_POLL_INTERVAL_MS = 20000;
 
 let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cm_mode')) || 'easy';
 
@@ -3415,6 +3433,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   startBackendHealthPolling();
   startWatchdogAlertPolling();
   switchTab('chain');
+  _syncGitSyncButtonState();
+  scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+  if (gitSyncPollTimer) clearInterval(gitSyncPollTimer);
+  gitSyncPollTimer = setInterval(() => {
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true });
+  }, GIT_SYNC_POLL_INTERVAL_MS);
   applyMode(currentMode);
   loadConfigList();
   renderSteps();
@@ -3479,6 +3503,198 @@ function _activeRepoPath() {
   if (chainRepo) return chainRepo;
   const pipeRepo = String(document.getElementById('pipe-repo-path').value || '').trim();
   return pipeRepo;
+}
+
+function _activeMainTabId() {
+  const active = document.querySelector('#main-tabs button[aria-selected="true"]');
+  const tabId = String(active ? active.dataset.tab : '').trim();
+  return tabId === 'pipeline' ? 'pipeline' : 'chain';
+}
+
+function _activeRepoPathForGitSync() {
+  const chainRepo = String(document.getElementById('repo-path').value || '').trim();
+  const pipeRepo = String(document.getElementById('pipe-repo-path').value || '').trim();
+  if (_activeMainTabId() === 'pipeline') {
+    return pipeRepo || chainRepo;
+  }
+  return chainRepo || pipeRepo;
+}
+
+function _setGitSyncIndicator(text, tone = 'muted', title = '') {
+  const el = document.getElementById('git-sync-indicator');
+  if (!el) return;
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
+  el.textContent = String(text || '');
+  el.title = String(title || text || '');
+}
+
+function _syncGitSyncButtonState() {
+  const hasRepoPath = !!_activeRepoPathForGitSync();
+  const disabled = !hasRepoPath || !!gitSyncBusyAction;
+  ['git-sync-fetch-btn', 'git-sync-pull-btn', 'git-sync-stash-pull-btn'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = disabled;
+  });
+}
+
+function _renderGitSyncState(sync) {
+  const branch = String((sync && sync.branch) || 'HEAD').trim() || 'HEAD';
+  const trackingBranch = String((sync && sync.tracking_branch) || '').trim();
+  const aheadRaw = sync ? sync.ahead : null;
+  const behindRaw = sync ? sync.behind : null;
+  const aheadKnown = aheadRaw !== null && aheadRaw !== undefined && Number.isFinite(Number(aheadRaw));
+  const behindKnown = behindRaw !== null && behindRaw !== undefined && Number.isFinite(Number(behindRaw));
+  const ahead = aheadKnown ? Number(aheadRaw) : 0;
+  const behind = behindKnown ? Number(behindRaw) : 0;
+  const staged = Number((sync && sync.staged_changes) || 0);
+  const unstaged = Number((sync && sync.unstaged_changes) || 0);
+  const untracked = Number((sync && sync.untracked_changes) || 0);
+  const dirty = !!(sync && sync.dirty);
+  const changeCount = Math.max(0, staged + unstaged + untracked);
+  const divergence = (aheadKnown && behindKnown)
+    ? ('ahead ' + ahead + ' | behind ' + behind)
+    : 'no upstream';
+  const dirtyLabel = dirty ? ('dirty (' + changeCount + ')') : 'clean';
+  const summary = branch + ' | ' + divergence + ' | ' + dirtyLabel;
+
+  let tone = 'ok';
+  if (!trackingBranch || !aheadKnown || !behindKnown) tone = 'muted';
+  if (dirty || (behindKnown && behind > 0)) tone = 'warn';
+
+  let title = 'Branch: ' + branch;
+  title += '\nTracking: ' + (trackingBranch || 'none');
+  if (aheadKnown && behindKnown) {
+    title += '\nAhead: ' + ahead + ', Behind: ' + behind;
+  } else {
+    title += '\nAhead/Behind: unavailable (set upstream tracking to enable)';
+  }
+  title += '\nChanges: staged ' + staged + ', unstaged ' + unstaged + ', untracked ' + untracked;
+
+  _setGitSyncIndicator(summary, tone, title);
+}
+
+function scheduleGitSyncRefresh(opts = {}) {
+  if (gitSyncRefreshTimer) {
+    clearTimeout(gitSyncRefreshTimer);
+    gitSyncRefreshTimer = null;
+  }
+  const delayRaw = Number(opts.delayMs);
+  const delayMs = Number.isFinite(delayRaw) ? Math.max(0, Math.floor(delayRaw)) : 250;
+  gitSyncRefreshTimer = setTimeout(() => {
+    gitSyncRefreshTimer = null;
+    refreshGitSyncStatus({
+      repoPath: opts.repoPath || '',
+      silent: opts.silent !== false,
+      force: !!opts.force,
+    });
+  }, delayMs);
+}
+
+async function refreshGitSyncStatus(opts = {}) {
+  const repoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (!repoPath) {
+    gitSyncState = null;
+    _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  if (gitSyncBusyAction && !opts.force) {
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  const response = await api('/api/git/sync/status?repo_path=' + encodeURIComponent(repoPath));
+  const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (repoPath !== currentRepoPath) {
+    return;
+  }
+  if (response.error) {
+    gitSyncState = null;
+    const message = String(response.error || 'Unknown error');
+    _setGitSyncIndicator(message, 'error', message);
+    if (!opts.silent) toast('Could not load git sync status: ' + message, 'error');
+    _syncGitSyncButtonState();
+    return;
+  }
+
+  gitSyncState = response;
+  _renderGitSyncState(response);
+  _syncGitSyncButtonState();
+}
+
+async function _runGitSyncAction(actionKey) {
+  if (gitSyncBusyAction) return;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+    return;
+  }
+
+  const actions = {
+    fetch: {
+      endpoint: '/api/git/sync/fetch',
+      running: 'Fetching remote updates...',
+      successFallback: 'Fetch completed.',
+      failurePrefix: 'Fetch failed: ',
+    },
+    pull: {
+      endpoint: '/api/git/sync/pull',
+      running: 'Pulling latest commits...',
+      successFallback: 'Pull completed.',
+      failurePrefix: 'Pull failed: ',
+    },
+    stash_pull: {
+      endpoint: '/api/git/sync/stash-pull',
+      running: 'Stashing changes and pulling...',
+      successFallback: 'Stash + Pull completed.',
+      failurePrefix: 'Stash + Pull failed: ',
+    },
+  };
+  const action = actions[actionKey];
+  if (!action) return;
+
+  gitSyncBusyAction = actionKey;
+  _syncGitSyncButtonState();
+  _setGitSyncIndicator(action.running, 'muted', action.running);
+  const response = await postJson(action.endpoint, { repo_path: repoPath });
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitSyncIndicator(message, 'error', message);
+    toast(action.failurePrefix + message, 'error');
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    return;
+  }
+
+  if (actionKey === 'stash_pull' && response.stash_created) {
+    toast('Local changes were stashed before pull.', 'info');
+  }
+
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  } else {
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+  }
+
+  toast(String(response.message || action.successFallback), 'success');
+}
+
+async function gitSyncFetch() {
+  await _runGitSyncAction('fetch');
+}
+
+async function gitSyncPull() {
+  await _runGitSyncAction('pull');
+}
+
+async function gitSyncStashAndPull() {
+  await _runGitSyncAction('stash_pull');
 }
 
 function syncTodoWishlistRepoFromMain() {
@@ -5190,9 +5406,11 @@ function validateRepo() {
   const path = document.getElementById('repo-path').value.trim();
   config.repo_path = path;
   scheduleDiagnosticsRefresh('chain');
+  scheduleGitSyncRefresh({ delayMs: 300, silent: true });
   if (!path) {
     document.getElementById('repo-status').textContent = '';
     refreshChainOutputs(false);
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
     return;
   }
   refreshChainOutputs(false);
@@ -5205,6 +5423,7 @@ function validateRepo() {
       else if (r.exists)  { el.textContent = '\u26a0\ufe0f'; el.title = 'Directory exists but not a git repo'; }
       else                { el.textContent = '\u274c'; el.title = 'Path not found'; }
       maybeAutoEnableVectorMemory('chain', r);
+      scheduleGitSyncRefresh({ delayMs: 0, silent: true });
     } catch(e) { /* ignore */ }
   }, 400);
 }
@@ -6519,6 +6738,7 @@ function switchTab(tabId) {
       refreshPipelineRunComparison({ repoPath: '', silent: true });
     }
   }
+  scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
 }
 
 /* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */
@@ -6931,11 +7151,13 @@ function validatePipeRepo() {
   const path = document.getElementById('pipe-repo-path').value.trim();
   pipeConfig.repo_path = path;
   scheduleDiagnosticsRefresh('pipeline');
+  scheduleGitSyncRefresh({ delayMs: 300, silent: true });
   if (!path) {
     document.getElementById('pipe-repo-status').textContent = '';
     pipelineResumeState = null;
     renderPipelineResumeCard();
     refreshPipelineRunComparison({ repoPath: '', silent: true });
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
     return;
   }
   pipeRepoTimeout = setTimeout(async () => {
@@ -6949,6 +7171,7 @@ function validatePipeRepo() {
       maybeAutoEnableVectorMemory('pipeline', r);
       schedulePipelineResumeRefresh(path, { delayMs: 0, silent: true });
       refreshPipelineRunComparison({ repoPath: path, silent: true });
+      scheduleGitSyncRefresh({ delayMs: 0, silent: true });
     } catch(e) {}
   }, 400);
 }

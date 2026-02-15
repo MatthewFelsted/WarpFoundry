@@ -137,6 +137,7 @@ _GITHUB_AUTH_METHODS = frozenset({"https", "ssh"})
 _GITHUB_TEST_TIMEOUT_SECONDS = 20
 _GIT_REMOTE_QUERY_TIMEOUT_SECONDS = 20
 _GIT_CLONE_TIMEOUT_SECONDS = 180
+_GIT_SYNC_TIMEOUT_SECONDS = 30
 _DEFAULT_BRANCH_SENTINEL = "__remote_default__"
 
 _model_watchdog: ModelCatalogWatchdog | None = None
@@ -3773,6 +3774,123 @@ def _extract_git_error_message(exc: subprocess.CalledProcessError) -> str:
     return str(exc)
 
 
+def _run_git_sync_command(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one git command for sync APIs and return the completed process."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        timeout=_GIT_SYNC_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+def _extract_git_process_error(result: subprocess.CompletedProcess[str], fallback: str) -> str:
+    """Extract stderr/stdout detail from a non-zero git process result."""
+    stderr = str(result.stderr or "").strip()
+    if stderr:
+        return stderr
+    stdout = str(result.stdout or "").strip()
+    if stdout:
+        return stdout
+    return fallback
+
+
+def _resolve_git_sync_repo(raw_repo_path: object) -> tuple[Path | None, str, int]:
+    """Resolve and validate a repo path for git-sync API operations."""
+    repo_raw = str(raw_repo_path or "").strip()
+    if not repo_raw:
+        return None, "repo_path is required.", 400
+
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return None, f"Repo path not found: {repo_raw}", 400
+
+    probe = _run_git_sync_command(repo, "rev-parse", "--is-inside-work-tree")
+    if probe.returncode != 0 or str(probe.stdout or "").strip().lower() != "true":
+        return None, f"Not a git repository: {repo}", 400
+
+    return repo, "", 200
+
+
+def _resolve_stash_ref(repo: Path) -> str:
+    """Return refs/stash commit SHA when present, otherwise empty string."""
+    stash_ref = _run_git_sync_command(repo, "rev-parse", "--verify", "refs/stash")
+    if stash_ref.returncode != 0:
+        return ""
+    return str(stash_ref.stdout or "").strip()
+
+
+def _git_sync_status_payload(repo: Path) -> dict[str, object]:
+    """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
+    branch_result = _run_git_sync_command(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    if branch_result.returncode != 0:
+        raise RuntimeError(
+            _extract_git_process_error(branch_result, "git rev-parse --abbrev-ref HEAD failed")
+        )
+    branch = str(branch_result.stdout or "").strip() or "HEAD"
+
+    tracking_result = _run_git_sync_command(
+        repo,
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+    )
+    has_tracking_branch = tracking_result.returncode == 0
+    tracking_branch = str(tracking_result.stdout or "").strip() if has_tracking_branch else ""
+
+    ahead: int | None = None
+    behind: int | None = None
+    if has_tracking_branch:
+        counts_result = _run_git_sync_command(repo, "rev-list", "--left-right", "--count", "@{upstream}...HEAD")
+        if counts_result.returncode == 0:
+            parts = str(counts_result.stdout or "").strip().split()
+            if len(parts) >= 2:
+                with suppress(ValueError):
+                    behind = int(parts[0])
+                    ahead = int(parts[1])
+
+    status_result = _run_git_sync_command(repo, "status", "--porcelain")
+    if status_result.returncode != 0:
+        raise RuntimeError(_extract_git_process_error(status_result, "git status --porcelain failed"))
+
+    staged_changes = 0
+    unstaged_changes = 0
+    untracked_changes = 0
+    for line in str(status_result.stdout or "").splitlines():
+        if not line:
+            continue
+        if line.startswith("??"):
+            untracked_changes += 1
+            continue
+        if line.startswith("!!"):
+            continue
+        x = line[0] if len(line) >= 1 else " "
+        y = line[1] if len(line) >= 2 else " "
+        if x not in {" ", "?"}:
+            staged_changes += 1
+        if y != " ":
+            unstaged_changes += 1
+
+    dirty = bool(staged_changes or unstaged_changes or untracked_changes)
+    return {
+        "repo_path": str(repo),
+        "branch": branch,
+        "tracking_branch": tracking_branch,
+        "has_tracking_branch": has_tracking_branch,
+        "ahead": ahead,
+        "behind": behind,
+        "dirty": dirty,
+        "clean": not dirty,
+        "staged_changes": staged_changes,
+        "unstaged_changes": unstaged_changes,
+        "untracked_changes": untracked_changes,
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
 def _list_git_remote_branches(remote_url: str) -> tuple[list[str], str]:
     """Return (branches, default_branch) for a git remote."""
     symref = subprocess.run(
@@ -3996,6 +4114,156 @@ def api_project_clone():
     except subprocess.CalledProcessError as exc:
         shutil.rmtree(project_path, ignore_errors=True)
         return jsonify({"error": f"Git clone failed: {_extract_git_error_message(exc)}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/status")
+def api_git_sync_status():
+    """Return repository sync status (branch/tracking/ahead-behind/dirty)."""
+    repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        return jsonify(_git_sync_status_payload(repo))
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git sync status timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not read git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/fetch", methods=["POST"])
+def api_git_sync_fetch():
+    """Fetch latest remote refs for the active repository."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        fetch_result = _run_git_sync_command(repo, "fetch", "--prune")
+        if fetch_result.returncode != 0:
+            detail = _extract_git_process_error(fetch_result, "git fetch --prune failed")
+            return jsonify({"error": f"Git fetch failed: {detail}"}), 502
+
+        return jsonify(
+            {
+                "status": "fetched",
+                "repo_path": str(repo),
+                "message": "Fetch completed.",
+                "stdout": _truncate_command_output(fetch_result.stdout),
+                "stderr": _truncate_command_output(fetch_result.stderr),
+                "sync": _git_sync_status_payload(repo),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git fetch timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/pull", methods=["POST"])
+def api_git_sync_pull():
+    """Pull the active branch using fast-forward-only mode."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        pull_result = _run_git_sync_command(repo, "pull", "--ff-only")
+        if pull_result.returncode != 0:
+            detail = _extract_git_process_error(pull_result, "git pull --ff-only failed")
+            return jsonify({"error": f"Git pull failed: {detail}"}), 502
+
+        return jsonify(
+            {
+                "status": "pulled",
+                "repo_path": str(repo),
+                "message": "Pull completed.",
+                "stdout": _truncate_command_output(pull_result.stdout),
+                "stderr": _truncate_command_output(pull_result.stderr),
+                "sync": _git_sync_status_payload(repo),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git pull timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/stash-pull", methods=["POST"])
+def api_git_sync_stash_pull():
+    """Stash local changes (including untracked files), then pull latest commits."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        stash_before = _resolve_stash_ref(repo)
+        stash_message = (
+            "codex-manager:auto-stash-before-pull "
+            f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        )
+        stash_result = _run_git_sync_command(
+            repo,
+            "stash",
+            "push",
+            "--include-untracked",
+            "--message",
+            stash_message,
+        )
+        if stash_result.returncode != 0:
+            detail = _extract_git_process_error(
+                stash_result,
+                "git stash push --include-untracked failed",
+            )
+            return jsonify({"error": f"Git stash failed: {detail}"}), 502
+
+        stash_after = _resolve_stash_ref(repo)
+        stash_created = bool(stash_after and stash_after != stash_before)
+
+        pull_result = _run_git_sync_command(repo, "pull", "--ff-only")
+        if pull_result.returncode != 0:
+            detail = _extract_git_process_error(pull_result, "git pull --ff-only failed")
+            hint = (
+                " Local changes were stashed. Use 'git stash list' and 'git stash pop' after "
+                "resolving the pull issue."
+                if stash_created
+                else ""
+            )
+            return jsonify({"error": f"Git pull failed: {detail}{hint}"}), 502
+
+        return jsonify(
+            {
+                "status": "stashed_and_pulled",
+                "repo_path": str(repo),
+                "stash_created": stash_created,
+                "stash_ref": stash_after if stash_created else "",
+                "message": (
+                    "Stashed local changes and pulled latest commits."
+                    if stash_created
+                    else "No local changes were stashed; pull completed."
+                ),
+                "stash_stdout": _truncate_command_output(stash_result.stdout),
+                "stash_stderr": _truncate_command_output(stash_result.stderr),
+                "pull_stdout": _truncate_command_output(pull_result.stdout),
+                "pull_stderr": _truncate_command_output(pull_result.stderr),
+                "sync": _git_sync_status_payload(repo),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git stash/pull timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not compute git sync status: {exc}"}), 502
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
