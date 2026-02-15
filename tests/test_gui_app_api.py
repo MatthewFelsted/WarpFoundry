@@ -1884,6 +1884,23 @@ def test_index_includes_git_branch_switcher_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
+    assert 'id="git-sync-remotes-btn"' in html
+    assert 'onclick="showGitRemoteModal()"' in html
+    assert 'id="git-remote-overlay"' in html
+    assert 'id="git-remote-body"' in html
+    assert 'id="git-remote-name-input"' in html
+    assert 'id="git-remote-url-input"' in html
+    assert "async function showGitRemoteModal()" in html
+    assert "async function refreshGitRemotesNow()" in html
+    assert "async function gitRemoteAdd()" in html
+    assert "async function gitRemoteSetDefault(name)" in html
+    assert "async function gitRemoteRemove(name)" in html
+    assert "async function gitRemoteValidateUrl()" in html
+    assert "/api/git/sync/remotes?repo_path=" in html
+    assert "/api/git/sync/remotes/add" in html
+    assert "/api/git/sync/remotes/remove" in html
+    assert "/api/git/sync/remotes/default" in html
+    assert "/api/git/sync/remotes/validate" in html
     assert 'id="git-sync-commit-panel-btn"' in html
     assert 'onclick="showGitCommitModal()"' in html
     assert 'id="git-commit-overlay"' in html
@@ -2415,6 +2432,155 @@ def test_git_sync_branch_create_blocks_dirty_worktree_without_allow_dirty(client
     assert data["error_type"] == "dirty_worktree"
     assert isinstance(data["recovery_steps"], list)
     assert data["sync"]["dirty"] is True
+
+
+def test_git_sync_remotes_list_includes_default_and_tracking_remote(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-remotes-list")
+    _run_git("remote", "add", "backup", "git@github.com:example/demo.git", cwd=local)
+
+    resp = client.get("/api/git/sync/remotes", query_string={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["default_remote"] == "origin"
+    assert data["default_remote_source"] in {"tracking", "origin"}
+    assert data["tracking_remote"] == "origin"
+
+    remotes = {str(item["name"]): item for item in data["remotes"]}
+    assert "origin" in remotes
+    assert "backup" in remotes
+    assert remotes["origin"]["is_default"] is True
+    assert remotes["origin"]["is_tracking_remote"] is True
+    assert remotes["backup"]["fetch_url"] == "git@github.com:example/demo.git"
+
+
+def test_git_sync_remote_validate_endpoint_accepts_https_and_ssh(client):
+    https_resp = client.post(
+        "/api/git/sync/remotes/validate",
+        json={"remote_url": "https://github.com/example/demo.git"},
+    )
+    https_data = https_resp.get_json()
+    assert https_resp.status_code == 200
+    assert https_data
+    assert https_data["valid"] is True
+    assert https_data["transport"] == "https"
+
+    ssh_resp = client.post(
+        "/api/git/sync/remotes/validate",
+        json={"remote_url": "git@github.com:example/demo.git"},
+    )
+    ssh_data = ssh_resp.get_json()
+    assert ssh_resp.status_code == 200
+    assert ssh_data
+    assert ssh_data["valid"] is True
+    assert ssh_data["transport"] == "ssh"
+
+    invalid_resp = client.post(
+        "/api/git/sync/remotes/validate",
+        json={"remote_url": "file:///tmp/demo.git"},
+    )
+    invalid_data = invalid_resp.get_json()
+    assert invalid_resp.status_code == 400
+    assert invalid_data
+    assert invalid_data["valid"] is False
+    assert "HTTPS or SSH" in invalid_data["error"]
+
+
+def test_git_sync_remote_add_set_default_clear_and_remove(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-remotes-manage")
+
+    add_resp = client.post(
+        "/api/git/sync/remotes/add",
+        json={
+            "repo_path": str(local),
+            "name": "backup",
+            "remote_url": "git@github.com:example/demo.git",
+            "set_default": True,
+        },
+    )
+    add_data = add_resp.get_json()
+    assert add_resp.status_code == 200
+    assert add_data
+    assert add_data["status"] == "remote_added"
+    assert add_data["remote"] == "backup"
+    assert add_data["set_default"] is True
+    assert add_data["remotes"]["default_remote"] == "backup"
+
+    configured_default = _run_git("config", "--get", "remote.pushDefault", cwd=local).stdout.strip()
+    assert configured_default == "backup"
+
+    set_default_resp = client.post(
+        "/api/git/sync/remotes/default",
+        json={"repo_path": str(local), "name": "origin"},
+    )
+    set_default_data = set_default_resp.get_json()
+    assert set_default_resp.status_code == 200
+    assert set_default_data
+    assert set_default_data["status"] == "remote_default_set"
+    assert set_default_data["default_remote"] == "origin"
+
+    configured_default = _run_git("config", "--get", "remote.pushDefault", cwd=local).stdout.strip()
+    assert configured_default == "origin"
+
+    clear_default_resp = client.post(
+        "/api/git/sync/remotes/default",
+        json={"repo_path": str(local), "clear": True},
+    )
+    clear_default_data = clear_default_resp.get_json()
+    assert clear_default_resp.status_code == 200
+    assert clear_default_data
+    assert clear_default_data["status"] == "remote_default_cleared"
+    assert clear_default_data["default_remote"] == ""
+
+    cleared_probe = subprocess.run(
+        ["git", "config", "--get", "remote.pushDefault"],
+        cwd=str(local),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert cleared_probe.returncode != 0
+
+    remove_resp = client.post(
+        "/api/git/sync/remotes/remove",
+        json={"repo_path": str(local), "name": "backup"},
+    )
+    remove_data = remove_resp.get_json()
+    assert remove_resp.status_code == 200
+    assert remove_data
+    assert remove_data["status"] == "remote_removed"
+    assert remove_data["remote"] == "backup"
+
+    remote_probe = subprocess.run(
+        ["git", "remote", "get-url", "backup"],
+        cwd=str(local),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert remote_probe.returncode != 0
+
+
+def test_git_sync_remote_add_rejects_invalid_url_scheme(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-remotes-invalid-url")
+
+    resp = client.post(
+        "/api/git/sync/remotes/add",
+        json={
+            "repo_path": str(local),
+            "name": "badremote",
+            "remote_url": "http://github.com/example/demo.git",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "HTTPS or SSH" in data["error"]
 
 
 def test_git_commit_workflow_lists_changes_and_last_commit(client, tmp_path: Path):

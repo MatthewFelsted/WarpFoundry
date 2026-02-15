@@ -552,6 +552,37 @@ body.mode-medium .easy-only{display:none}
 .clone-repo-card .row-with-button .btn{white-space:nowrap}
 .clone-repo-card .meta{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5}
 
+#git-remote-overlay{position:fixed;inset:0;background:rgba(0,0,0,.84);z-index:2220;display:flex;align-items:center;justify-content:center;padding:24px}
+#git-remote-overlay.hidden{display:none}
+.git-remote-card{max-width:880px;width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.git-remote-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.git-remote-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:12px}
+.git-remote-card .status{font-size:12px;color:var(--text2);margin-top:8px;min-height:1.2em}
+.git-remote-card .status[data-tone="ok"]{color:var(--success)}
+.git-remote-card .status[data-tone="warn"]{color:var(--warning)}
+.git-remote-card .status[data-tone="error"]{color:var(--danger)}
+.git-remote-card .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+.git-remote-meta{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,360px);gap:12px;margin-bottom:12px}
+.git-remote-card-block{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:10px}
+.git-remote-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.git-remote-list{border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
+.git-remote-table{width:100%;border-collapse:collapse;font-size:12px}
+.git-remote-table th,.git-remote-table td{padding:8px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+.git-remote-table thead th{position:sticky;top:0;background:var(--surface2);z-index:1;font-size:11px;color:var(--text2);letter-spacing:.2px;text-transform:uppercase}
+.git-remote-table tbody tr:last-child td{border-bottom:none}
+.git-remote-table td.name{font-family:var(--mono)}
+.git-remote-url{display:block;font-family:var(--mono);word-break:break-all;line-height:1.45}
+.git-remote-url + .git-remote-url{margin-top:4px}
+.git-remote-actions{display:flex;gap:6px;flex-wrap:wrap}
+.git-remote-badge{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--text2);background:rgba(19,29,43,.7);display:inline-block;margin-right:5px}
+.git-remote-badge.default{color:var(--success);border-color:rgba(71,192,123,.45);background:rgba(71,192,123,.12)}
+.git-remote-badge.tracking{color:var(--accent2);border-color:rgba(110,199,255,.45);background:rgba(110,199,255,.12)}
+.git-remote-add{margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg)}
+.git-remote-add-grid{display:grid;grid-template-columns:minmax(130px,170px) minmax(0,1fr) auto;gap:8px;align-items:end}
+.git-remote-add-grid .btn{white-space:nowrap}
+.git-remote-add-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.git-remote-add-row label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text2)}
+
 /* GitHub auth modal */
 #github-auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
 #github-auth-overlay.hidden{display:none}
@@ -820,6 +851,8 @@ body.mode-medium .easy-only{display:none}
   .science-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
   .science-grid{grid-template-columns:1fr}
   .git-commit-meta{grid-template-columns:1fr}
+  .git-remote-meta{grid-template-columns:1fr}
+  .git-remote-add-grid{grid-template-columns:1fr}
 }
 @media(max-width:640px){
   .header-actions select{min-width:100px}
@@ -875,6 +908,7 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" id="git-sync-pull-btn" type="button" onclick="gitSyncPull()">Pull</button>
       <button class="btn btn-success" id="git-sync-push-btn" type="button" onclick="gitSyncPush()">Push</button>
       <button class="btn" id="git-sync-commit-panel-btn" type="button" onclick="showGitCommitModal()">Commit</button>
+      <button class="btn" id="git-sync-remotes-btn" type="button" onclick="showGitRemoteModal()">Remotes</button>
       <button
         class="btn"
         id="git-sync-open-pr-btn"
@@ -2172,6 +2206,86 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- Git Remote Management modal -->
+<div id="git-remote-overlay" class="hidden" onclick="if(event.target===this)hideGitRemoteModal()">
+  <div class="git-remote-card" role="dialog" aria-modal="true" aria-labelledby="git-remote-title">
+    <h2 id="git-remote-title">Remote Management</h2>
+    <p class="subtitle">View/add/remove remotes, choose a default push remote, and validate HTTPS/SSH URLs.</p>
+
+    <div class="git-remote-meta">
+      <div class="git-remote-card-block">
+        <h3>Repository</h3>
+        <div class="field-help" id="git-remote-repo-path">No repo selected</div>
+      </div>
+      <div class="git-remote-card-block">
+        <h3>Default Remote</h3>
+        <div class="field-help" id="git-remote-default">No remotes loaded.</div>
+      </div>
+    </div>
+
+    <div class="git-remote-toolbar">
+      <button class="btn" id="git-remote-refresh-btn" type="button" onclick="refreshGitRemotesNow()">Refresh</button>
+      <button class="btn" id="git-remote-clear-default-btn" type="button" onclick="gitRemoteClearDefault()">Clear Default</button>
+    </div>
+
+    <div class="git-remote-list">
+      <table class="git-remote-table">
+        <thead>
+          <tr>
+            <th style="width:18%">Remote</th>
+            <th style="width:54%">URLs</th>
+            <th style="width:28%">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="git-remote-body">
+          <tr>
+            <td colspan="3" style="color:var(--text2)">Select a repository path to load remotes.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="git-remote-add">
+      <h3>Add Remote</h3>
+      <div class="git-remote-add-grid">
+        <div class="form-row" style="margin-bottom:0">
+          <label for="git-remote-name-input">Remote Name</label>
+          <input
+            id="git-remote-name-input"
+            type="text"
+            placeholder="origin"
+            oninput="_syncGitRemoteControls()"
+          >
+        </div>
+        <div class="form-row" style="margin-bottom:0">
+          <label for="git-remote-url-input">Remote URL (HTTPS/SSH)</label>
+          <input
+            id="git-remote-url-input"
+            type="text"
+            placeholder="https://github.com/owner/repo.git or git@github.com:owner/repo.git"
+            oninput="_syncGitRemoteControls()"
+          >
+        </div>
+        <button class="btn" id="git-remote-validate-btn" type="button" onclick="gitRemoteValidateUrl()">Validate URL</button>
+      </div>
+      <div class="git-remote-add-row">
+        <label for="git-remote-add-default-check" title="Set this remote as the default target for push actions.">
+          <input id="git-remote-add-default-check" type="checkbox">
+          set as default remote
+        </label>
+        <button class="btn btn-success" id="git-remote-add-btn" type="button" onclick="gitRemoteAdd()">Add Remote</button>
+      </div>
+      <div class="field-help" id="git-remote-add-help">Use HTTPS or SSH URL formats only.</div>
+    </div>
+
+    <div class="status" id="git-remote-status" data-tone="muted"></div>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideGitRemoteModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- GitHub Auth modal -->
 <div id="github-auth-overlay" class="hidden" onclick="if(event.target===this)hideGithubAuthModal()">
   <div class="github-auth-card" role="dialog" aria-modal="true" aria-labelledby="github-auth-title">
@@ -2463,6 +2577,7 @@ let githubAuthState = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 let gitSyncState = null;
 let gitSyncBranchState = null;
+let gitRemoteState = null;
 let gitCommitWorkflowState = null;
 let gitSyncBusyAction = '';
 let gitSyncPullRequestUrl = '';
@@ -2509,6 +2624,7 @@ const _modalOverlayIds = [
   'browse-overlay',
   'new-project-overlay',
   'clone-repo-overlay',
+  'git-remote-overlay',
   'git-commit-overlay',
   'github-auth-overlay',
   'todo-wishlist-overlay',
@@ -3633,6 +3749,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     closeDocsModal();
     hideTodoWishlistModal();
     hideFeatureDreamsModal();
+    hideGitRemoteModal();
     hideGitCommitModal();
     hideNewProjectModal();
     hideCloneRepoModal();
@@ -3793,7 +3910,7 @@ function _gitSyncAllowDirtySwitchEnabled() {
 function _syncGitSyncButtonState() {
   const hasRepoPath = !!_activeRepoPathForGitSync();
   const disabled = !hasRepoPath || !!gitSyncBusyAction;
-  ['git-sync-fetch-btn', 'git-sync-pull-btn', 'git-sync-push-btn', 'git-sync-stash-pull-btn', 'git-sync-commit-panel-btn'].forEach(id => {
+  ['git-sync-fetch-btn', 'git-sync-pull-btn', 'git-sync-push-btn', 'git-sync-stash-pull-btn', 'git-sync-commit-panel-btn', 'git-sync-remotes-btn'].forEach(id => {
     const btn = document.getElementById(id);
     if (btn) btn.disabled = disabled;
   });
@@ -3817,6 +3934,7 @@ function _syncGitSyncButtonState() {
   if (branchCreateBtn) branchCreateBtn.disabled = disabled || !branchName;
   const allowDirty = document.getElementById('git-sync-allow-dirty-switch');
   if (allowDirty) allowDirty.disabled = disabled;
+  _syncGitRemoteControls();
   _syncGitCommitControls();
 }
 
@@ -3878,10 +3996,14 @@ async function refreshGitSyncStatus(opts = {}) {
   if (!repoPath) {
     gitSyncState = null;
     gitSyncBranchState = null;
+    gitRemoteState = null;
     gitCommitWorkflowState = null;
     _setGitSyncPullRequestUrl('');
     _clearGitSyncBranchOptions();
     _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
+    if (_isGitRemoteModalOpen()) {
+      _clearGitRemoteView('Set a repository path first.');
+    }
     if (_isGitCommitModalOpen()) {
       _clearGitCommitWorkflowView('Set a repository path first.');
     }
@@ -3916,6 +4038,9 @@ async function refreshGitSyncStatus(opts = {}) {
     force: !!opts.force,
     preferredBranch: String(response.branch || '').trim(),
   });
+  if (_isGitRemoteModalOpen()) {
+    await refreshGitRemotes({ repoPath, silent: true, force: !!opts.force });
+  }
   if (_isGitCommitModalOpen()) {
     await refreshGitCommitWorkflow({ repoPath, silent: true, force: !!opts.force });
   }
@@ -4269,6 +4394,391 @@ async function gitSyncCreateBranch() {
   _syncGitSyncButtonState();
 
   toast(String(response.message || 'Branch created.'), 'success');
+}
+
+function _isGitRemoteModalOpen() {
+  const overlay = document.getElementById('git-remote-overlay');
+  return !!(overlay && !overlay.classList.contains('hidden'));
+}
+
+function _setGitRemoteRepoPathLabel(path) {
+  const repoEl = document.getElementById('git-remote-repo-path');
+  if (!repoEl) return;
+  const repoPath = String(path || '').trim();
+  repoEl.textContent = repoPath || 'No repo selected';
+  repoEl.title = repoPath || 'No repository selected';
+}
+
+function _setGitRemoteDefaultLabel(payload) {
+  const el = document.getElementById('git-remote-default');
+  if (!el) return;
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const defaultRemote = String(data.default_remote || '').trim();
+  const source = String(data.default_remote_source || '').trim();
+  const configuredMissing = !!data.configured_default_missing;
+  if (!defaultRemote) {
+    el.textContent = 'No default remote configured.';
+    el.title = 'Set a default remote to control push target selection.';
+    return;
+  }
+  let sourceText = '';
+  if (source === 'config') sourceText = 'from remote.pushDefault';
+  else if (source === 'tracking') sourceText = 'from current tracking branch';
+  else if (source === 'origin') sourceText = 'fallback to origin';
+  const suffix = sourceText ? (' (' + sourceText + ')') : '';
+  const warning = configuredMissing
+    ? ' Note: configured default remote no longer exists.'
+    : '';
+  el.textContent = defaultRemote + suffix + warning;
+  el.title = 'Default remote: ' + defaultRemote + (sourceText ? ('\nSource: ' + sourceText) : '');
+}
+
+function _setGitRemoteStatus(text, tone = 'muted') {
+  const el = document.getElementById('git-remote-status');
+  if (!el) return;
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
+  el.textContent = String(text || '');
+}
+
+function _setGitRemoteAddHelp(text, tone = 'muted') {
+  const el = document.getElementById('git-remote-add-help');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+function _renderGitRemoteRows(payload) {
+  const tbody = document.getElementById('git-remote-body');
+  if (!tbody) return;
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const rows = Array.isArray(data.remotes) ? data.remotes : [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text2)">No remotes configured for this repository.</td></tr>';
+    return;
+  }
+
+  const busy = !!gitSyncBusyAction;
+  const trackingRemote = String(data.tracking_remote || '').trim();
+  tbody.innerHTML = rows.map(entry => {
+    const name = String(entry && entry.name || '').trim();
+    if (!name) return '';
+    const fetchUrl = String(entry && entry.fetch_url || '').trim();
+    const pushUrl = String(entry && entry.push_url || '').trim() || fetchUrl;
+    const isDefault = !!(entry && entry.is_default);
+    const isTrackingRemote = !!(entry && entry.is_tracking_remote) || (!!trackingRemote && trackingRemote === name);
+    const encodedName = encodeURIComponent(name);
+
+    const badges = [];
+    if (isDefault) badges.push('<span class="git-remote-badge default">default</span>');
+    if (isTrackingRemote) badges.push('<span class="git-remote-badge tracking">tracking</span>');
+    if (!badges.length) badges.push('<span class="git-remote-badge">remote</span>');
+
+    const setDefaultDisabled = busy || isDefault;
+    const removeDisabled = busy;
+    const removeLabel = name === 'origin' ? 'Remove origin' : 'Remove';
+
+    const urlLines = []
+      .concat(fetchUrl ? ['<span class="git-remote-url"><strong>fetch:</strong> ' + esc(fetchUrl) + '</span>'] : [])
+      .concat(pushUrl ? ['<span class="git-remote-url"><strong>push:</strong> ' + esc(pushUrl) + '</span>'] : []);
+    if (!urlLines.length) {
+      urlLines.push('<span class="git-remote-url">No URL configured.</span>');
+    }
+
+    return '<tr>'
+      + '<td class="name">' + esc(name) + '<div style="margin-top:6px">' + badges.join('') + '</div></td>'
+      + '<td>' + urlLines.join('') + '</td>'
+      + '<td><div class="git-remote-actions">'
+      + '<button class="btn" type="button" data-enabled="' + (isDefault ? '0' : '1') + '" onclick="gitRemoteSetDefault(decodeURIComponent(\'' + encodedName + '\'))"'
+      + (setDefaultDisabled ? ' disabled' : '') + '>Set Default</button>'
+      + '<button class="btn btn-danger" type="button" data-enabled="1" onclick="gitRemoteRemove(decodeURIComponent(\'' + encodedName + '\'))"'
+      + (removeDisabled ? ' disabled' : '') + '>' + esc(removeLabel) + '</button>'
+      + '</div></td>'
+      + '</tr>';
+  }).join('');
+}
+
+function _syncGitRemoteControls() {
+  const hasRepo = !!_activeRepoPathForGitSync();
+  const busy = !!gitSyncBusyAction;
+  const disabled = !hasRepo || busy;
+  const payload = gitRemoteState && typeof gitRemoteState === 'object' ? gitRemoteState : null;
+  const defaultRemote = String(payload && payload.default_remote || '').trim();
+  const nameInput = document.getElementById('git-remote-name-input');
+  const urlInput = document.getElementById('git-remote-url-input');
+  const setDefaultCheckbox = document.getElementById('git-remote-add-default-check');
+  const name = String(nameInput ? nameInput.value : '').trim();
+  const url = String(urlInput ? urlInput.value : '').trim();
+
+  const refreshBtn = document.getElementById('git-remote-refresh-btn');
+  if (refreshBtn) refreshBtn.disabled = disabled;
+  const clearDefaultBtn = document.getElementById('git-remote-clear-default-btn');
+  if (clearDefaultBtn) clearDefaultBtn.disabled = disabled || !defaultRemote;
+  const validateBtn = document.getElementById('git-remote-validate-btn');
+  if (validateBtn) validateBtn.disabled = disabled || !url;
+  const addBtn = document.getElementById('git-remote-add-btn');
+  if (addBtn) addBtn.disabled = disabled || !name || !url;
+  if (nameInput) nameInput.disabled = disabled;
+  if (urlInput) urlInput.disabled = disabled;
+  if (setDefaultCheckbox) setDefaultCheckbox.disabled = disabled;
+  document.querySelectorAll('#git-remote-body button[data-enabled]').forEach(btn => {
+    const canRun = String(btn.getAttribute('data-enabled') || '') === '1';
+    btn.disabled = disabled || !canRun;
+  });
+}
+
+function _applyGitRemotePayload(payload, opts = {}) {
+  if (!payload || typeof payload !== 'object') return;
+  gitRemoteState = payload;
+  _setGitRemoteRepoPathLabel(payload.repo_path || _activeRepoPathForGitSync());
+  _setGitRemoteDefaultLabel(payload);
+  _renderGitRemoteRows(payload);
+  if (payload.sync) {
+    gitSyncState = payload.sync;
+    _renderGitSyncState(payload.sync);
+  }
+  if (opts.statusText) {
+    _setGitRemoteStatus(opts.statusText, opts.statusTone || 'muted');
+  }
+  _syncGitRemoteControls();
+}
+
+function _clearGitRemoteView(message = 'No repository selected.') {
+  gitRemoteState = null;
+  _setGitRemoteRepoPathLabel('');
+  _setGitRemoteDefaultLabel(null);
+  _renderGitRemoteRows({ remotes: [] });
+  _setGitRemoteStatus(message, 'muted');
+  _syncGitRemoteControls();
+}
+
+async function showGitRemoteModal() {
+  _openOverlay('git-remote-overlay', '#git-remote-name-input');
+  _setGitRemoteAddHelp('Use HTTPS or SSH URL formats only.', 'muted');
+  const repoPath = _activeRepoPathForGitSync();
+  _setGitRemoteRepoPathLabel(repoPath);
+  if (!repoPath) {
+    _clearGitRemoteView('Set a repository path first.');
+    return;
+  }
+  await refreshGitRemotes({ repoPath, silent: true, force: true });
+}
+
+function hideGitRemoteModal() {
+  _closeOverlay('git-remote-overlay');
+}
+
+async function refreshGitRemotes(opts = {}) {
+  const repoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (!repoPath) {
+    _clearGitRemoteView('Set a repository path first.');
+    return;
+  }
+  _setGitRemoteRepoPathLabel(repoPath);
+  if (gitSyncBusyAction && !opts.force) {
+    _syncGitRemoteControls();
+    return;
+  }
+
+  if (!opts.silent) {
+    _setGitRemoteStatus('Loading remotes...', 'muted');
+  }
+  const response = await api('/api/git/sync/remotes?repo_path=' + encodeURIComponent(repoPath));
+  const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (repoPath !== currentRepoPath) {
+    return;
+  }
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitRemoteStatus(message, 'error');
+    if (!opts.silent) toast('Could not load remotes: ' + message, 'error');
+    _syncGitRemoteControls();
+    return;
+  }
+
+  _applyGitRemotePayload(
+    response,
+    opts.silent
+      ? {}
+      : {
+          statusText: String(response.message || 'Remote list updated.'),
+          statusTone: 'ok',
+        }
+  );
+}
+
+async function refreshGitRemotesNow() {
+  await refreshGitRemotes({ silent: false, force: true });
+}
+
+async function _runGitRemoteAction(actionKey, endpoint, payload, opts = {}) {
+  if (gitSyncBusyAction) return null;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    _clearGitRemoteView('Set a repository path first.');
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+    return null;
+  }
+
+  gitSyncBusyAction = actionKey;
+  _syncGitSyncButtonState();
+  _setGitRemoteStatus(String(opts.running || 'Applying remote update...'), 'muted');
+  const requestPayload = Object.assign({ repo_path: repoPath }, payload || {});
+  const response = await postJson(endpoint, requestPayload);
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitRemoteStatus(message, 'error');
+    toast(String(opts.failurePrefix || 'Remote update failed: ') + message, 'error');
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+    if (_isGitRemoteModalOpen()) {
+      await refreshGitRemotes({ repoPath, silent: true, force: true });
+    }
+    return null;
+  }
+
+  if (response.remotes) {
+    _applyGitRemotePayload(response.remotes, {
+      statusText: String(response.message || opts.successFallback || 'Remote settings updated.'),
+      statusTone: 'ok',
+    });
+  } else if (_isGitRemoteModalOpen()) {
+    await refreshGitRemotes({ repoPath, silent: true, force: true });
+  }
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  } else {
+    await refreshGitSyncStatus({ repoPath, silent: true, force: true });
+  }
+
+  toast(String(response.message || opts.successFallback || 'Remote update completed.'), 'success');
+  return response;
+}
+
+async function gitRemoteValidateUrl() {
+  const urlInput = document.getElementById('git-remote-url-input');
+  const remoteUrl = String(urlInput ? urlInput.value : '').trim();
+  if (!remoteUrl) {
+    _setGitRemoteAddHelp('Enter a remote URL first.', 'warn');
+    _syncGitRemoteControls();
+    return;
+  }
+
+  _setGitRemoteAddHelp('Validating remote URL...', 'muted');
+  try {
+    const response = await postJson('/api/git/sync/remotes/validate', {
+      remote_url: remoteUrl,
+    });
+    if (response.error) {
+      const message = String(response.error || 'Remote URL is invalid.');
+      _setGitRemoteAddHelp(message, 'error');
+      toast('Remote URL validation failed: ' + message, 'error');
+      return;
+    }
+    const transport = String(response.transport || '').trim().toUpperCase() || 'REMOTE';
+    _setGitRemoteAddHelp(transport + ' URL is valid.', 'ok');
+    toast('Remote URL is valid (' + transport + ').', 'success');
+  } catch (err) {
+    const message = err && err.message ? err.message : String(err);
+    _setGitRemoteAddHelp(message, 'error');
+    toast('Remote URL validation failed: ' + message, 'error');
+  }
+}
+
+async function gitRemoteAdd() {
+  const nameInput = document.getElementById('git-remote-name-input');
+  const urlInput = document.getElementById('git-remote-url-input');
+  const defaultCheckbox = document.getElementById('git-remote-add-default-check');
+  const remoteName = String(nameInput ? nameInput.value : '').trim();
+  const remoteUrl = String(urlInput ? urlInput.value : '').trim();
+  const setDefault = !!(defaultCheckbox && defaultCheckbox.checked);
+
+  if (!remoteName || !remoteUrl) {
+    _setGitRemoteStatus('Remote name and URL are required.', 'warn');
+    _syncGitRemoteControls();
+    return;
+  }
+
+  const response = await _runGitRemoteAction(
+    'git_remote_add',
+    '/api/git/sync/remotes/add',
+    {
+      name: remoteName,
+      remote_url: remoteUrl,
+      set_default: setDefault,
+    },
+    {
+      running: 'Adding remote...',
+      successFallback: 'Remote added.',
+      failurePrefix: 'Add remote failed: ',
+    }
+  );
+  if (!response) return;
+
+  if (nameInput) nameInput.value = '';
+  if (urlInput) urlInput.value = '';
+  if (defaultCheckbox) defaultCheckbox.checked = false;
+  _setGitRemoteAddHelp('Use HTTPS or SSH URL formats only.', 'muted');
+  _syncGitRemoteControls();
+}
+
+async function gitRemoteRemove(name) {
+  const remoteName = String(name || '').trim();
+  if (!remoteName) return;
+  const proceed = confirm('Remove remote "' + remoteName + '"?');
+  if (!proceed) return;
+
+  await _runGitRemoteAction(
+    'git_remote_remove',
+    '/api/git/sync/remotes/remove',
+    { name: remoteName },
+    {
+      running: 'Removing remote ' + remoteName + '...',
+      successFallback: 'Remote removed.',
+      failurePrefix: 'Remove remote failed: ',
+    }
+  );
+}
+
+async function gitRemoteSetDefault(name) {
+  const remoteName = String(name || '').trim();
+  if (!remoteName) return;
+
+  await _runGitRemoteAction(
+    'git_remote_set_default',
+    '/api/git/sync/remotes/default',
+    { name: remoteName },
+    {
+      running: 'Setting default remote to ' + remoteName + '...',
+      successFallback: 'Default remote updated.',
+      failurePrefix: 'Set default failed: ',
+    }
+  );
+}
+
+async function gitRemoteClearDefault() {
+  await _runGitRemoteAction(
+    'git_remote_clear_default',
+    '/api/git/sync/remotes/default',
+    { clear: true },
+    {
+      running: 'Clearing default remote...',
+      successFallback: 'Default remote cleared.',
+      failurePrefix: 'Clear default failed: ',
+    }
+  );
 }
 
 function _isGitCommitModalOpen() {
@@ -7489,6 +7999,18 @@ function resetCloneRepoForm() {
   hideCloneRepoModal();
 }
 
+function resetGitRemoteForm() {
+  const nameInput = document.getElementById('git-remote-name-input');
+  const urlInput = document.getElementById('git-remote-url-input');
+  const defaultCheckbox = document.getElementById('git-remote-add-default-check');
+  if (nameInput) nameInput.value = '';
+  if (urlInput) urlInput.value = '';
+  if (defaultCheckbox) defaultCheckbox.checked = false;
+  _setGitRemoteAddHelp('Use HTTPS or SSH URL formats only.', 'muted');
+  _clearGitRemoteView('No repository selected.');
+  hideGitRemoteModal();
+}
+
 function resetTodoWishlistForm() {
   const repo = _activeRepoPath();
   document.getElementById('todo-wishlist-repo').value = repo;
@@ -7557,6 +8079,7 @@ async function clearEverything() {
   resetExecutionPanelsToDefaults();
   resetNewProjectForm();
   resetCloneRepoForm();
+  resetGitRemoteForm();
   resetTodoWishlistForm();
   resetFeatureDreamsForm();
   closeRunPlanModal({ action: 'cancel' });

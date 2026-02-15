@@ -3847,6 +3847,145 @@ def _valid_git_sync_remote_name(remote: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9._/-]+", remote))
 
 
+def _validate_git_remote_url(remote_url: str) -> tuple[bool, str, str]:
+    """Validate an HTTPS/SSH git remote URL and return ``(ok, transport, message)``."""
+    raw = str(remote_url or "").strip()
+    if not raw:
+        return False, "", "Remote URL is required."
+    if raw.startswith("-"):
+        return False, "", "Remote URL is invalid."
+    if "\x00" in raw:
+        return False, "", "Remote URL is invalid."
+    if any(ch.isspace() for ch in raw):
+        return False, "", "Remote URL may not include whitespace."
+
+    parsed = urlparse(raw)
+    if parsed.scheme:
+        scheme = str(parsed.scheme or "").strip().lower()
+        host = str(parsed.hostname or parsed.netloc or "").strip()
+        path = str(parsed.path or "").strip().strip("/")
+        if scheme == "https":
+            if not host or not path:
+                return False, "", "HTTPS remote URL must include host and repository path."
+            return True, "https", "HTTPS remote URL looks valid."
+        if scheme == "ssh":
+            if not host or not path:
+                return False, "", "SSH remote URL must include host and repository path."
+            return True, "ssh", "SSH remote URL looks valid."
+        return (
+            False,
+            "",
+            f"Unsupported remote URL scheme: {scheme}. Use HTTPS or SSH.",
+        )
+
+    scp_like = re.fullmatch(
+        r"(?P<user>[A-Za-z0-9._-]+)@(?P<host>[A-Za-z0-9._-]+):(?P<path>[^\s]+)",
+        raw,
+    )
+    if scp_like:
+        path = str(scp_like.group("path") or "").strip()
+        if not path or path.startswith("/"):
+            return False, "", "SSH remote URL path is invalid."
+        return True, "ssh", "SSH remote URL looks valid."
+
+    return (
+        False,
+        "",
+        "Remote URL must be HTTPS (https://...) or SSH (ssh://... or git@host:path).",
+    )
+
+
+def _git_remote_exists(repo: Path, remote: str) -> bool:
+    """Return True when a named git remote exists."""
+    probe = _run_git_sync_command(repo, "remote", "get-url", remote)
+    return probe.returncode == 0
+
+
+def _git_configured_push_default_remote(repo: Path) -> str:
+    """Return ``remote.pushDefault`` when configured and valid, else empty string."""
+    result = _run_git_sync_command(repo, "config", "--get", "remote.pushDefault")
+    if result.returncode != 0:
+        return ""
+    remote = str(result.stdout or "").strip()
+    if not _valid_git_sync_remote_name(remote):
+        return ""
+    return remote
+
+
+def _git_clear_push_default_remote(repo: Path) -> None:
+    """Clear ``remote.pushDefault`` when set; ignore missing-key cases."""
+    result = _run_git_sync_command(repo, "config", "--unset", "remote.pushDefault")
+    if result.returncode == 0:
+        return
+    detail = _extract_git_process_error(result, "git config --unset remote.pushDefault failed")
+    lowered = detail.lower()
+    if "no such section or key" in lowered:
+        return
+    raise RuntimeError(detail)
+
+
+def _git_sync_remotes_payload(repo: Path) -> dict[str, object]:
+    """Return configured remotes plus default/tracking metadata for remote management UI."""
+    status = _git_sync_status_payload(repo)
+    tracking_remote = _extract_tracking_remote_name(str(status.get("tracking_branch") or ""))
+    configured_default = _git_configured_push_default_remote(repo)
+
+    names_result = _run_git_sync_command(repo, "remote")
+    if names_result.returncode != 0:
+        raise RuntimeError(_extract_git_process_error(names_result, "git remote failed"))
+
+    names = sorted(
+        {
+            raw.strip()
+            for raw in str(names_result.stdout or "").splitlines()
+            if raw.strip()
+        },
+        key=lambda item: item.casefold(),
+    )
+    name_set = set(names)
+
+    default_remote = ""
+    default_remote_source = "none"
+    if configured_default and configured_default in name_set:
+        default_remote = configured_default
+        default_remote_source = "config"
+    elif tracking_remote and tracking_remote in name_set:
+        default_remote = tracking_remote
+        default_remote_source = "tracking"
+    elif "origin" in name_set:
+        default_remote = "origin"
+        default_remote_source = "origin"
+
+    remotes: list[dict[str, object]] = []
+    for name in names:
+        fetch_url = _git_remote_url(repo, name)
+        push_result = _run_git_sync_command(repo, "remote", "get-url", "--push", name)
+        push_url = str(push_result.stdout or "").strip() if push_result.returncode == 0 else fetch_url
+        remotes.append(
+            {
+                "name": name,
+                "fetch_url": fetch_url,
+                "push_url": push_url,
+                "is_default": bool(default_remote and name == default_remote),
+                "is_tracking_remote": bool(tracking_remote and name == tracking_remote),
+            }
+        )
+
+    return {
+        "repo_path": str(repo),
+        "default_remote": default_remote,
+        "default_remote_source": default_remote_source,
+        "configured_default_remote": configured_default,
+        "configured_default_missing": bool(
+            configured_default and configured_default not in name_set
+        ),
+        "tracking_remote": tracking_remote,
+        "remotes": remotes,
+        "sync": status,
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
 def _classify_git_push_failure(result: subprocess.CompletedProcess[str]) -> str:
     """Classify common git push failures for explicit UX messaging."""
     text = f"{result.stderr or ''}\n{result.stdout or ''}".lower()
@@ -4609,6 +4748,240 @@ def api_git_sync_branches():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/git/sync/remotes")
+def api_git_sync_remotes():
+    """Return configured git remotes plus default-remote metadata."""
+    repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        return jsonify(_git_sync_remotes_payload(repo))
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git remote query timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not read remotes: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/remotes/validate", methods=["POST"])
+def api_git_sync_remote_validate():
+    """Validate a candidate git remote URL (HTTPS/SSH only)."""
+    data = request.get_json(silent=True) or {}
+    remote_url = str(data.get("remote_url") or data.get("url") or "").strip()
+    ok, transport, message = _validate_git_remote_url(remote_url)
+    if not ok:
+        return jsonify({"error": message, "valid": False, "remote_url": remote_url}), 400
+    return jsonify(
+        {
+            "status": "validated",
+            "valid": True,
+            "transport": transport,
+            "remote_url": remote_url,
+            "message": message,
+        }
+    )
+
+
+@app.route("/api/git/sync/remotes/add", methods=["POST"])
+def api_git_sync_remote_add():
+    """Add one git remote and optionally set it as the default push remote."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    remote_name = str(data.get("remote") or data.get("name") or "").strip()
+    remote_url = str(data.get("remote_url") or data.get("url") or "").strip()
+    set_default = _safe_bool(data.get("set_default"), default=False)
+
+    if not _valid_git_sync_remote_name(remote_name):
+        return jsonify({"error": f"Invalid remote name: {remote_name}"}), 400
+    ok, transport, validation_message = _validate_git_remote_url(remote_url)
+    if not ok:
+        return jsonify({"error": validation_message}), 400
+
+    try:
+        if _git_remote_exists(repo, remote_name):
+            return jsonify({"error": f"Remote already exists: {remote_name}"}), 409
+
+        add_result = _run_git_sync_command(repo, "remote", "add", remote_name, remote_url)
+        if add_result.returncode != 0:
+            detail = _extract_git_process_error(add_result, "git remote add failed")
+            return jsonify({"error": f"Git remote add failed: {detail}"}), 502
+
+        if set_default:
+            set_default_result = _run_git_sync_command(
+                repo,
+                "config",
+                "remote.pushDefault",
+                remote_name,
+            )
+            if set_default_result.returncode != 0:
+                rollback_result = _run_git_sync_command(repo, "remote", "remove", remote_name)
+                rollback_note = ""
+                if rollback_result.returncode != 0:
+                    rollback_detail = _extract_git_process_error(
+                        rollback_result,
+                        "git remote remove failed during rollback",
+                    )
+                    rollback_note = f" Rollback failed: {rollback_detail}"
+                detail = _extract_git_process_error(
+                    set_default_result,
+                    "git config remote.pushDefault failed",
+                )
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                f"Remote added but default-remote update failed: {detail}.{rollback_note}"
+                            ).strip()
+                        }
+                    ),
+                    502,
+                )
+
+        remotes_payload = _git_sync_remotes_payload(repo)
+        return jsonify(
+            {
+                "status": "remote_added",
+                "repo_path": str(repo),
+                "remote": remote_name,
+                "remote_url": remote_url,
+                "transport": transport,
+                "set_default": set_default,
+                "message": (
+                    f"Added remote {remote_name} and set it as default."
+                    if set_default
+                    else f"Added remote {remote_name}."
+                ),
+                "validation_message": validation_message,
+                "stdout": _truncate_command_output(add_result.stdout),
+                "stderr": _truncate_command_output(add_result.stderr),
+                "remotes": remotes_payload,
+                "sync": remotes_payload.get("sync"),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git remote add timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not load remotes: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/remotes/remove", methods=["POST"])
+def api_git_sync_remote_remove():
+    """Remove one git remote and clear default if that remote was selected."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    remote_name = str(data.get("remote") or data.get("name") or "").strip()
+    if not _valid_git_sync_remote_name(remote_name):
+        return jsonify({"error": f"Invalid remote name: {remote_name}"}), 400
+
+    try:
+        if not _git_remote_exists(repo, remote_name):
+            return jsonify({"error": f"Remote not found: {remote_name}"}), 404
+
+        configured_default_before = _git_configured_push_default_remote(repo)
+        remove_result = _run_git_sync_command(repo, "remote", "remove", remote_name)
+        if remove_result.returncode != 0:
+            detail = _extract_git_process_error(remove_result, "git remote remove failed")
+            return jsonify({"error": f"Git remote remove failed: {detail}"}), 502
+
+        cleared_default = False
+        if configured_default_before == remote_name:
+            _git_clear_push_default_remote(repo)
+            cleared_default = True
+
+        remotes_payload = _git_sync_remotes_payload(repo)
+        return jsonify(
+            {
+                "status": "remote_removed",
+                "repo_path": str(repo),
+                "remote": remote_name,
+                "cleared_default": cleared_default,
+                "message": (
+                    f"Removed remote {remote_name} and cleared default remote."
+                    if cleared_default
+                    else f"Removed remote {remote_name}."
+                ),
+                "stdout": _truncate_command_output(remove_result.stdout),
+                "stderr": _truncate_command_output(remove_result.stderr),
+                "remotes": remotes_payload,
+                "sync": remotes_payload.get("sync"),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git remote remove timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not update remote settings: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/sync/remotes/default", methods=["POST"])
+def api_git_sync_remote_default():
+    """Set or clear the default push remote (git config remote.pushDefault)."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    clear_default = _safe_bool(data.get("clear"), default=False)
+    remote_name = str(data.get("remote") or data.get("name") or "").strip()
+
+    if not clear_default and not _valid_git_sync_remote_name(remote_name):
+        return jsonify({"error": f"Invalid remote name: {remote_name}"}), 400
+
+    try:
+        if clear_default:
+            _git_clear_push_default_remote(repo)
+            remotes_payload = _git_sync_remotes_payload(repo)
+            return jsonify(
+                {
+                    "status": "remote_default_cleared",
+                    "repo_path": str(repo),
+                    "default_remote": "",
+                    "message": "Cleared default remote.",
+                    "remotes": remotes_payload,
+                    "sync": remotes_payload.get("sync"),
+                }
+            )
+
+        if not _git_remote_exists(repo, remote_name):
+            return jsonify({"error": f"Remote not found: {remote_name}"}), 404
+
+        set_result = _run_git_sync_command(repo, "config", "remote.pushDefault", remote_name)
+        if set_result.returncode != 0:
+            detail = _extract_git_process_error(set_result, "git config remote.pushDefault failed")
+            return jsonify({"error": f"Could not set default remote: {detail}"}), 502
+
+        remotes_payload = _git_sync_remotes_payload(repo)
+        return jsonify(
+            {
+                "status": "remote_default_set",
+                "repo_path": str(repo),
+                "default_remote": remote_name,
+                "message": f"Default remote set to {remote_name}.",
+                "stdout": _truncate_command_output(set_result.stdout),
+                "stderr": _truncate_command_output(set_result.stderr),
+                "remotes": remotes_payload,
+                "sync": remotes_payload.get("sync"),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git remote default update timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not update remote settings: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/git/sync/checkout", methods=["POST"])
 def api_git_sync_checkout():
     """Checkout a selected local branch or create tracking from a remote branch."""
@@ -5151,15 +5524,22 @@ def api_git_sync_push():
             ), 400
 
         tracking_branch = str(status_before.get("tracking_branch") or "").strip()
-        default_remote = _extract_tracking_remote_name(tracking_branch) or "origin"
-        remote = _normalize_git_sync_remote_name(requested_remote or default_remote)
+        tracking_remote = _extract_tracking_remote_name(tracking_branch)
+        configured_default_remote = _git_configured_push_default_remote(repo)
+        fallback_remote = configured_default_remote or tracking_remote or "origin"
+        if fallback_remote and not _git_remote_exists(repo, fallback_remote):
+            if tracking_remote and _git_remote_exists(repo, tracking_remote):
+                fallback_remote = tracking_remote
+            elif _git_remote_exists(repo, "origin"):
+                fallback_remote = "origin"
+        remote = _normalize_git_sync_remote_name(requested_remote or fallback_remote)
         if not _valid_git_sync_remote_name(remote):
             return jsonify({"error": f"Invalid remote name: {remote}"}), 400
 
         push_args: list[str] = ["push"]
         if set_upstream:
             push_args.extend(["--set-upstream", remote, branch])
-        elif requested_remote or requested_branch:
+        elif requested_remote or requested_branch or bool(configured_default_remote):
             push_args.extend([remote, branch])
 
         push_result = _run_git_sync_command(repo, *push_args)
