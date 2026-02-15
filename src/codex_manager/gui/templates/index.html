@@ -273,6 +273,16 @@ summary:focus-visible{
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Exec Controls Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .exec-controls{display:flex;gap:8px}
+.exec-toggle{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  color:var(--text2);
+  user-select:none;
+  padding:0 2px;
+}
+.exec-toggle input[type="checkbox"]{margin-right:0}
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Progress Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .progress-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px}
@@ -974,12 +984,9 @@ body.mode-medium .easy-only{display:none}
       </div>
     </div>
     <div class="form-row" style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-bottom:12px">
-      <label style="margin-bottom:6px"><input type="checkbox" id="brain-enabled" onchange="toggleBrain()"> <strong style="color:var(--warning)">Enable Brain (Experimental)</strong> - OFF by default</label>
-      <p style="font-size:11px;color:var(--warning);margin:4px 0 0 22px">
-        Experimental behavior: can interrupt straightforward runs, request human input, or change loop flow unexpectedly.
-      </p>
+      <label style="margin-bottom:6px"><input type="checkbox" id="brain-enabled" onchange="toggleBrain()"> <strong style="color:var(--purple)">Enable Brain (Experimental)</strong> - AI thinks before Codex acts</label>
       <p style="font-size:11px;color:var(--text2);margin:4px 0 0 22px">
-        Only enable when you explicitly want planning/evaluation experiments and accept less predictable chain behavior.
+        Uses a separate AI model to plan prompts, evaluate results, handle errors, and escalate only when necessary.
       </p>
     </div>
     <div id="brain-options" style="display:none" class="medium-hide">
@@ -1182,6 +1189,15 @@ body.mode-medium .easy-only{display:none}
       <button class="btn btn-danger"  id="btn-stop"  onclick="stopChain()"  disabled>&#9209; Stop</button>
     </div>
   </div>
+  <label class="exec-toggle" title="When enabled, the chain finishes the active step, then stops before starting the next one.">
+    <input
+      type="checkbox"
+      id="stop-after-step"
+      onchange="toggleStopAfterStep(this.checked)"
+      disabled
+    >
+    Stop after current step finishes
+  </label>
 
   <!-- Progress -->
   <div class="progress-section" id="progress-section">
@@ -1422,13 +1438,10 @@ body.mode-medium .easy-only{display:none}
     <div class="form-row" style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px;margin-top:8px">
       <label style="margin-bottom:4px">
         <input type="checkbox" id="pipe-brain" onchange="togglePipeBrain()">
-        <strong style="color:var(--warning)">Enable Brain (Experimental)</strong> - OFF by default
+        <strong style="color:var(--purple)">Enable Brain (Experimental)</strong> - AI thinks before agents act
       </label>
-      <p style="font-size:11px;color:var(--warning);margin:4px 0 0 22px">
-        Experimental behavior: can interrupt straightforward runs, request human input, or change loop flow unexpectedly.
-      </p>
       <p style="font-size:11px;color:var(--text2);margin:4px 0 0 22px">
-        Use only when you want to experiment with autonomous planning and can tolerate less predictable pipeline flow.
+        Uses a separate AI model to plan prompts, evaluate results, handle errors, and escalate only when necessary.
       </p>
       <div id="pipe-brain-options" style="display:none;margin-top:8px">
         <label>Brain Model</label>
@@ -5073,6 +5086,8 @@ async function startChain() {
   chainLastActivityMs = 0;
   chainRunning = true;
   chainPaused = false;
+  const stopAfterStep = document.getElementById('stop-after-step');
+  if (stopAfterStep) stopAfterStep.checked = false;
   renderActivityHeartbeats();
   document.getElementById('progress-last-log').textContent = 'Last log: waiting for first message...';
   renderStopGuidance('chain-stop-guidance', null, false);
@@ -5113,6 +5128,30 @@ async function stopChain() {
   toast('Stop requested', 'info');
 }
 
+async function toggleStopAfterStep(enabled) {
+  const checkbox = document.getElementById('stop-after-step');
+  if (!chainRunning) {
+    if (checkbox) checkbox.checked = false;
+    return;
+  }
+
+  const r = await postJson('/api/chain/stop-after-step', { enabled: !!enabled });
+  if (r.error) {
+    if (checkbox) checkbox.checked = !enabled;
+    toast(r.error, 'error');
+    return;
+  }
+
+  const armed = !!r.stop_after_current_step;
+  if (checkbox) checkbox.checked = armed;
+  toast(
+    armed
+      ? 'Chain will stop after the current step completes'
+      : 'Chain will continue to the next step',
+    'info',
+  );
+}
+
 async function pauseChain() {
   const r = await postJson('/api/chain/pause');
   if (r.error) {
@@ -5127,6 +5166,11 @@ function setControlsRunning(running) {
   document.getElementById('btn-start').disabled = running;
   document.getElementById('btn-pause').disabled = !running;
   document.getElementById('btn-stop').disabled  = !running;
+  const stopAfterStep = document.getElementById('stop-after-step');
+  if (stopAfterStep) {
+    stopAfterStep.disabled = !running;
+    if (!running) stopAfterStep.checked = false;
+  }
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬ SSE Connection Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
@@ -5248,6 +5292,9 @@ async function pollStatus() {
 function updateProgress(s) {
   chainRunning = !!s.running;
   chainPaused = !!s.paused;
+  const stopAfterCurrentStep = !!s.stop_after_current_step;
+  const stopAfterCheckbox = document.getElementById('stop-after-step');
+  if (stopAfterCheckbox) stopAfterCheckbox.checked = stopAfterCurrentStep;
   const stopGuidance = s.stop_guidance || null;
   if (s.last_log_epoch_ms) chainLastActivityMs = s.last_log_epoch_ms;
   renderActivityHeartbeats();
@@ -5291,6 +5338,7 @@ function updateProgress(s) {
       : 0;
     text = '[' + _spinnerFrame() + '] ' + loopLabel + ' \u2022 Step ' + (s.current_step + 1) + '/' + config.steps.length;
     if (s.current_step_name) text += ' \u2022 ' + esc(s.current_step_name);
+    if (stopAfterCurrentStep) text += ' \u2022 stopping after this step';
     if (runningFor > 0) text += ' \u2022 running ' + _formatElapsedSeconds(runningFor);
     if (!runUnlimited) text += ' \u2022 ' + pct + '%';
   } else if (s.stop_reason) {

@@ -27,6 +27,13 @@ def test_stop_guidance_includes_no_progress_template() -> None:
     assert guidance["severity"] == "info"
 
 
+def test_stop_guidance_includes_user_stop_after_step_template() -> None:
+    guidance = get_stop_guidance("user_stopped_after_step", mode="chain")
+    assert guidance
+    assert guidance["label"] == "Stopped after current step"
+    assert guidance["severity"] == "info"
+
+
 def test_stop_guidance_includes_brain_needs_input_template() -> None:
     guidance = get_stop_guidance("brain_needs_input", mode="chain")
     assert guidance

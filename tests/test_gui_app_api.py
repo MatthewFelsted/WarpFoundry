@@ -1787,6 +1787,50 @@ def test_chain_status_supports_results_delta_polling(client, monkeypatch):
     assert "results" not in data
 
 
+def test_chain_stop_after_step_api_arms_and_clears_toggle(client, monkeypatch):
+    observed: list[bool] = []
+
+    class _State:
+        stop_after_current_step = False
+
+    class _Exec:
+        is_running = True
+        state = _State()
+
+        def set_stop_after_current_step(self, enabled: bool):
+            observed.append(bool(enabled))
+            self.state.stop_after_current_step = bool(enabled)
+
+    monkeypatch.setattr(gui_app_module, "executor", _Exec())
+
+    arm_resp = client.post("/api/chain/stop-after-step", json={"enabled": True})
+    arm_data = arm_resp.get_json()
+    assert arm_resp.status_code == 200
+    assert arm_data
+    assert arm_data["status"] == "armed"
+    assert arm_data["stop_after_current_step"] is True
+
+    clear_resp = client.post("/api/chain/stop-after-step", json={"enabled": False})
+    clear_data = clear_resp.get_json()
+    assert clear_resp.status_code == 200
+    assert clear_data
+    assert clear_data["status"] == "cleared"
+    assert clear_data["stop_after_current_step"] is False
+    assert observed == [True, False]
+
+
+def test_chain_stop_after_step_api_rejects_when_not_running(client, monkeypatch):
+    class _Exec:
+        is_running = False
+
+    monkeypatch.setattr(gui_app_module, "executor", _Exec())
+    resp = client.post("/api/chain/stop-after-step", json={"enabled": True})
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data
+    assert "No chain running" in data["error"]
+
+
 def test_pipeline_status_includes_actionable_stop_guidance(client, monkeypatch):
     class _PipelineState:
         @staticmethod

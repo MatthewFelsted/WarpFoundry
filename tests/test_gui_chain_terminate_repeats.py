@@ -82,6 +82,26 @@ class _OutputRunner:
         )
 
 
+class _ArmStopAfterStepRunner:
+    name = "StubCodex"
+    executor: ClassVar[ChainExecutor | None] = None
+    calls: ClassVar[int] = 0
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        self.__class__.calls += 1
+        if self.__class__.executor is not None:
+            self.__class__.executor.set_stop_after_current_step(True)
+        return RunResult(
+            success=True,
+            exit_code=0,
+            final_message="Completed the active step and requested graceful stop.",
+            usage=UsageInfo(input_tokens=2, output_tokens=2, total_tokens=4),
+        )
+
+
 class _PlaceholderRunner:
     name = "StubCodex"
 
@@ -434,6 +454,55 @@ def test_chain_runtime_state_tracks_run_loop_limits(monkeypatch, tmp_path: Path)
 
     assert executor.state.run_max_loops == 1
     assert executor.state.run_unlimited is False
+
+
+def test_chain_stop_after_step_halts_before_next_step(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _ArmStopAfterStepRunner.calls = 0
+    monkeypatch.setattr(chain_module, "CodexRunner", _ArmStopAfterStepRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Stop-after-step",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Step One",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Complete this step and request stop-after-step.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            ),
+            TaskStep(
+                name="Step Two",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="This step should never run in this test.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            ),
+        ],
+    )
+
+    executor = ChainExecutor()
+    _ArmStopAfterStepRunner.executor = executor
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert _ArmStopAfterStepRunner.calls == 1
+    assert executor.state.total_steps_completed == 1
+    assert executor.state.stop_reason == "user_stopped_after_step"
+    assert executor.state.stop_after_current_step is False
 
 
 def test_chain_branch_creation_failure_finalizes_state(monkeypatch, tmp_path: Path):

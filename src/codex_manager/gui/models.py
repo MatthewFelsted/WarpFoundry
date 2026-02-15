@@ -141,6 +141,7 @@ class ChainState(BaseModel):
 
     running: bool = False
     paused: bool = False
+    stop_after_current_step: bool = False
     run_max_loops: int = 0
     run_unlimited: bool = False
     current_loop: int = 0

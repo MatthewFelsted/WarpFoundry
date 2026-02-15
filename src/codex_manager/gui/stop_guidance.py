@@ -29,6 +29,15 @@ _SHARED_TEMPLATES: dict[str, GuidanceTemplate] = {
             "Start a new run when ready.",
         ),
     ),
+    "user_stopped_after_step": GuidanceTemplate(
+        label="Stopped after current step",
+        severity="info",
+        summary="Stop-after-step was enabled, so the run ended after the active step completed.",
+        next_steps=(
+            "Review the latest step result and outputs.",
+            "Start a new run when you are ready to continue.",
+        ),
+    ),
     "brain_escalation": GuidanceTemplate(
         label="Brain escalation",
         severity="error",

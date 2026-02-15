@@ -2731,6 +2731,21 @@ def api_pause():
     return jsonify({"status": "paused"})
 
 
+@app.route("/api/chain/stop-after-step", methods=["POST"])
+def api_stop_after_step():
+    if not executor.is_running:
+        return jsonify({"error": "No chain running"}), 400
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+    executor.set_stop_after_current_step(enabled)
+    return jsonify(
+        {
+            "status": "armed" if enabled else "cleared",
+            "stop_after_current_step": bool(executor.state.stop_after_current_step),
+        }
+    )
+
+
 @app.route("/api/chain/status")
 def api_status():
     since_results = _parse_since_results_arg(request.args.get("since_results"))

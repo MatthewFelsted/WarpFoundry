@@ -116,6 +116,7 @@ class ChainExecutor:
         self.config: ChainConfig | None = None
         self.state = ChainState()
         self._stop_event = threading.Event()
+        self._stop_after_step_event = threading.Event()
         self._pause_event = threading.Event()
         self._pause_event.set()  # not paused
         self._thread: threading.Thread | None = None
@@ -158,6 +159,8 @@ class ChainExecutor:
             run_unlimited=bool(config.unlimited),
         )
         self._stop_event.clear()
+        self._stop_after_step_event.clear()
+        self.state.stop_after_current_step = False
         self._pause_event.set()
 
         # Drain any stale log entries
@@ -207,9 +210,27 @@ class ChainExecutor:
             self._log("warn", f"Could not prepare output directory: {exc}")
 
     def stop(self) -> None:
+        self._stop_after_step_event.clear()
+        self.state.stop_after_current_step = False
         self._stop_event.set()
         self._pause_event.set()  # unblock if paused
         self._log("warn", "Stop requested")
+
+    def set_stop_after_current_step(self, enabled: bool) -> None:
+        enabled_flag = bool(enabled)
+        current = bool(self.state.stop_after_current_step)
+        if enabled_flag == current:
+            return
+        self.state.stop_after_current_step = enabled_flag
+        if enabled_flag:
+            self._stop_after_step_event.set()
+            self._log(
+                "warn",
+                "Stop-after-step armed: run will stop after the active step completes.",
+            )
+        else:
+            self._stop_after_step_event.clear()
+            self._log("info", "Stop-after-step cleared: run will continue normally.")
 
     def pause(self) -> None:
         self._pause_event.clear()
@@ -331,6 +352,8 @@ class ChainExecutor:
         extra_history_context: dict[str, Any] | None = None,
     ) -> None:
         """Finalize state/logging for any chain terminal path."""
+        self._stop_after_step_event.clear()
+        self.state.stop_after_current_step = False
         self.state.running = False
         self.state.current_step_name = ""
         self.state.current_step_started_at_epoch_ms = 0
@@ -357,6 +380,19 @@ class ChainExecutor:
             level=history_level,
             context=history_context,
         )
+
+    def _consume_stop_after_step_request(self, *, context: str = "step") -> bool:
+        """Consume a pending stop-after-step request and set terminal state."""
+        if not self._stop_after_step_event.is_set():
+            return False
+        self._stop_after_step_event.clear()
+        self.state.stop_after_current_step = False
+        self.state.stop_reason = "user_stopped_after_step"
+        self._log(
+            "warn",
+            f"Stop-after-step request honored; stopping before next {context}.",
+        )
+        return True
 
     @staticmethod
     def _memory_log_path(repo: Path) -> Path:
@@ -982,6 +1018,8 @@ class ChainExecutor:
                 if self._stop_event.is_set():
                     self.state.stop_reason = "user_stopped"
                     break
+                if self._consume_stop_after_step_request(context="loop"):
+                    break
 
                 self.state.current_loop = loop_num
                 enabled_steps = [s for s in config.steps if s.enabled]
@@ -1018,6 +1056,9 @@ class ChainExecutor:
                             self.state.stop_reason = "user_stopped"
                             loop_aborted = True
                             break
+                        if self._consume_stop_after_step_request(context="step"):
+                            loop_aborted = True
+                            break
 
                         if not step.enabled:
                             continue
@@ -1032,6 +1073,9 @@ class ChainExecutor:
                             self._pause_event.wait()
                             if self._stop_event.is_set():
                                 self.state.stop_reason = "user_stopped"
+                                loop_aborted = True
+                                break
+                            if self._consume_stop_after_step_request(context="step repetition"):
                                 loop_aborted = True
                                 break
 
@@ -1072,6 +1116,9 @@ class ChainExecutor:
                             self.state.total_tokens += result.input_tokens + result.output_tokens
                             self.state.elapsed_seconds = time.monotonic() - start_time
                             if self._check_strict_token_budget(config):
+                                loop_aborted = True
+                                break
+                            if self._consume_stop_after_step_request(context="step"):
                                 loop_aborted = True
                                 break
 
@@ -1208,6 +1255,9 @@ class ChainExecutor:
                                         )
                                         self.state.elapsed_seconds = time.monotonic() - start_time
                                         if self._check_strict_token_budget(config):
+                                            loop_aborted = True
+                                            break
+                                        if self._consume_stop_after_step_request(context="step"):
                                             loop_aborted = True
                                             break
                                         self._record_brain_note(
@@ -1350,6 +1400,9 @@ class ChainExecutor:
                                         )
                                         self.state.elapsed_seconds = time.monotonic() - start_time
                                         if self._check_strict_token_budget(config):
+                                            loop_aborted = True
+                                            break
+                                        if self._consume_stop_after_step_request(context="step"):
                                             loop_aborted = True
                                             break
                                         if fix_result.success:
@@ -2353,6 +2406,9 @@ class ChainExecutor:
 
         Returns True if the loop should be aborted.
         """
+        if self._consume_stop_after_step_request(context="parallel batch"):
+            return True
+
         self._log(
             "info",
             f"Running {len(enabled_steps)} steps in parallel (Codex + Claude Code)",
@@ -2425,6 +2481,8 @@ class ChainExecutor:
                 self.state.elapsed_seconds = time.monotonic() - start_time
                 if self._check_strict_token_budget(config):
                     return True
+        if self._consume_stop_after_step_request(context="parallel batch"):
+            return True
 
         return False  # no abort in parallel mode (all steps attempted)
 
