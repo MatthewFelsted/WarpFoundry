@@ -16,6 +16,7 @@ import math
 import re
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,6 +37,23 @@ class MemoryHit:
     document: str
     score: float
     metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _LexicalEventEntry:
+    """Cached lexical-search entry parsed from vector event journal."""
+
+    payload: dict[str, Any]
+    tokens: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _ResearchEntry:
+    """Cached deep-research entry parsed from JSONL cache."""
+
+    payload: dict[str, Any]
+    created_at: datetime | None
+    topic_tokens: frozenset[str]
 
 
 def _tokenize(text: str) -> list[str]:
@@ -110,6 +128,15 @@ def _parse_iso(value: str) -> datetime | None:
         return None
 
 
+def _file_signature(path: Path) -> tuple[int, int] | None:
+    """Return a cheap mutation signature for cache invalidation."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return stat_result.st_mtime_ns, stat_result.st_size
+
+
 class ProjectVectorMemory:
     """Per-repository memory store for notes, decisions, and research."""
 
@@ -138,6 +165,11 @@ class ProjectVectorMemory:
         self.available = False
         self.reason = "disabled"
         self._collection: Any = None
+        self._event_cache_signature: tuple[int, int] | None = None
+        self._event_cache_limit = _MAX_EVENT_SCAN
+        self._event_cache_entries: list[_LexicalEventEntry] = []
+        self._research_cache_signature: tuple[int, int] | None = None
+        self._research_cache_entries: list[_ResearchEntry] = []
 
         if self.enabled:
             self._initialize_backend()
@@ -208,6 +240,7 @@ class ProjectVectorMemory:
         }
         with self.events_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(journal_payload, ensure_ascii=False) + "\n")
+        self._event_cache_signature = None
 
         if self.available and self._collection is not None:
             try:
@@ -287,9 +320,8 @@ class ProjectVectorMemory:
             return []
 
         scored: list[tuple[float, dict[str, Any]]] = []
-        for payload in self._iter_recent_event_payloads(limit=_MAX_EVENT_SCAN):
-            text = str(payload.get("text") or "")
-            t_tokens = set(_tokenize(text))
+        for entry in self._iter_recent_event_entries(limit=_MAX_EVENT_SCAN):
+            t_tokens = entry.tokens
             if not t_tokens:
                 continue
             overlap = len(q_tokens & t_tokens)
@@ -297,7 +329,7 @@ class ProjectVectorMemory:
             score = overlap / union if union else 0.0
             if score <= 0.0:
                 continue
-            scored.append((score, payload))
+            scored.append((score, entry.payload))
 
         scored.sort(key=lambda item: item[0], reverse=True)
         hits: list[MemoryHit] = []
@@ -354,25 +386,49 @@ class ProjectVectorMemory:
         return filtered
 
     def _iter_recent_event_payloads(self, *, limit: int) -> list[dict[str, Any]]:
-        if not self.events_path.is_file():
+        return [entry.payload for entry in self._iter_recent_event_entries(limit=limit)]
+
+    def _iter_recent_event_entries(self, *, limit: int) -> list[_LexicalEventEntry]:
+        signature = _file_signature(self.events_path)
+        if signature is None:
+            self._event_cache_signature = None
+            self._event_cache_limit = _MAX_EVENT_SCAN
+            self._event_cache_entries = []
             return []
-        rows: list[dict[str, Any]] = []
+
+        if signature == self._event_cache_signature and limit == self._event_cache_limit:
+            return self._event_cache_entries
+
+        recent_rows: deque[_LexicalEventEntry] = deque(maxlen=max(1, int(limit)))
         try:
-            for line in self.events_path.read_text(encoding="utf-8").splitlines():
-                raw = line.strip()
-                if not raw:
-                    continue
-                try:
-                    parsed = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(parsed, dict):
-                    rows.append(parsed)
+            with self.events_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    try:
+                        parsed = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(parsed, dict):
+                        continue
+                    text_tokens = frozenset(_tokenize(str(parsed.get("text") or "")))
+                    recent_rows.append(
+                        _LexicalEventEntry(
+                            payload=parsed,
+                            tokens=text_tokens,
+                        )
+                    )
         except Exception:
+            self._event_cache_signature = None
+            self._event_cache_limit = _MAX_EVENT_SCAN
+            self._event_cache_entries = []
             return []
-        if len(rows) > limit:
-            rows = rows[-limit:]
-        return rows
+
+        self._event_cache_signature = signature
+        self._event_cache_limit = max(1, int(limit))
+        self._event_cache_entries = list(recent_rows)
+        return self._event_cache_entries
 
     # ------------------------------------------------------------------
     # Deep-research cache
@@ -407,6 +463,8 @@ class ProjectVectorMemory:
         self.memory_dir.mkdir(parents=True, exist_ok=True)
         with self.research_cache_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._research_cache_signature = None
+        self._research_cache_entries = []
 
         self.add_note(
             f"Deep research topic: {clean_topic}\n\nSummary:\n{clean_summary}",
@@ -443,34 +501,62 @@ class ProjectVectorMemory:
         best_score = 0.0
         best_payload: dict[str, Any] | None = None
 
-        lines = self.research_cache_path.read_text(encoding="utf-8").splitlines()
-        for raw in reversed(lines):
-            row = raw.strip()
-            if not row:
+        for entry in reversed(self._recent_research_entries()):
+            if entry.created_at is None:
                 continue
-            try:
-                payload = json.loads(row)
-            except json.JSONDecodeError:
+            if entry.created_at < cutoff:
+                break
+            if not entry.topic_tokens:
                 continue
-            if not isinstance(payload, dict):
-                continue
-            created_at = _parse_iso(str(payload.get("created_at") or ""))
-            if created_at is None or created_at < cutoff:
-                continue
-
-            entry_topic = str(payload.get("topic") or "").strip()
-            tokens = set(_tokenize(entry_topic))
-            if not tokens:
-                continue
-            overlap = len(topic_tokens & tokens)
-            union = len(topic_tokens | tokens)
+            overlap = len(topic_tokens & entry.topic_tokens)
+            union = len(topic_tokens | entry.topic_tokens)
             score = overlap / union if union else 0.0
             if score > best_score:
                 best_score = score
-                best_payload = payload
+                best_payload = entry.payload
             if best_score >= 0.98:
                 break
 
         if best_payload is None or best_score < float(min_similarity):
             return None
         return best_payload
+
+    def _recent_research_entries(self) -> list[_ResearchEntry]:
+        signature = _file_signature(self.research_cache_path)
+        if signature is None:
+            self._research_cache_signature = None
+            self._research_cache_entries = []
+            return []
+
+        if signature == self._research_cache_signature:
+            return self._research_cache_entries
+
+        parsed_rows: list[_ResearchEntry] = []
+        try:
+            with self.research_cache_path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    row = raw.strip()
+                    if not row:
+                        continue
+                    try:
+                        payload = json.loads(row)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    entry_topic = str(payload.get("topic") or "").strip()
+                    parsed_rows.append(
+                        _ResearchEntry(
+                            payload=payload,
+                            created_at=_parse_iso(str(payload.get("created_at") or "")),
+                            topic_tokens=frozenset(_tokenize(entry_topic)),
+                        )
+                    )
+        except Exception:
+            self._research_cache_signature = None
+            self._research_cache_entries = []
+            return []
+
+        self._research_cache_signature = signature
+        self._research_cache_entries = parsed_rows
+        return self._research_cache_entries

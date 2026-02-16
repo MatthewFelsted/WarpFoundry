@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import codex_manager.memory.vector_store as vector_store_module
 from codex_manager.memory.vector_store import ProjectVectorMemory
 
 
@@ -56,3 +57,57 @@ def test_deep_research_cache_reuse_lookup(tmp_path: Path) -> None:
     )
     assert hit is not None
     assert "pricing" in str(hit.get("topic", "")).lower()
+
+
+def test_deep_research_lookup_reuses_cached_rows_without_reparsing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    memory = ProjectVectorMemory(repo, enabled=True, backend="unsupported")
+
+    memory.record_deep_research(
+        topic="latency reduction for API retries",
+        summary="Use jittered backoff plus per-endpoint timeout budgets.",
+        providers="both",
+    )
+
+    first = memory.lookup_recent_deep_research(
+        "api retry latency reduction",
+        max_age_hours=72,
+        min_similarity=0.1,
+    )
+    assert first is not None
+
+    def _raise_on_json_loads(*_args, **_kwargs):
+        raise AssertionError("json.loads should not run for cached lookup")
+
+    monkeypatch.setattr(vector_store_module.json, "loads", _raise_on_json_loads)
+
+    second = memory.lookup_recent_deep_research(
+        "api retry latency reduction",
+        max_age_hours=72,
+        min_similarity=0.1,
+    )
+    assert second is not None
+    assert second.get("id") == first.get("id")
+
+
+def test_vector_search_reuses_cached_event_rows_without_reparsing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    memory = ProjectVectorMemory(repo, enabled=True, backend="unsupported")
+
+    memory.add_note("Implemented retry timeout and circuit breaker policy for network calls.")
+    first_hits = memory.search("retry timeout policy", top_k=3)
+    assert first_hits
+
+    def _raise_on_json_loads(*_args, **_kwargs):
+        raise AssertionError("json.loads should not run for cached fallback search")
+
+    monkeypatch.setattr(vector_store_module.json, "loads", _raise_on_json_loads)
+
+    second_hits = memory.search("retry timeout policy", top_k=3)
+    assert second_hits

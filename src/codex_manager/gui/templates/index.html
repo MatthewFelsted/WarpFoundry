@@ -5682,14 +5682,16 @@ async function refreshGitSyncStatus(opts = {}) {
     return;
   }
 
-  const response = await api('/api/git/sync/status?repo_path=' + encodeURIComponent(repoPath));
+  const response = await api('/api/git/sync/branches?repo_path=' + encodeURIComponent(repoPath));
   const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
   if (repoPath !== currentRepoPath) {
     return;
   }
   if (response.error) {
     gitSyncState = null;
+    gitSyncBranchState = null;
     _clearGitSyncWidgetDetails();
+    _clearGitSyncBranchOptions('Branch list unavailable');
     const message = String(response.error || 'Unknown error');
     _setGitSyncIndicator(message, 'error', message);
     if (!opts.silent) toast('Could not load git sync status: ' + message, 'error');
@@ -5697,13 +5699,13 @@ async function refreshGitSyncStatus(opts = {}) {
     return;
   }
 
-  gitSyncState = response;
-  _renderGitSyncState(response);
-  await refreshGitSyncBranches({
-    repoPath,
-    silent: true,
-    force: !!opts.force,
-    preferredBranch: String(response.branch || '').trim(),
+  gitSyncBranchState = response;
+  if (response.sync) {
+    gitSyncState = response.sync;
+    _renderGitSyncState(response.sync);
+  }
+  _renderGitSyncBranchOptions(response, {
+    preferredBranch: String(opts.preferredBranch || '').trim(),
   });
   if (_isGitRemoteModalOpen()) {
     await refreshGitRemotes({ repoPath, silent: true, force: !!opts.force });

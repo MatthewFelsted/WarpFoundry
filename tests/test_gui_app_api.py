@@ -542,6 +542,22 @@ def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
     assert data["model_watchdog_last_status"] == "ok"
 
 
+def test_index_route_applies_gzip_when_requested(client):
+    resp = client.get("/", headers={"Accept-Encoding": "gzip"})
+
+    assert resp.status_code == 200
+    assert resp.headers.get("Content-Encoding") == "gzip"
+    vary = str(resp.headers.get("Vary") or "")
+    assert "Accept-Encoding" in vary
+
+
+def test_small_json_payload_is_not_compressed(client):
+    resp = client.get("/api/health", headers={"Accept-Encoding": "gzip"})
+
+    assert resp.status_code == 200
+    assert resp.headers.get("Content-Encoding") is None
+
+
 def test_chain_start_preflight_requires_image_provider_auth(client, monkeypatch, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])

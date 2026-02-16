@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import os
@@ -147,6 +148,19 @@ _OWNER_CONTEXT_MAX_FILES = 6
 _OWNER_CONTEXT_MAX_FILE_CHARS = 6000
 _OWNER_CONTEXT_MAX_TOTAL_CHARS = 24000
 _GENERAL_REQUEST_HISTORY_MAX_ITEMS = 200
+_HTTP_COMPRESSION_MIN_BYTES = 1024
+_HTTP_COMPRESSION_LEVEL = 6
+_HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
+    {
+        "text/html",
+        "text/plain",
+        "text/css",
+        "text/javascript",
+        "application/javascript",
+        "application/json",
+        "image/svg+xml",
+    }
+)
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
@@ -3377,6 +3391,48 @@ def _model_watchdog_health() -> dict[str, object]:
 
 
 # â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+def _request_accepts_gzip() -> bool:
+    """Return True when the incoming request supports gzip."""
+    return "gzip" in str(request.headers.get("Accept-Encoding") or "").lower()
+
+
+@app.after_request
+def _maybe_compress_response(response: Response) -> Response:
+    """Gzip large text responses to reduce transfer size and initial-load latency."""
+    if response.direct_passthrough:
+        return response
+    if request.method == "HEAD":
+        return response
+    if response.status_code < 200 or response.status_code >= 300:
+        return response
+    if response.mimetype == "text/event-stream":
+        return response
+    if response.mimetype not in _HTTP_COMPRESSIBLE_MIME_TYPES:
+        return response
+    if response.headers.get("Content-Encoding"):
+        return response
+    if not _request_accepts_gzip():
+        return response
+
+    payload = response.get_data()
+    if len(payload) < _HTTP_COMPRESSION_MIN_BYTES:
+        return response
+
+    compressed = gzip.compress(payload, compresslevel=_HTTP_COMPRESSION_LEVEL)
+    if len(compressed) >= len(payload):
+        return response
+
+    response.set_data(compressed)
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = str(len(compressed))
+
+    vary_raw = str(response.headers.get("Vary") or "")
+    vary_tokens = {token.strip() for token in vary_raw.split(",") if token.strip()}
+    vary_tokens.add("Accept-Encoding")
+    response.headers["Vary"] = ", ".join(sorted(vary_tokens, key=str.lower))
+    return response
 
 
 @app.route("/")
