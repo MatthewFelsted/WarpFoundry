@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -36,6 +37,8 @@ _DEFAULT_BLOCKED_SOURCE_DOMAINS = frozenset(
         "pinterest.com",
     }
 )
+_USAGE_LOCKS: dict[str, threading.Lock] = {}
+_USAGE_LOCKS_GUARD = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -95,6 +98,18 @@ def _iso_now() -> str:
 
 def _usage_path(repo_path: Path) -> Path:
     return repo_path / ".codex_manager" / "memory" / "deep_research_usage.json"
+
+
+def _usage_lock(repo_path: Path) -> threading.Lock:
+    key = str(repo_path.resolve())
+    if os.name == "nt":
+        key = key.casefold()
+    with _USAGE_LOCKS_GUARD:
+        lock = _USAGE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _USAGE_LOCKS[key] = lock
+    return lock
 
 
 def _ensure_parent(path: Path) -> None:
@@ -576,154 +591,157 @@ def run_native_deep_research(
             error="Deep research topic is empty.",
         )
 
-    usage = _load_daily_usage(repo)
-    allowed, quota_blocked, budget_blocked = _usage_allows_run(
-        usage,
-        daily_quota=settings.daily_quota,
-        daily_budget_usd=settings.daily_budget_usd,
-    )
-    if not allowed:
-        reason = (
-            "daily quota reached"
-            if quota_blocked
-            else "daily research budget reached"
-            if budget_blocked
-            else "blocked by usage policy"
+    # Serialize quota/budget checks per repository so concurrent requests
+    # cannot both pass stale counters before usage is persisted.
+    with _usage_lock(repo):
+        usage = _load_daily_usage(repo)
+        allowed, quota_blocked, budget_blocked = _usage_allows_run(
+            usage,
+            daily_quota=settings.daily_quota,
+            daily_budget_usd=settings.daily_budget_usd,
+        )
+        if not allowed:
+            reason = (
+                "daily quota reached"
+                if quota_blocked
+                else "daily research budget reached"
+                if budget_blocked
+                else "blocked by usage policy"
+            )
+            return DeepResearchRunResult(
+                ok=False,
+                topic=clean_topic,
+                providers=[],
+                merged_summary="",
+                merged_sources=[],
+                total_input_tokens=0,
+                total_output_tokens=0,
+                total_estimated_cost_usd=0.0,
+                governance_warnings=[],
+                filtered_source_count=0,
+                quota_blocked=quota_blocked,
+                budget_blocked=budget_blocked,
+                error=f"Native deep research blocked: {reason}.",
+            )
+
+        provider_list = _normalize_provider_list(settings.providers)
+        retry_attempts = _clamp_int(settings.retry_attempts, minimum=1, maximum=6)
+        max_tokens = _clamp_int(settings.max_provider_tokens, minimum=512, maximum=64_000)
+        timeout_seconds = _clamp_int(settings.timeout_seconds, minimum=10, maximum=120)
+        guidance = str(project_context or "").strip()
+        if len(guidance) > 5000:
+            guidance = guidance[:5000].rstrip() + "..."
+
+        results: list[DeepResearchProviderResult] = []
+        for provider in provider_list:
+            try:
+                if provider == "openai":
+                    payload = _retry_call(
+                        lambda: _call_openai_native(
+                            topic=clean_topic,
+                            guidance=guidance,
+                            model=str(settings.openai_model or _DEFAULT_OPENAI_MODEL).strip()
+                            or _DEFAULT_OPENAI_MODEL,
+                            max_output_tokens=max_tokens,
+                            timeout_seconds=timeout_seconds,
+                        ),
+                        attempts=retry_attempts,
+                        provider=provider,
+                        topic=clean_topic,
+                    )
+                    results.append(
+                        _provider_result(
+                            provider,
+                            ok=True,
+                            summary=str(payload.get("summary") or ""),
+                            input_tokens=int(payload.get("input_tokens") or 0),
+                            output_tokens=int(payload.get("output_tokens") or 0),
+                        )
+                    )
+                    continue
+
+                if provider == "google":
+                    payload = _retry_call(
+                        lambda: _call_google_native(
+                            topic=clean_topic,
+                            guidance=guidance,
+                            model=str(settings.google_model or _DEFAULT_GOOGLE_MODEL).strip()
+                            or _DEFAULT_GOOGLE_MODEL,
+                            max_output_tokens=max_tokens,
+                            timeout_seconds=timeout_seconds,
+                        ),
+                        attempts=retry_attempts,
+                        provider=provider,
+                        topic=clean_topic,
+                    )
+                    results.append(
+                        _provider_result(
+                            provider,
+                            ok=True,
+                            summary=str(payload.get("summary") or ""),
+                            input_tokens=int(payload.get("input_tokens") or 0),
+                            output_tokens=int(payload.get("output_tokens") or 0),
+                        )
+                    )
+                    continue
+
+                results.append(
+                    _provider_result(
+                        provider,
+                        ok=False,
+                        error=f"Unsupported deep research provider: {provider}",
+                    )
+                )
+            except Exception as exc:
+                results.append(_provider_result(provider, ok=False, error=str(exc)))
+
+        successful = [item for item in results if item.ok and item.summary]
+        merged_sources = sorted(
+            {
+                source
+                for item in successful
+                for source in item.sources
+                if str(source or "").strip()
+            }
+        )
+        merged_sections: list[str] = []
+        for item in successful:
+            merged_sections.append(f"## {item.provider.title()} Findings\n\n{item.summary}")
+        merged_summary = "\n\n".join(merged_sections).strip()
+        governed_sources, governance_warnings = _filter_sources_by_policy(merged_sources)
+        total_input_tokens = sum(item.input_tokens for item in results)
+        total_output_tokens = sum(item.output_tokens for item in results)
+        total_cost = round(sum(item.estimated_cost_usd for item in results), 6)
+        filtered_count = max(0, len(merged_sources) - len(governed_sources))
+
+        if successful:
+            _record_run_usage(repo, usage, successful)
+            return DeepResearchRunResult(
+                ok=True,
+                topic=clean_topic,
+                providers=results,
+                merged_summary=merged_summary,
+                merged_sources=governed_sources,
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                total_estimated_cost_usd=total_cost,
+                governance_warnings=governance_warnings,
+                filtered_source_count=filtered_count,
+            )
+
+        errors = "; ".join(
+            f"{item.provider}: {item.error}" for item in results if not item.ok and item.error
         )
         return DeepResearchRunResult(
             ok=False,
             topic=clean_topic,
-            providers=[],
+            providers=results,
             merged_summary="",
             merged_sources=[],
-            total_input_tokens=0,
-            total_output_tokens=0,
-            total_estimated_cost_usd=0.0,
-            governance_warnings=[],
-            filtered_source_count=0,
-            quota_blocked=quota_blocked,
-            budget_blocked=budget_blocked,
-            error=f"Native deep research blocked: {reason}.",
-        )
-
-    provider_list = _normalize_provider_list(settings.providers)
-    retry_attempts = _clamp_int(settings.retry_attempts, minimum=1, maximum=6)
-    max_tokens = _clamp_int(settings.max_provider_tokens, minimum=512, maximum=64_000)
-    timeout_seconds = _clamp_int(settings.timeout_seconds, minimum=10, maximum=120)
-    guidance = str(project_context or "").strip()
-    if len(guidance) > 5000:
-        guidance = guidance[:5000].rstrip() + "..."
-
-    results: list[DeepResearchProviderResult] = []
-    for provider in provider_list:
-        try:
-            if provider == "openai":
-                payload = _retry_call(
-                    lambda: _call_openai_native(
-                        topic=clean_topic,
-                        guidance=guidance,
-                        model=str(settings.openai_model or _DEFAULT_OPENAI_MODEL).strip()
-                        or _DEFAULT_OPENAI_MODEL,
-                        max_output_tokens=max_tokens,
-                        timeout_seconds=timeout_seconds,
-                    ),
-                    attempts=retry_attempts,
-                    provider=provider,
-                    topic=clean_topic,
-                )
-                results.append(
-                    _provider_result(
-                        provider,
-                        ok=True,
-                        summary=str(payload.get("summary") or ""),
-                        input_tokens=int(payload.get("input_tokens") or 0),
-                        output_tokens=int(payload.get("output_tokens") or 0),
-                    )
-                )
-                continue
-
-            if provider == "google":
-                payload = _retry_call(
-                    lambda: _call_google_native(
-                        topic=clean_topic,
-                        guidance=guidance,
-                        model=str(settings.google_model or _DEFAULT_GOOGLE_MODEL).strip()
-                        or _DEFAULT_GOOGLE_MODEL,
-                        max_output_tokens=max_tokens,
-                        timeout_seconds=timeout_seconds,
-                    ),
-                    attempts=retry_attempts,
-                    provider=provider,
-                    topic=clean_topic,
-                )
-                results.append(
-                    _provider_result(
-                        provider,
-                        ok=True,
-                        summary=str(payload.get("summary") or ""),
-                        input_tokens=int(payload.get("input_tokens") or 0),
-                        output_tokens=int(payload.get("output_tokens") or 0),
-                    )
-                )
-                continue
-
-            results.append(
-                _provider_result(
-                    provider,
-                    ok=False,
-                    error=f"Unsupported deep research provider: {provider}",
-                )
-            )
-        except Exception as exc:
-            results.append(_provider_result(provider, ok=False, error=str(exc)))
-
-    successful = [item for item in results if item.ok and item.summary]
-    merged_sources = sorted(
-        {
-            source
-            for item in successful
-            for source in item.sources
-            if str(source or "").strip()
-        }
-    )
-    merged_sections: list[str] = []
-    for item in successful:
-        merged_sections.append(f"## {item.provider.title()} Findings\n\n{item.summary}")
-    merged_summary = "\n\n".join(merged_sections).strip()
-    governed_sources, governance_warnings = _filter_sources_by_policy(merged_sources)
-    total_input_tokens = sum(item.input_tokens for item in results)
-    total_output_tokens = sum(item.output_tokens for item in results)
-    total_cost = round(sum(item.estimated_cost_usd for item in results), 6)
-    filtered_count = max(0, len(merged_sources) - len(governed_sources))
-
-    if successful:
-        _record_run_usage(repo, usage, successful)
-        return DeepResearchRunResult(
-            ok=True,
-            topic=clean_topic,
-            providers=results,
-            merged_summary=merged_summary,
-            merged_sources=governed_sources,
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
             total_estimated_cost_usd=total_cost,
-            governance_warnings=governance_warnings,
-            filtered_source_count=filtered_count,
+            governance_warnings=[],
+            filtered_source_count=0,
+            error=errors or "Native deep research failed for all providers.",
         )
-
-    errors = "; ".join(
-        f"{item.provider}: {item.error}" for item in results if not item.ok and item.error
-    )
-    return DeepResearchRunResult(
-        ok=False,
-        topic=clean_topic,
-        providers=results,
-        merged_summary="",
-        merged_sources=[],
-        total_input_tokens=total_input_tokens,
-        total_output_tokens=total_output_tokens,
-        total_estimated_cost_usd=total_cost,
-        governance_warnings=[],
-        filtered_source_count=0,
-        error=errors or "Native deep research failed for all providers.",
-    )
