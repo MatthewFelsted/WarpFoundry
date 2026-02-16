@@ -1276,6 +1276,35 @@ def test_preflight_rejects_directory_path_as_codex_binary(monkeypatch, tmp_path:
     assert state.total_phases_completed == 0
 
 
+def test_preflight_fails_fast_when_repo_worktree_is_dirty(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    (repo / "DIRTY_PREFLIGHT.txt").write_text("dirty\n", encoding="utf-8")
+
+    monkeypatch.setattr(PipelineOrchestrator, "_has_codex_auth", staticmethod(lambda: True))
+    monkeypatch.setattr(PipelineOrchestrator, "_binary_exists", staticmethod(lambda _binary: True))
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    issues = orch._preflight_issues(cfg, repo.resolve())
+    assert any("worktree is dirty" in issue.lower() for issue in issues)
+
+    state = orch.run()
+
+    assert state.stop_reason == "preflight_failed"
+    assert state.total_phases_completed == 0
+
+
 def test_pipeline_log_init_failure_finishes_cleanly(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)

@@ -117,6 +117,7 @@ Inside home config (cross-repo state):
 
 - Target path exists and has `.git`
 - Repo is writable
+- Repo worktree is clean (or intentionally bypassed with `--skip-preflight`)
 - Agent binaries are installed and on PATH
 - Auth is present:
   - Codex: `CODEX_API_KEY` or `OPENAI_API_KEY`, or `codex login`

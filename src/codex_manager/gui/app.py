@@ -56,6 +56,9 @@ from codex_manager.preflight import (
     has_codex_auth as shared_has_codex_auth,
 )
 from codex_manager.preflight import (
+    repo_worktree_counts as shared_repo_worktree_counts,
+)
+from codex_manager.preflight import (
     repo_write_error as shared_repo_write_error,
 )
 
@@ -237,6 +240,26 @@ def _has_claude_auth() -> bool:
 def _repo_write_error(repo: Path) -> str | None:
     """Return a human-readable write-access error for *repo* if any."""
     return shared_repo_write_error(repo)
+
+
+def _repo_worktree_counts(repo: Path) -> tuple[int, int, int] | None:
+    """Return (staged, unstaged, untracked) git counts, or None if unavailable."""
+    return shared_repo_worktree_counts(repo)
+
+
+def _repo_dirty_issue(repo: Path) -> str | None:
+    """Return a preflight issue string when the repository has local changes."""
+    counts = _repo_worktree_counts(repo)
+    if counts is None:
+        return None
+    staged, unstaged, untracked = counts
+    if not (staged or unstaged or untracked):
+        return None
+    return (
+        "Repository worktree is dirty "
+        f"(staged {staged}, unstaged {unstaged}, untracked {untracked}). "
+        "Clean/stash local changes first, or enable Git pre-flight with auto-stash."
+    )
 
 
 def _read_text_utf8_resilient(path: Path) -> str:
@@ -511,6 +534,11 @@ def _chain_preflight_issues(config: ChainConfig) -> list[str]:
     if write_error:
         issues.append(write_error)
 
+    if not config.git_preflight_enabled:
+        dirty_issue = _repo_dirty_issue(repo)
+        if dirty_issue:
+            issues.append(dirty_issue)
+
     # Detect output-file collisions up front (same filename from multiple steps).
     by_file: dict[str, list[str]] = {}
     display_name_by_file: dict[str, str] = {}
@@ -576,6 +604,11 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
     write_error = _repo_write_error(repo)
     if write_error:
         issues.append(write_error)
+
+    if not config.git_preflight_enabled:
+        dirty_issue = _repo_dirty_issue(repo)
+        if dirty_issue:
+            issues.append(dirty_issue)
 
     if (
         config.codex_bypass_approvals_and_sandbox

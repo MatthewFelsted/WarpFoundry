@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -328,6 +329,76 @@ def repo_write_error(repo: Path) -> str | None:
         return f"Repository is not writable: {exc}"
 
 
+def repo_worktree_counts(
+    repo: Path,
+    *,
+    timeout_seconds: int = 15,
+) -> tuple[int, int, int] | None:
+    """Return (staged, unstaged, untracked) from ``git status --porcelain``.
+
+    Returns ``None`` when git status cannot be queried (for example, malformed
+    repositories created by unit tests that only contain a ``.git`` directory).
+    """
+    try:
+        probe = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+    if probe.returncode != 0:
+        return None
+
+    staged = 0
+    unstaged = 0
+    untracked = 0
+    for raw_line in str(probe.stdout or "").splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if line.startswith("??"):
+            untracked += 1
+            continue
+        if line.startswith("!!"):
+            continue
+        x = line[0] if len(line) >= 1 else " "
+        y = line[1] if len(line) >= 2 else " "
+        if x not in {" ", "?"}:
+            staged += 1
+        if y != " ":
+            unstaged += 1
+
+    return staged, unstaged, untracked
+
+
+def repo_worktree_check(repo: Path) -> tuple[str, str, str]:
+    """Return (status, detail, hint) for repository worktree cleanliness."""
+    counts = repo_worktree_counts(repo)
+    if counts is None:
+        return (
+            "warn",
+            "Skipped worktree cleanliness check (could not run git status).",
+            "Run 'git -C \"<repo>\" status --short' to verify local changes before running.",
+        )
+
+    staged, unstaged, untracked = counts
+    if not (staged or unstaged or untracked):
+        return ("pass", "Worktree is clean.", "")
+
+    return (
+        "fail",
+        "Worktree has local changes: "
+        f"staged {staged}, unstaged {unstaged}, untracked {untracked}.",
+        "Commit/stash/discard local changes first. "
+        "Dry-run rollback can discard them, and apply mode can commit them.",
+    )
+
+
 def normalize_agent(agent: str) -> str:
     """Normalize agent names and map common aliases to canonical keys."""
     key = (agent or "codex").strip().lower()
@@ -408,6 +479,16 @@ def build_preflight_report(
                 hint="Use a writable local path.",
             )
         )
+        checks.append(
+            PreflightCheck(
+                category="repository",
+                key="clean_worktree",
+                label="Repository worktree is clean",
+                status="warn",
+                detail="Skipped until a repository path is provided.",
+                hint="Set --repo and run diagnostics again.",
+            )
+        )
     else:
         repo = Path(raw_repo)
         path_exists = repo.exists()
@@ -447,6 +528,29 @@ def build_preflight_report(
                     else "",
                 )
             )
+            if has_git:
+                clean_status, clean_detail, clean_hint = repo_worktree_check(repo)
+                checks.append(
+                    PreflightCheck(
+                        category="repository",
+                        key="clean_worktree",
+                        label="Repository worktree is clean",
+                        status=clean_status,
+                        detail=clean_detail,
+                        hint=clean_hint,
+                    )
+                )
+            else:
+                checks.append(
+                    PreflightCheck(
+                        category="repository",
+                        key="clean_worktree",
+                        label="Repository worktree is clean",
+                        status="warn",
+                        detail="Skipped because no git repository was detected.",
+                        hint="Initialize git first, then ensure the worktree is clean.",
+                    )
+                )
             write_err = repo_write_error(repo)
             checks.append(
                 PreflightCheck(
@@ -479,6 +583,16 @@ def build_preflight_report(
                     category="repository",
                     key="writable",
                     label="Repository is writable",
+                    status="warn",
+                    detail=skipped_detail,
+                    hint="Fix the repository path first.",
+                )
+            )
+            checks.append(
+                PreflightCheck(
+                    category="repository",
+                    key="clean_worktree",
+                    label="Repository worktree is clean",
                     status="warn",
                     detail=skipped_detail,
                     hint="Fix the repository path first.",
@@ -613,6 +727,16 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "fix_repo_permissions",
             "Restore repository write access",
             "Codex Manager needs write access to create state/log files in .codex_manager.",
+        )
+
+    clean_worktree_status = _check_status(report, "repository", "clean_worktree")
+    if clean_worktree_status == "fail":
+        status_command = f'git -C "{repo}" status --short' if repo else "git status --short"
+        add(
+            "clean_worktree",
+            "Clean or stash local changes",
+            "Local changes can be discarded in dry-run or accidentally committed in apply mode.",
+            command=status_command,
         )
 
     codex_binary_status = _check_status(report, "codex", "binary")

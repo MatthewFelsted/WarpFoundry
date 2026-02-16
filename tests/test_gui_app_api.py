@@ -242,6 +242,22 @@ def test_chain_start_preflight_reports_repo_not_writable(client, monkeypatch, tm
     assert any("Repository is not writable" in issue for issue in data.get("issues", []))
 
 
+def test_chain_start_preflight_blocks_dirty_worktree_when_git_preflight_disabled(
+    client, monkeypatch, tmp_path: Path
+):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-chain-preflight-dirty-default")
+    (local / "DIRTY_DEFAULT_PREFLIGHT.txt").write_text("dirty\n", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    resp = client.post("/api/chain/start", json=_chain_payload(local))
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any("worktree is dirty" in issue.lower() for issue in data.get("issues", []))
+
+
 def test_chain_start_git_preflight_blocks_dirty_worktree_without_auto_stash(
     client, monkeypatch, tmp_path: Path
 ):
@@ -318,6 +334,26 @@ def test_chain_start_git_preflight_auto_stash_and_auto_pull(
 
     stash_list = _run_git("stash", "list", cwd=local).stdout
     assert "codex-manager:preflight-auto-stash" in stash_list
+
+
+def test_pipeline_start_preflight_blocks_dirty_worktree_when_git_preflight_disabled(
+    client, monkeypatch, tmp_path: Path
+):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(
+        tmp_path,
+        remote,
+        clone_name="local-pipeline-preflight-dirty-default",
+    )
+    (local / "PIPELINE_DIRTY_DEFAULT_PREFLIGHT.txt").write_text("dirty\n", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    resp = client.post("/api/pipeline/start", json=_pipeline_payload(local))
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any("worktree is dirty" in issue.lower() for issue in data.get("issues", []))
 
 
 def test_chain_start_requires_danger_confirmation_when_bypass_enabled(client, tmp_path: Path):

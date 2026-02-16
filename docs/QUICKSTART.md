@@ -64,6 +64,7 @@ python -m codex_manager doctor --repo /path/to/repo
 
 If diagnostics report failures, fix those first (repo path, auth, binaries) before running loops.
 Use the `Next actions` section to apply fixes in priority order (including copy/paste-ready commands).
+Diagnostics also verify that the git worktree is clean so dry-run/apply modes do not overwrite unrelated local edits.
 
 ## 5. Start GUI and run one chain
 

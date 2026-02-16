@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import codex_manager.preflight as preflight
@@ -13,6 +14,36 @@ def _check(report: preflight.PreflightReport, category: str, key: str) -> prefli
         if check.category == category and check.key == key:
             return check
     raise AssertionError(f"Missing check {category}/{key}")
+
+
+def _init_git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Preflight Tests"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "preflight-tests@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    (repo / "README.md").write_text("init\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return repo
 
 
 def test_parse_agents_normalizes_and_deduplicates() -> None:
@@ -108,6 +139,51 @@ def test_build_preflight_report_reports_codex_failures(monkeypatch, tmp_path: Pa
     assert any(a.key == "install_codex_cli" for a in actions)
     assert any(a.key == "codex_login" for a in actions)
     assert any(a.key == "rerun_doctor" for a in actions)
+
+
+def test_build_preflight_report_marks_clean_real_git_worktree_as_pass(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _init_git_repo(tmp_path)
+
+    monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
+    monkeypatch.setattr(preflight, "has_codex_auth", lambda: True)
+    monkeypatch.setattr(preflight, "repo_write_error", lambda _repo: None)
+
+    report = preflight.build_preflight_report(
+        repo_path=repo,
+        agents=["codex"],
+    )
+
+    clean_check = _check(report, "repository", "clean_worktree")
+    assert clean_check.status == "pass"
+    assert "clean" in clean_check.detail.lower()
+    assert report.ready is True
+
+
+def test_build_preflight_report_fails_when_real_git_worktree_is_dirty(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = _init_git_repo(tmp_path)
+    (repo / "LOCAL_CHANGE.md").write_text("dirty\n", encoding="utf-8")
+
+    monkeypatch.setattr(preflight, "binary_exists", lambda _binary: True)
+    monkeypatch.setattr(preflight, "has_codex_auth", lambda: True)
+    monkeypatch.setattr(preflight, "repo_write_error", lambda _repo: None)
+
+    report = preflight.build_preflight_report(
+        repo_path=repo,
+        agents=["codex"],
+    )
+
+    clean_check = _check(report, "repository", "clean_worktree")
+    assert clean_check.status == "fail"
+    assert "worktree has local changes" in clean_check.detail.lower()
+    assert report.ready is False
+
+    clean_action = next(action for action in report.next_actions if action.key == "clean_worktree")
+    assert "git -C" in clean_action.command
+    assert "status --short" in clean_action.command
 
 
 def test_build_preflight_report_flags_file_paths_as_not_directory(

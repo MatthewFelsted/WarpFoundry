@@ -70,7 +70,12 @@ from codex_manager.pipeline.phases import (
     PipelineState,
 )
 from codex_manager.pipeline.tracker import LogTracker
-from codex_manager.preflight import binary_exists as shared_binary_exists
+from codex_manager.preflight import (
+    binary_exists as shared_binary_exists,
+)
+from codex_manager.preflight import (
+    repo_worktree_counts as shared_repo_worktree_counts,
+)
 from codex_manager.prompts.catalog import PromptCatalog, get_catalog
 from codex_manager.research import DeepResearchSettings, run_native_deep_research
 from codex_manager.schemas import EvalResult
@@ -2207,6 +2212,16 @@ class PipelineOrchestrator:
         write_error = self._repo_write_error(repo)
         if write_error:
             issues.append(write_error)
+
+        worktree_counts = shared_repo_worktree_counts(repo)
+        if worktree_counts is not None:
+            staged, unstaged, untracked = worktree_counts
+            if staged or unstaged or untracked:
+                issues.append(
+                    "Repository worktree is dirty "
+                    f"(staged {staged}, unstaged {unstaged}, untracked {untracked}). "
+                    "Clean/stash local changes first."
+                )
 
         if config.image_generation_enabled:
             image_issue = self._image_provider_auth_issue(config.image_provider)
