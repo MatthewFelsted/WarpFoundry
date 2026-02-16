@@ -7,7 +7,7 @@ This tutorial walks through GUI chain, then pipeline, then optional visual test.
 In your target repo:
 
 ```bash
-git checkout -b codex-manager-tutorial
+git checkout -b warpfoundry-tutorial
 ```
 
 ## Step 1: Run a GUI task chain
@@ -15,7 +15,7 @@ git checkout -b codex-manager-tutorial
 Start GUI:
 
 ```bash
-python -m codex_manager gui
+warpfoundry gui
 ```
 
 Configure:
@@ -48,7 +48,7 @@ Check that proposed edits make sense before switching to apply mode.
 ## Step 3: Run strategic product loop (optional)
 
 ```bash
-python -m codex_manager strategic --repo /path/to/repo --mode dry-run --rounds 6
+warpfoundry strategic --repo /path/to/repo --mode dry-run --rounds 6
 ```
 
 If your target repo is Discover Chain, use its path and the command will add Discover Chain focus automatically.
@@ -56,7 +56,7 @@ If your target repo is Discover Chain, use its path and the command will add Dis
 ## Step 4: Run autonomous pipeline
 
 ```bash
-python -m codex_manager pipeline --repo /path/to/repo --mode dry-run --cycles 2
+warpfoundry pipeline --repo /path/to/repo --mode dry-run --cycles 2
 ```
 
 Pipeline phases include ideation, prioritization, implementation, testing, debugging, commit, and progress review. When Scientist Mode is enabled, science phases run before implementation so findings can drive code changes in the same cycle.
@@ -74,7 +74,7 @@ Inspect:
 After dry-run looks good:
 
 ```bash
-python -m codex_manager pipeline --repo /path/to/repo --mode apply --cycles 1
+warpfoundry pipeline --repo /path/to/repo --mode apply --cycles 1
 ```
 
 Then review with:
@@ -90,7 +90,7 @@ git diff HEAD~1
 Start app under test first, then:
 
 ```bash
-python -m codex_manager visual-test --url http://localhost:5088 --provider openai
+warpfoundry visual-test --url http://localhost:5088 --provider openai
 ```
 
 If connection is refused, start the app and retry.
@@ -101,7 +101,8 @@ If satisfied:
 
 ```bash
 git add -A
-git commit -m "Apply codex-manager improvements"
+git commit -m "Apply WarpFoundry improvements"
 ```
 
 If not, reset your tutorial branch as needed.
+

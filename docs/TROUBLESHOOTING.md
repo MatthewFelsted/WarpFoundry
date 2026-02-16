@@ -1,9 +1,9 @@
-# Troubleshooting
+﻿# Troubleshooting
 
 Before diving into specific errors, run:
 
 ```bash
-python -m codex_manager doctor --repo /path/to/repo
+warpfoundry doctor --repo /path/to/repo
 ```
 
 ## Preflight: "Not a git repository"
@@ -17,7 +17,7 @@ cd /path/to/repo
 git init
 ```
 
-Or point Codex Manager to the correct repo.
+Or point WarpFoundry to the correct repo.
 
 ## Preflight: "Repository is not writable"
 
@@ -98,3 +98,5 @@ Set validation command, for example:
 ```bash
 python -m pytest -q
 ```
+
+

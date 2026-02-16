@@ -160,11 +160,11 @@ class TestImprovementLoopInit:
         monkeypatch.setattr(
             loop_module,
             "create_branch",
-            lambda _repo: (call_order.append("branch"), "codex-manager/test")[1],
+            lambda _repo: (call_order.append("branch"), "warpfoundry/test")[1],
         )
 
         loop = ImprovementLoop(repo_path=repo, goal="goal", mode="apply")
         state = loop._init_state()
 
         assert call_order == ["ensure", "branch"]
-        assert state.branch_name == "codex-manager/test"
+        assert state.branch_name == "warpfoundry/test"

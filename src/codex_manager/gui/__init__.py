@@ -1,4 +1,4 @@
-"""Codex Manager GUI - web-based task-chain builder and execution monitor."""
+"""WarpFoundry GUI - web-based task-chain builder and execution monitor."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ def main(
     open_browser: bool = True,
     pipeline_resume_checkpoint: str = "",
 ) -> None:
-    """Launch the Codex Manager GUI."""
+    """Launch the WarpFoundry GUI."""
     from codex_manager.gui.app import run_gui
 
     run_gui(

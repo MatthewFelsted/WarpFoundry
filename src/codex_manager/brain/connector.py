@@ -1,4 +1,4 @@
-"""Multi-AI connector — adapted for Codex Manager.
+﻿"""Multi-AI connector â€” adapted for WarpFoundry.
 
 Supports: OpenAI (GPT), Anthropic (Claude), xAI (Grok), Google (Gemini),
 and local Ollama models.  Includes retry logic, persistent caching,
@@ -29,7 +29,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
 
-# ── Optional imports (graceful fallbacks) ─────────────────────────
+# â”€â”€ Optional imports (graceful fallbacks) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 try:
     from dotenv import load_dotenv
@@ -50,7 +50,7 @@ Anthropic: Any | None = None
 _ANTHROPIC_AVAILABLE = False
 _ANTHROPIC_IMPORT_ATTEMPTED = False
 
-# These are from the user's broader project — optional here
+# These are from the user's broader project â€” optional here
 try:
     import recovery_hints  # type: ignore[import-untyped]
 except Exception:
@@ -192,7 +192,7 @@ def _env_path(name: str, default: str | Path) -> str:
     return expanded or str(default)
 
 
-# ── Defaults / knobs ──────────────────────────────────────────────
+# â”€â”€ Defaults / knobs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 DEFAULT_TEXT_ONLY: bool = _env_bool("AI_TEXT_ONLY", True)
 DEFAULT_PER_REQUEST_TIMEOUT_S: float = _env_float(
@@ -247,7 +247,7 @@ _ollama_last_check: float = 0.0
 _ollama_last_ok: bool = False
 
 
-# ── Persistent cache ──────────────────────────────────────────────
+# â”€â”€ Persistent cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class ResultCache:
@@ -285,7 +285,7 @@ class ResultCache:
 _cache = ResultCache()
 
 
-# ── Provider detection ────────────────────────────────────────────
+# â”€â”€ Provider detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def provider_from_model(model: str) -> str:
@@ -304,7 +304,7 @@ def provider_from_model(model: str) -> str:
     return "unknown"
 
 
-# ── Client registry ───────────────────────────────────────────────
+# â”€â”€ Client registry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 _clients: dict[str, dict[str, Any]] = {
     p: {"client": None, "created_at": 0.0} for p in ["openai", "gemini", "xai", "anthropic"]
@@ -322,7 +322,7 @@ def _expired(ts: float) -> bool:
     return ts == 0.0 or (_now() - ts) > CLIENT_MAX_AGE_S
 
 
-# ── Retry / backoff helpers ───────────────────────────────────────
+# â”€â”€ Retry / backoff helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _sleep_with_backoff(attempt: int) -> None:
@@ -360,7 +360,7 @@ def _cache_variant(max_output_tokens: int | None = None, temperature: float | No
     return "|".join(parts)
 
 
-# ── Reachability ──────────────────────────────────────────────────
+# â”€â”€ Reachability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def is_online(host: str = "api.openai.com", port: int = 443, timeout: float = 3.0) -> bool:
@@ -372,7 +372,7 @@ def is_online(host: str = "api.openai.com", port: int = 443, timeout: float = 3.
         return False
 
 
-# ── Available models ──────────────────────────────────────────────
+# â”€â”€ Available models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 ALL_MODELS: list[str] = [
     "gpt-5.2",
@@ -382,7 +382,7 @@ ALL_MODELS: list[str] = [
 ]
 
 
-# ── Ollama helpers ────────────────────────────────────────────────
+# â”€â”€ Ollama helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def list_ollama_models(timeout_s: float = 3.0) -> list[dict[str, Any]]:
@@ -462,11 +462,11 @@ def _maybe_start_ollama() -> None:
         logger.debug("Failed to auto-start Ollama", exc_info=True)
 
 
-# ══════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Provider connectors
-# ══════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-# ── Ollama (local) ────────────────────────────────────────────────
+# â”€â”€ Ollama (local) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _connect_ollama(
@@ -520,7 +520,7 @@ def _connect_ollama(
         raise last_exc
 
 
-# ── OpenAI ────────────────────────────────────────────────────────
+# â”€â”€ OpenAI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _get_openai_client(force_new: bool = False) -> Any:
@@ -586,7 +586,7 @@ def _connect_openai(
         raise last_exc
 
 
-# ── Gemini (Google) ───────────────────────────────────────────────
+# â”€â”€ Gemini (Google) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _connect_gemini(
@@ -639,7 +639,7 @@ def _connect_gemini(
         raise last_exc
 
 
-# ── xAI (Grok) ───────────────────────────────────────────────────
+# â”€â”€ xAI (Grok) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _connect_xai(
@@ -694,7 +694,7 @@ def _connect_xai(
         raise last_exc
 
 
-# ── Anthropic (Claude) ────────────────────────────────────────────
+# â”€â”€ Anthropic (Claude) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _connect_anthropic(
     model: str,
@@ -758,9 +758,9 @@ def _connect_anthropic(
         raise last_exc
 
 
-# ══════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Main dispatcher
-# ══════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 def _resolve_ollama_model(model: str) -> str:
@@ -894,3 +894,4 @@ def prompt_all(
     order = {m: i for i, m in enumerate(models)}
     results.sort(key=lambda r: order.get(r["model"], 999))
     return results
+

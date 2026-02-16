@@ -87,7 +87,8 @@ _MUTATING_PHASES = {
     PipelinePhase.DEBUGGING,
 }
 _GITHUB_API_TIMEOUT_SECONDS = 20
-_GITHUB_PAT_SERVICE = "codex_manager.github_auth"
+_GITHUB_PAT_SERVICE = "warpfoundry.github_auth"
+_GITHUB_PAT_SERVICE_LEGACY = "codex_manager.github_auth"
 _GITHUB_PAT_KEY = "pat"
 
 
@@ -1643,9 +1644,10 @@ class PipelineOrchestrator:
         with suppress(Exception):
             import keyring
 
-            token = str(keyring.get_password(_GITHUB_PAT_SERVICE, _GITHUB_PAT_KEY) or "").strip()
-            if token:
-                return token
+            for service in (_GITHUB_PAT_SERVICE, _GITHUB_PAT_SERVICE_LEGACY):
+                token = str(keyring.get_password(service, _GITHUB_PAT_KEY) or "").strip()
+                if token:
+                    return token
         return ""
 
     def _github_api_request(
@@ -1660,7 +1662,7 @@ class PipelineOrchestrator:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "codex-manager-pipeline-pr-aware",
+            "User-Agent": "warpfoundry-pipeline-pr-aware",
         }
         token_value = str(token or "").strip()
         if token_value:
@@ -1744,7 +1746,7 @@ class PipelineOrchestrator:
         stop_reason = str(self.state.stop_reason or "running")
         pull_url = str(self._pr_aware_state.get("pull_request_url") or "").strip()
         lines = [
-            "## Codex Manager Pipeline Summary",
+            "## WarpFoundry Pipeline Summary",
             "",
             "> This description is managed automatically by PR-aware pipeline mode.",
             "",
@@ -1843,7 +1845,7 @@ class PipelineOrchestrator:
             path=path,
             token=token,
             payload={
-                "title": f"Codex Manager pipeline updates ({branch})",
+                "title": f"WarpFoundry pipeline updates ({branch})",
                 "head": branch,
                 "base": base_branch,
                 "body": self._build_pr_run_summary(),
@@ -2021,7 +2023,7 @@ class PipelineOrchestrator:
     ) -> None:
         now_tag = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         requested_branch = str(config.pr_feature_branch or "").strip()
-        branch = requested_branch or f"codex-manager/pr/{now_tag}"
+        branch = requested_branch or f"warpfoundry/pr/{now_tag}"
         self._git_require_valid_branch_name(repo, branch)
 
         current = self._git_current_branch_name(repo)
@@ -3932,7 +3934,7 @@ class PipelineOrchestrator:
             self._log(
                 "warn",
                 f"CUA dependencies not installed, skipping visual test: {exc}. "
-                "Install with: pip install codex-manager[cua] then python -m playwright install",
+                "Install with: pip install warpfoundry[cua] then python -m playwright install",
             )
             return False
 

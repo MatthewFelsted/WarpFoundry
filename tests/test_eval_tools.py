@@ -112,10 +112,13 @@ def test_evaluate_includes_changed_files(monkeypatch, tmp_path):
         "_run_tests",
         lambda self, cwd: (TestOutcome.PASSED, "ok", 0),
     )
-    monkeypatch.setattr("codex_manager.eval_tools.diff_stat", lambda repo: "1 file changed")
+    monkeypatch.setattr(
+        "codex_manager.eval_tools.diff_stat",
+        lambda repo, revspec=None: "1 file changed",
+    )
     monkeypatch.setattr("codex_manager.eval_tools.status_porcelain", lambda repo: " M src/app.py")
     monkeypatch.setattr(
-        "codex_manager.eval_tools.diff_numstat_entries",
+        "codex_manager.eval_tools.pending_numstat_entries",
         lambda repo: [
             {"path": "src/app.py", "insertions": 10, "deletions": 2},
             {"path": "README.md", "insertions": 5, "deletions": 2},

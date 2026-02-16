@@ -11,7 +11,7 @@ The model watchdog is a background scheduler that snapshots provider model catal
   - xAI
   - Local Ollama models
 - Local dependency versions:
-  - `codex-manager`, `flask`, `pydantic`
+  - `warpfoundry` (and legacy `codex-manager`), `flask`, `pydantic`
   - `openai`, `anthropic`, `google-generativeai`, `chromadb`
 
 ## Default Schedule

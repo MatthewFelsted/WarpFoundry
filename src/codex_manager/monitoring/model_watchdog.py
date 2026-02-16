@@ -27,6 +27,7 @@ MAX_INTERVAL_HOURS = 24 * 30
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
 DEFAULT_HISTORY_LIMIT = 100
 DEFAULT_DEPENDENCY_PACKAGES: tuple[str, ...] = (
+    "warpfoundry",
     "codex-manager",
     "flask",
     "pydantic",

@@ -21,7 +21,7 @@ def test_main_prints_help_when_repo_or_goal_missing(capsys) -> None:
     rc = main_module.main([])
     captured = capsys.readouterr()
     assert rc == 1
-    assert "Tip: run 'python -m codex_manager gui'" in captured.err
+    assert "Tip: run 'warpfoundry gui'" in captured.err
 
 
 def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
@@ -245,7 +245,7 @@ def test_main_loop_mode_success_with_stubbed_components(
     assert StubEvaluator.calls == [["pytest", "-q"]]
     assert StubLoop.init_kwargs["repo_path"] == repo.resolve()
     assert StubLoop.init_kwargs["goal"] == "Improve docs"
-    assert "Codex Manager - Run Summary" in captured.out
+    assert "WarpFoundry - Run Summary" in captured.out
 
 
 def test_run_goal_loop_parses_quoted_test_command(monkeypatch, capsys, tmp_path: Path) -> None:
@@ -365,7 +365,7 @@ def test_run_strategic_uses_builtin_goal(monkeypatch, capsys, tmp_path: Path) ->
     assert "STRATEGIC PRODUCT MAXIMIZATION MODE" in goal
     assert "Discover Chain" in goal
     assert "Prioritize user retention instrumentation." in goal
-    assert "Codex Manager - Run Summary" in captured.out
+    assert "WarpFoundry - Run Summary" in captured.out
 
 
 def test_run_pipeline_validates_repo_and_runs_orchestrator(
@@ -449,7 +449,7 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
     assert StubPipeline.last_instance.config.science_enabled is True
     assert StubPipeline.last_instance.config.codex_binary == "codex-custom"
     assert StubPipeline.last_instance.config.claude_binary == "claude-custom"
-    assert "AI Manager - Pipeline Summary" in captured.out
+    assert "WarpFoundry - Pipeline Summary" in captured.out
 
 
 def test_run_pipeline_preflight_failure_stops_before_orchestrator(

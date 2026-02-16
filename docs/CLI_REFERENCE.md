@@ -3,7 +3,7 @@
 Main entrypoint:
 
 ```bash
-python -m codex_manager
+warpfoundry
 ```
 
 ## Global Goal Loop Options
@@ -26,14 +26,14 @@ are preserved (for example `tests\test_api.py`), so targeted file runs work as e
 Examples:
 
 ```bash
-python -m codex_manager --repo /repo --goal "Run targeted tests" --test-cmd 'python -m pytest -k "slow suite" -q'
-python -m codex_manager --repo C:\repo --goal "Run one test file" --test-cmd "python -m pytest tests\test_api.py -q"
+warpfoundry --repo /repo --goal "Run targeted tests" --test-cmd 'python -m pytest -k "slow suite" -q'
+warpfoundry --repo C:\repo --goal "Run one test file" --test-cmd "python -m pytest tests\test_api.py -q"
 ```
 
 ## Subcommand: `gui`
 
 ```bash
-python -m codex_manager gui [--port 5088] [--no-browser]
+warpfoundry gui [--port 5088] [--no-browser]
 ```
 
 | Option | Default | Meaning |
@@ -44,7 +44,7 @@ python -m codex_manager gui [--port 5088] [--no-browser]
 ## Subcommand: `pipeline`
 
 ```bash
-python -m codex_manager pipeline --repo <path> [options]
+warpfoundry pipeline --repo <path> [options]
 ```
 
 | Option | Default |
@@ -67,7 +67,7 @@ python -m codex_manager pipeline --repo <path> [options]
 ## Subcommand: `strategic`
 
 ```bash
-python -m codex_manager strategic --repo <path> [options]
+warpfoundry strategic --repo <path> [options]
 ```
 
 Runs the classic loop with a built-in Strategic Product Maximization goal.
@@ -86,7 +86,7 @@ When the repo path name includes both `discover` and `chain`, extra Discover Cha
 ## Subcommand: `optimize-prompts`
 
 ```bash
-python -m codex_manager optimize-prompts [options]
+warpfoundry optimize-prompts [options]
 ```
 
 | Option | Default |
@@ -99,7 +99,7 @@ python -m codex_manager optimize-prompts [options]
 ## Subcommand: `visual-test`
 
 ```bash
-python -m codex_manager visual-test [options]
+warpfoundry visual-test [options]
 ```
 
 | Option | Default |
@@ -114,7 +114,7 @@ python -m codex_manager visual-test [options]
 ## Subcommand: `list-prompts`
 
 ```bash
-python -m codex_manager list-prompts
+warpfoundry list-prompts
 ```
 
 No extra options.
@@ -122,7 +122,7 @@ No extra options.
 ## Subcommand: `list-recipes`
 
 ```bash
-python -m codex_manager list-recipes [--recipe <id>]
+warpfoundry list-recipes [--recipe <id>]
 ```
 
 Use this to inspect built-in Autopilot recipes and show full step prompts.
@@ -130,7 +130,7 @@ Use this to inspect built-in Autopilot recipes and show full step prompts.
 ## Subcommand: `doctor`
 
 ```bash
-python -m codex_manager doctor [options]
+warpfoundry doctor [options]
 ```
 
 Runs setup diagnostics before a run. Returns exit code `0` when ready, `1` when any required checks fail.
@@ -146,12 +146,13 @@ Runs setup diagnostics before a run. Returns exit code `0` when ready, `1` when 
 ## Useful Examples
 
 ```bash
-python -m codex_manager --repo /repo --goal "Increase test coverage" --rounds 3 --mode dry-run
-python -m codex_manager strategic --repo /repo --mode dry-run --rounds 6
-python -m codex_manager doctor --repo /repo --agents codex,claude_code
-python -m codex_manager pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
-python -m codex_manager pipeline --repo /repo --agent claude_code --claude-bin /usr/local/bin/claude
-python -m codex_manager optimize-prompts --dry-run
-python -m codex_manager list-recipes --recipe autopilot_default
-python -m codex_manager visual-test --url http://localhost:5088 --provider anthropic
+warpfoundry --repo /repo --goal "Increase test coverage" --rounds 3 --mode dry-run
+warpfoundry strategic --repo /repo --mode dry-run --rounds 6
+warpfoundry doctor --repo /repo --agents codex,claude_code
+warpfoundry pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
+warpfoundry pipeline --repo /repo --agent claude_code --claude-bin /usr/local/bin/claude
+warpfoundry optimize-prompts --dry-run
+warpfoundry list-recipes --recipe autopilot_default
+warpfoundry visual-test --url http://localhost:5088 --provider anthropic
 ```
+

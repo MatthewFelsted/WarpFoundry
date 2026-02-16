@@ -23,7 +23,7 @@ env/
 *.swp
 *.swo
 
-# Codex Manager state
+# WarpFoundry state
 .codex_manager/
 
 # Caches

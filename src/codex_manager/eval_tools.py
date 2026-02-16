@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shlex
@@ -10,8 +11,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from codex_manager.git_tools import (
-    diff_numstat_entries,
     diff_stat,
+    pending_numstat_entries,
     status_porcelain,
     summarize_numstat_entries,
 )
@@ -99,9 +100,17 @@ class RepoEvaluator:
         """Run evaluation and return an :class:`EvalResult`."""
         repo_path = Path(repo_path).resolve()
         test_outcome, test_summary, test_exit = self._run_tests(repo_path)
-        changed_files = diff_numstat_entries(repo_path)
+        changed_files = pending_numstat_entries(repo_path)
         files_changed, ins, dels = summarize_numstat_entries(changed_files)
-        stat = diff_stat(repo_path) if files_changed > 0 else ""
+        stat = ""
+        if files_changed > 0:
+            with contextlib.suppress(Exception):
+                stat = diff_stat(repo_path, revspec="HEAD")
+            if not stat:
+                with contextlib.suppress(Exception):
+                    stat = diff_stat(repo_path)
+            if not stat:
+                stat = f"{files_changed} files changed, {ins} insertions(+), {dels} deletions(-)"
         porcelain = status_porcelain(repo_path)
 
         return EvalResult(

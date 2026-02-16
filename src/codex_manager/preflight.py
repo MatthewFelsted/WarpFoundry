@@ -654,7 +654,7 @@ def _command_token(value: str) -> str:
 def _doctor_command(report: PreflightReport) -> str:
     """Build a ready-to-run doctor command for the current report context."""
     repo = report.resolved_repo_path or report.repo_path
-    parts = ["python -m codex_manager doctor"]
+    parts = ["warpfoundry doctor"]
     if repo:
         parts.append(f'--repo "{repo}"')
     if report.requested_agents:
@@ -726,12 +726,28 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
         add(
             "fix_repo_permissions",
             "Restore repository write access",
-            "Codex Manager needs write access to create state/log files in .codex_manager.",
+            "WarpFoundry needs write access to create state/log files in .codex_manager.",
         )
 
     clean_worktree_status = _check_status(report, "repository", "clean_worktree")
     if clean_worktree_status == "fail":
         status_command = f'git -C "{repo}" status --short' if repo else "git status --short"
+        snapshot_command = (
+            f'git -C "{repo}" add -A && '
+            f'git -C "{repo}" commit -m "warpfoundry: preflight snapshot"'
+            if repo
+            else 'git add -A && git commit -m "warpfoundry: preflight snapshot"'
+        )
+        add(
+            "snapshot_worktree_commit",
+            "Snapshot local changes into a commit",
+            (
+                "Creates a local checkpoint commit so your current progress is preserved "
+                "and the worktree becomes clean."
+            ),
+            command=snapshot_command,
+            severity="recommended",
+        )
         add(
             "clean_worktree",
             "Clean or stash local changes",
@@ -804,7 +820,7 @@ def build_preflight_actions(report: PreflightReport) -> list[PreflightAction]:
             "Run a safe first strategic loop",
             "Validate your setup in dry-run mode before apply mode.",
             command=(
-                f'python -m codex_manager strategic --repo "{repo}" --mode dry-run --rounds 1'
+                f'warpfoundry strategic --repo "{repo}" --mode dry-run --rounds 1'
             ),
             severity="recommended",
         )

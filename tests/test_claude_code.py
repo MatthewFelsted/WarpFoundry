@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codex_manager.claude_code import ClaudeCodeRunner, _extract_claude_usage
-from codex_manager.schemas import CodexEvent, EventKind
+from codex_manager.schemas import CodexEvent, EventKind, RunResult
 
 
 class TestClaudeCodeRunnerBuildCommand:
@@ -48,6 +48,53 @@ class TestClaudeCodeRunnerBuildCommand:
         cmd = runner._build_command("hello", full_auto=False, extra_args=None)
         model_idx = cmd.index("--model")
         assert cmd[model_idx + 1] == "claude-3-7-sonnet"
+
+    def test_run_uses_stdin_when_prompt_piping_enabled(self, monkeypatch, tmp_path: Path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = ClaudeCodeRunner(claude_binary="claude")
+
+        monkeypatch.setattr(
+            runner,
+            "_should_pipe_prompt_via_stdin",
+            lambda *_args, **_kwargs: True,
+        )
+
+        captured: dict[str, object] = {}
+
+        def _fake_execute(cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
+            captured["cmd"] = cmd
+            captured["cwd"] = cwd
+            captured["stdin_text"] = stdin_text
+            return RunResult(success=True, exit_code=0)
+
+        monkeypatch.setattr(runner, "_execute", _fake_execute)
+
+        result = runner.run(repo, "very long prompt payload", full_auto=True)
+        assert result.success is True
+        assert captured["cwd"] == repo.resolve()
+        assert isinstance(captured["cmd"], list)
+        cmd = captured["cmd"]
+        assert isinstance(cmd, list)
+        prompt_index = cmd.index("-p") + 1
+        assert cmd[prompt_index] == "-"
+        assert captured["stdin_text"] == "very long prompt payload"
+
+    def test_should_pipe_prompt_early_for_windows_batch_shims(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        runner = ClaudeCodeRunner(claude_binary=str(tmp_path / "claude.cmd"))
+        monkeypatch.setattr("codex_manager.claude_code.os.name", "nt")
+
+        prompt = "x" * 7000
+        assert (
+            runner._should_pipe_prompt_via_stdin(
+                prompt,
+                full_auto=True,
+                extra_args=None,
+            )
+            is True
+        )
 
 
 class TestClaudeCodeRunnerAggregate:

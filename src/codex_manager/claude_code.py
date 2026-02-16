@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_TIMEOUT = 600  # 10 minutes of inactivity
+_WINDOWS_COMMAND_LINE_LIMIT = 32767
+_WINDOWS_CMD_EXE_LIMIT = 8191
+_COMMAND_LINE_SAFETY_MARGIN = 2048
+_POSIX_PROMPT_ARG_LIMIT = 60000
 
 
 class ClaudeCodeRunner(AgentRunner):
@@ -93,12 +98,22 @@ class ClaudeCodeRunner(AgentRunner):
                 errors=[f"repo_path does not exist: {repo_path}"],
             )
 
-        cmd = self._build_command(prompt, full_auto=full_auto, extra_args=extra_args)
+        use_stdin_prompt = self._should_pipe_prompt_via_stdin(
+            prompt,
+            full_auto=full_auto,
+            extra_args=extra_args,
+        )
+        prompt_arg = "-" if use_stdin_prompt else prompt
+        cmd = self._build_command(prompt_arg, full_auto=full_auto, extra_args=extra_args)
         logger.info("Running: %s (cwd=%s)", " ".join(cmd), repo_path)
 
         start = time.monotonic()
         try:
-            result = self._execute(cmd, cwd=repo_path)
+            result = self._execute(
+                cmd,
+                cwd=repo_path,
+                stdin_text=prompt if use_stdin_prompt else None,
+            )
         except Exception as exc:
             return RunResult(
                 success=False,
@@ -145,11 +160,55 @@ class ClaudeCodeRunner(AgentRunner):
 
         return cmd
 
+    def _should_pipe_prompt_via_stdin(
+        self,
+        prompt: str,
+        *,
+        full_auto: bool,
+        extra_args: list[str] | None,
+    ) -> bool:
+        """Return True when prompt should be supplied via stdin instead of argv."""
+        if os.name != "nt":
+            return len(prompt) >= _POSIX_PROMPT_ARG_LIMIT
+
+        if not prompt:
+            return False
+
+        base_cmd = self._build_command("", full_auto=full_auto, extra_args=extra_args)
+        try:
+            prompt_index = base_cmd.index("-p") + 1
+        except ValueError:
+            prompt_index = len(base_cmd)
+
+        probe_cmd = list(base_cmd)
+        if prompt_index < len(probe_cmd):
+            probe_cmd[prompt_index] = prompt
+        else:
+            probe_cmd.append(prompt)
+
+        try:
+            estimated = len(subprocess.list2cmdline(probe_cmd))
+        except Exception:
+            estimated = sum(len(part) for part in probe_cmd) + len(probe_cmd) + 1
+
+        command_limit = self._effective_windows_command_limit(base_cmd)
+        return estimated >= (command_limit - _COMMAND_LINE_SAFETY_MARGIN)
+
+    @staticmethod
+    def _effective_windows_command_limit(base_cmd: list[str]) -> int:
+        """Return the best-effort command length ceiling for the resolved launcher."""
+        if not base_cmd:
+            return _WINDOWS_COMMAND_LINE_LIMIT
+        launcher = (base_cmd[0] or "").strip().lower()
+        if launcher.endswith(".cmd") or launcher.endswith(".bat"):
+            return _WINDOWS_CMD_EXE_LIMIT
+        return _WINDOWS_COMMAND_LINE_LIMIT
+
     # ------------------------------------------------------------------
     # Execution + JSONL parsing
     # ------------------------------------------------------------------
 
-    def _execute(self, cmd: list[str], cwd: Path) -> RunResult:
+    def _execute(self, cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
         """Spawn the subprocess and consume its streaming-JSON stdout."""
         env = {**os.environ, **self.env_overrides}
         inactivity_timeout = self.timeout if self.timeout > 0 else None
@@ -160,6 +219,7 @@ class ClaudeCodeRunner(AgentRunner):
             timeout_seconds=self.timeout,
             parse_stdout_line=self._parse_line,
             process_name="Claude Code",
+            stdin_text=stdin_text,
         )
         stderr_text = execution.stderr_text
 

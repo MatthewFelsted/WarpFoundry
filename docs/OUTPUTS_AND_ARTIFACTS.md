@@ -1,6 +1,6 @@
-# Outputs and Artifacts
+﻿# Outputs and Artifacts
 
-Use this guide to understand what Codex Manager writes into your target repository and how to inspect it quickly.
+Use this guide to understand what WarpFoundry writes into your target repository and how to inspect it quickly.
 
 ## Fast path in the GUI
 
@@ -63,3 +63,4 @@ Outside target repositories (home-level shared telemetry):
 - "No outputs listed": confirm repo path is set and at least one step has finished.
 - "Missing logs": pipeline logs appear only after relevant phases run; empty files mean that phase has not written entries yet.
 - "Unexpected filename": output filenames are generated from step names and may be slugified.
+

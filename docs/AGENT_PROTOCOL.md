@@ -1,6 +1,6 @@
-# Agent Protocol
+﻿# Agent Protocol
 
-This document defines shared execution standards for Codex Manager components and any cooperating agents.
+This document defines shared execution standards for WarpFoundry components and any cooperating agents.
 
 ## Source-of-Truth Locations
 
@@ -36,3 +36,4 @@ This document defines shared execution standards for Codex Manager components an
 - Avoid speculative churn that does not move project quality forward.
 - When uncertain, propose small safe experiments with measurable outcomes.
 - For research-backed recommendations, include HTTPS sources and flag low-trust domains.
+

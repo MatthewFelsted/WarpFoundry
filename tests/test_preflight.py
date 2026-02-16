@@ -184,6 +184,13 @@ def test_build_preflight_report_fails_when_real_git_worktree_is_dirty(
     clean_action = next(action for action in report.next_actions if action.key == "clean_worktree")
     assert "git -C" in clean_action.command
     assert "status --short" in clean_action.command
+    snapshot_action = next(
+        action for action in report.next_actions if action.key == "snapshot_worktree_commit"
+    )
+    assert snapshot_action.severity == "recommended"
+    assert "git -C" in snapshot_action.command
+    assert "add -A" in snapshot_action.command
+    assert "commit -m" in snapshot_action.command
 
 
 def test_build_preflight_report_flags_file_paths_as_not_directory(

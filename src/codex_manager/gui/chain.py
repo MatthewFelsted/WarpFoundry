@@ -294,7 +294,7 @@ class ChainExecutor:
             errors_file = log_dir / "ERRORS.md"
             if not errors_file.exists():
                 errors_file.write_text(
-                    "# Codex Manager â€” Runtime Errors\n\n"
+                    "# WarpFoundry â€” Runtime Errors\n\n"
                     "This file is auto-generated. Each entry is a runtime error or warning.\n\n",
                     encoding="utf-8",
                 )
@@ -2729,4 +2729,5 @@ class ChainExecutor:
         # Normalise: 100 means "same as before", below 100 = declining
         # We report how much of the previous loop's impact was retained
         return min(score, 200.0)  # cap at 200% (big jump)
+
 

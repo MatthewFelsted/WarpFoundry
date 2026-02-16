@@ -117,6 +117,7 @@ _RUNNABLE_DIAGNOSTIC_ACTION_KEYS = frozenset(
         "init_git_repo",
         "install_codex_cli",
         "install_claude_cli",
+        "snapshot_worktree_commit",
         "rerun_doctor",
     }
 )
@@ -129,13 +130,15 @@ _SERVER_OPEN_BROWSER = True
 _MODEL_WATCHDOG_ROOT = Path.home() / ".codex_manager" / "watchdog"
 _GOVERNANCE_POLICY_PATH = Path.home() / ".codex_manager" / "governance" / "source_policy.json"
 _GITHUB_AUTH_META_PATH = Path.home() / ".codex_manager" / "github" / "auth_meta.json"
+_DEFAULT_PROJECT_DISPLAY_NAME = "WarpFoundry"
 _GOVERNANCE_ENV_KEYS: dict[str, str] = {
     "research_allowed_domains": "CODEX_MANAGER_RESEARCH_ALLOWED_DOMAINS",
     "research_blocked_domains": "CODEX_MANAGER_RESEARCH_BLOCKED_DOMAINS",
     "deep_research_allowed_domains": "DEEP_RESEARCH_ALLOWED_SOURCE_DOMAINS",
     "deep_research_blocked_domains": "DEEP_RESEARCH_BLOCKED_SOURCE_DOMAINS",
 }
-_GITHUB_SECRET_SERVICE = "codex_manager.github_auth"
+_GITHUB_SECRET_SERVICE = "warpfoundry.github_auth"
+_GITHUB_SECRET_SERVICE_LEGACY = "codex_manager.github_auth"
 _GITHUB_PAT_SECRET_KEY = "pat"
 _GITHUB_SSH_SECRET_KEY = "ssh_private_key"
 _GITHUB_AUTH_METHODS = frozenset({"https", "ssh"})
@@ -471,6 +474,92 @@ def _diagnostics_action_args(action_key: str, report) -> list[str] | None:
         args.extend(["--codex-bin", codex_binary, "--claude-bin", claude_binary])
         return args
     return None
+
+
+def _diagnostics_snapshot_worktree_commit(report) -> dict[str, object]:
+    """Create a local snapshot commit for dirty worktrees without discarding changes."""
+    repo_raw = (str(report.resolved_repo_path or "") or str(report.repo_path or "")).strip()
+    repo, error, _status = _resolve_git_sync_repo(repo_raw)
+    if repo is None:
+        return {
+            "ok": False,
+            "exit_code": 2,
+            "timed_out": False,
+            "stdout": "",
+            "stderr": error,
+        }
+
+    status_before = _git_sync_status_payload(repo)
+    if not bool(status_before.get("dirty")):
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "timed_out": False,
+            "stdout": "",
+            "stderr": "",
+            "message": "Worktree is already clean. No snapshot commit needed.",
+            "sync": status_before,
+            "commit": _git_last_commit_summary(repo),
+        }
+
+    # Stage everything first so the commit captures all progress.
+    stage_result = _run_git_sync_command(repo, "add", "-A")
+    if stage_result.returncode != 0:
+        detail = _extract_git_process_error(stage_result, "git add -A failed")
+        return {
+            "ok": False,
+            "exit_code": stage_result.returncode,
+            "timed_out": False,
+            "stdout": _truncate_command_output(stage_result.stdout),
+            "stderr": _truncate_command_output(detail),
+            "sync": _git_sync_status_payload(repo),
+        }
+
+    # Ensure commit identity exists so auto-commit can proceed in fresh repos.
+    for key, fallback in (
+        ("user.name", _project_display_name()),
+        ("user.email", "warpfoundry@localhost"),
+    ):
+        probe = _run_git_sync_command(repo, "config", key)
+        if probe.returncode != 0 or not str(probe.stdout or "").strip():
+            _run_git_sync_command(repo, "config", key, fallback)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    commit_message = f"warpfoundry: preflight snapshot ({timestamp})"
+    commit_result = _run_git_sync_command(repo, "commit", "-m", commit_message)
+    detail = _extract_git_process_error(commit_result, "git commit failed")
+    if commit_result.returncode != 0:
+        if "nothing to commit" in detail.lower():
+            return {
+                "ok": True,
+                "exit_code": 0,
+                "timed_out": False,
+                "stdout": _truncate_command_output(commit_result.stdout),
+                "stderr": _truncate_command_output(commit_result.stderr),
+                "message": "No commit was created because there are no staged changes.",
+                "sync": _git_sync_status_payload(repo),
+                "commit": _git_last_commit_summary(repo),
+            }
+        return {
+            "ok": False,
+            "exit_code": commit_result.returncode,
+            "timed_out": False,
+            "stdout": _truncate_command_output(commit_result.stdout),
+            "stderr": _truncate_command_output(detail),
+            "sync": _git_sync_status_payload(repo),
+        }
+
+    return {
+        "ok": True,
+        "exit_code": 0,
+        "timed_out": False,
+        "stdout": _truncate_command_output(commit_result.stdout),
+        "stderr": _truncate_command_output(commit_result.stderr),
+        "message": "Snapshot commit created.",
+        "commit_message": commit_message,
+        "sync": _git_sync_status_payload(repo),
+        "commit": _git_last_commit_summary(repo),
+    }
 
 
 def _truncate_command_output(value: str | bytes | None) -> str:
@@ -1411,6 +1500,51 @@ def _pipeline_resume_summary(repo: Path) -> dict[str, object]:
     return payload
 
 
+_CODEX_MANAGER_GITIGNORE_BEGIN = "# --- WarpFoundry managed rules ---"
+_CODEX_MANAGER_GITIGNORE_END = "# --- End WarpFoundry managed rules ---"
+_CODEX_MANAGER_GITIGNORE_RULES = [
+    "# Keep WarpFoundry owner/planning docs versioned while ignoring runtime artifacts.",
+    "!.codex_manager/",
+    ".codex_manager/logs/",
+    ".codex_manager/outputs/",
+    ".codex_manager/output_history/",
+    ".codex_manager/state/",
+    ".codex_manager/memory/",
+    ".codex_manager/ledger/",
+    ".codex_manager/ERRORS.md",
+]
+
+
+def _codex_manager_gitignore_block() -> str:
+    return "\n".join(
+        [
+            _CODEX_MANAGER_GITIGNORE_BEGIN,
+            *_CODEX_MANAGER_GITIGNORE_RULES,
+            _CODEX_MANAGER_GITIGNORE_END,
+        ]
+    )
+
+
+def _ensure_codex_manager_gitignore_rules(repo: Path) -> None:
+    """Ensure repository-level gitignore rules preserve owner docs under .codex_manager."""
+    gitignore_path = repo / ".gitignore"
+    block = _codex_manager_gitignore_block()
+    existing = _read_text_utf8_resilient(gitignore_path) if gitignore_path.exists() else ""
+
+    pattern = re.compile(
+        rf"{re.escape(_CODEX_MANAGER_GITIGNORE_BEGIN)}.*?{re.escape(_CODEX_MANAGER_GITIGNORE_END)}\n?",
+        flags=re.DOTALL,
+    )
+    if pattern.search(existing):
+        updated = pattern.sub(block + "\n", existing, count=1)
+    else:
+        base = existing.rstrip("\n")
+        updated = f"{base}\n\n{block}\n" if base else f"{block}\n"
+
+    if updated != existing:
+        gitignore_path.write_text(updated, encoding="utf-8")
+
+
 def _default_todo_wishlist_markdown(project_name: str) -> str:
     name = str(project_name or "Project").strip() or "Project"
     return (
@@ -1465,6 +1599,7 @@ def _read_feature_dreams(repo: Path) -> str:
 
 
 def _write_todo_wishlist(repo: Path, content: str) -> Path:
+    _ensure_codex_manager_gitignore_rules(repo)
     path = _todo_wishlist_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     clean = str(content or "").strip() or _default_todo_wishlist_markdown(repo.name)
@@ -1473,6 +1608,7 @@ def _write_todo_wishlist(repo: Path, content: str) -> Path:
 
 
 def _write_feature_dreams(repo: Path, content: str) -> Path:
+    _ensure_codex_manager_gitignore_rules(repo)
     path = _feature_dreams_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     clean = str(content or "").strip() or _default_feature_dreams_markdown(repo.name)
@@ -1714,6 +1850,7 @@ def _append_general_request_history(
     source: str,
     model: str = "",
 ) -> dict[str, object]:
+    _ensure_codex_manager_gitignore_rules(repo)
     now = _utc_now_iso_z()
     normalized_status = _normalize_general_request_status(status)
     entry: dict[str, object] = {
@@ -1968,6 +2105,7 @@ def _load_decision_board(repo: Path) -> dict[str, object]:
 
 
 def _save_decision_board(repo: Path, payload: dict[str, object]) -> dict[str, object]:
+    _ensure_codex_manager_gitignore_rules(repo)
     out = dict(payload)
     out["version"] = 1
     out["updated_at"] = _utc_now_iso_z()
@@ -2142,7 +2280,10 @@ def _github_secret_get(secret_key: str) -> str:
         raise RuntimeError(error or "Secure storage unavailable.")
     assert keyring is not None  # for type-checkers
     try:
-        return str(keyring.get_password(_GITHUB_SECRET_SERVICE, secret_key) or "")
+        value = str(keyring.get_password(_GITHUB_SECRET_SERVICE, secret_key) or "")
+        if value:
+            return value
+        return str(keyring.get_password(_GITHUB_SECRET_SERVICE_LEGACY, secret_key) or "")
     except KeyringError as exc:
         raise RuntimeError(f"Could not read secure credential '{secret_key}': {exc}") from exc
 
@@ -2168,9 +2309,11 @@ def _github_secret_delete(secret_key: str) -> None:
     try:
         keyring.delete_password(_GITHUB_SECRET_SERVICE, secret_key)
     except PasswordDeleteError:
-        return
+        pass
     except KeyringError as exc:
         raise RuntimeError(f"Could not delete secure credential '{secret_key}': {exc}") from exc
+    with suppress(PasswordDeleteError, KeyringError):
+        keyring.delete_password(_GITHUB_SECRET_SERVICE_LEGACY, secret_key)
 
 
 def _github_auth_meta_defaults() -> dict[str, object]:
@@ -2291,7 +2434,7 @@ def _github_test_pat(token: str) -> dict[str, object]:
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "codex-manager-github-auth-test",
+            "User-Agent": "warpfoundry-github-auth-test",
         },
         method="GET",
     )
@@ -2796,6 +2939,7 @@ def _write_foundation_artifacts(
     bootstrap_once: bool,
 ) -> list[str]:
     """Write foundational planning artifacts into the new repository."""
+    _ensure_codex_manager_gitignore_rules(project_path)
     root = project_path / ".codex_manager" / "foundation"
     root.mkdir(parents=True, exist_ok=True)
     now = _utc_now_iso_z()
@@ -2894,6 +3038,7 @@ def _load_legal_review_state(project_path: Path) -> dict[str, object]:
 
 
 def _save_legal_review_state(project_path: Path, payload: dict[str, object]) -> dict[str, object]:
+    _ensure_codex_manager_gitignore_rules(project_path)
     state = dict(payload)
     state["version"] = 1
     state["updated_at"] = _utc_now_iso_z()
@@ -3423,6 +3568,17 @@ def _model_watchdog_health() -> dict[str, object]:
     }
 
 
+def _project_display_name() -> str:
+    """Return the user-facing program name shown in the GUI."""
+    name = str(
+        os.getenv("WARPFOUNDRY_PROJECT_NAME")
+        or os.getenv("CODEX_MANAGER_PROJECT_NAME")
+        or os.getenv("AI_MANAGER_PROJECT_NAME")
+        or _DEFAULT_PROJECT_DISPLAY_NAME
+    ).strip()
+    return name or _DEFAULT_PROJECT_DISPLAY_NAME
+
+
 # â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
@@ -3470,18 +3626,141 @@ def _maybe_compress_response(response: Response) -> Response:
 
 @app.route("/")
 def index():
-    project_display_name = str(
-        os.getenv("CODEX_MANAGER_PROJECT_NAME")
-        or os.getenv("AI_MANAGER_PROJECT_NAME")
-        or "Codex Manager"
-    ).strip()
-    if not project_display_name:
-        project_display_name = "Codex Manager"
+    project_display_name = _project_display_name()
     return render_template(
         "index.html",
         recipes_payload=_recipe_template_payload(),
         project_display_name=project_display_name,
     )
+
+
+def _runtime_bool(value: object) -> bool:
+    """Return a bool for values that may be callables on test doubles."""
+    if callable(value):
+        with suppress(Exception):
+            return bool(value())
+        return False
+    return bool(value)
+
+
+def _runtime_state_value(state: object, key: str, default: object = None) -> object:
+    """Read either mapping-style or attribute-style runtime state values."""
+    if isinstance(state, dict):
+        return state.get(key, default)
+    if state is None:
+        return default
+    return getattr(state, key, default)
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    """Best-effort int conversion used by runtime session payloads."""
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _chain_runtime_snapshot() -> dict[str, object]:
+    """Return chain runtime context for refresh/reconnect flows."""
+    cfg = getattr(executor, "config", None)
+    state = getattr(executor, "state", None)
+    running = _runtime_bool(getattr(executor, "is_running", False))
+    paused = bool(_runtime_state_value(state, "paused", False))
+    repo_path = str(getattr(cfg, "repo_path", "") or "").strip() if cfg is not None else ""
+    mode = str(getattr(cfg, "mode", "") or "").strip() if cfg is not None else ""
+    run_max_loops = _safe_int(getattr(cfg, "max_loops", 0), 0) if cfg is not None else 0
+    run_unlimited = bool(getattr(cfg, "unlimited", False)) if cfg is not None else False
+
+    raw_steps = getattr(cfg, "steps", []) if cfg is not None else []
+    steps = raw_steps if isinstance(raw_steps, list) else []
+    enabled_steps = 0
+    for step in steps:
+        if isinstance(step, dict):
+            if bool(step.get("enabled", True)):
+                enabled_steps += 1
+        elif bool(getattr(step, "enabled", True)):
+            enabled_steps += 1
+
+    return {
+        "running": running,
+        "paused": paused,
+        "active": bool(running or paused),
+        "repo_path": repo_path,
+        "name": str(getattr(cfg, "name", "") or "").strip() if cfg is not None else "",
+        "mode": mode,
+        "run_max_loops": max(0, run_max_loops),
+        "run_unlimited": run_unlimited,
+        "configured_steps_count": len(steps),
+        "enabled_steps_count": max(0, enabled_steps),
+        "current_loop": max(0, _safe_int(_runtime_state_value(state, "current_loop", 0), 0)),
+        "current_step": max(0, _safe_int(_runtime_state_value(state, "current_step", 0), 0)),
+        "current_step_name": str(_runtime_state_value(state, "current_step_name", "") or ""),
+    }
+
+
+def _pipeline_runtime_snapshot() -> dict[str, object]:
+    """Return pipeline runtime context for refresh/reconnect flows."""
+    global _pipeline_executor
+    if _pipeline_executor is None:
+        return {
+            "running": False,
+            "paused": False,
+            "active": False,
+            "repo_path": "",
+            "mode": "",
+            "run_max_cycles": 0,
+            "run_unlimited": False,
+            "current_cycle": 0,
+            "current_phase": "",
+            "current_iteration": 0,
+        }
+
+    state = getattr(_pipeline_executor, "state", None)
+    cfg = getattr(_pipeline_executor, "config", None)
+    running = _runtime_bool(getattr(_pipeline_executor, "is_running", False))
+    paused = bool(_runtime_state_value(state, "paused", False))
+    repo_path = str(getattr(_pipeline_executor, "repo_path", "") or "").strip()
+    mode = str(getattr(cfg, "mode", "") or "").strip() if cfg is not None else ""
+    run_max_cycles = _safe_int(getattr(cfg, "max_cycles", 0), 0) if cfg is not None else 0
+    run_unlimited = bool(getattr(cfg, "unlimited", False)) if cfg is not None else False
+
+    return {
+        "running": running,
+        "paused": paused,
+        "active": bool(running or paused),
+        "repo_path": repo_path,
+        "mode": mode,
+        "run_max_cycles": max(0, run_max_cycles),
+        "run_unlimited": run_unlimited,
+        "current_cycle": max(0, _safe_int(_runtime_state_value(state, "current_cycle", 0), 0)),
+        "current_phase": str(_runtime_state_value(state, "current_phase", "") or ""),
+        "current_iteration": max(
+            0,
+            _safe_int(_runtime_state_value(state, "current_iteration", 0), 0),
+        ),
+    }
+
+
+def _attach_chain_runtime_fields(payload: dict[str, object]) -> dict[str, object]:
+    """Attach chain runtime context to status payloads."""
+    runtime = _chain_runtime_snapshot()
+    payload.setdefault("repo_path", runtime.get("repo_path", ""))
+    payload.setdefault("mode", runtime.get("mode", ""))
+    payload.setdefault("run_max_loops", runtime.get("run_max_loops", 0))
+    payload.setdefault("run_unlimited", runtime.get("run_unlimited", False))
+    payload.setdefault("configured_steps_count", runtime.get("configured_steps_count", 0))
+    payload.setdefault("enabled_steps_count", runtime.get("enabled_steps_count", 0))
+    return payload
+
+
+def _attach_pipeline_runtime_fields(payload: dict[str, object]) -> dict[str, object]:
+    """Attach pipeline runtime context to status payloads."""
+    runtime = _pipeline_runtime_snapshot()
+    payload.setdefault("repo_path", runtime.get("repo_path", ""))
+    payload.setdefault("mode", runtime.get("mode", ""))
+    payload.setdefault("run_max_cycles", runtime.get("run_max_cycles", 0))
+    payload.setdefault("run_unlimited", runtime.get("run_unlimited", False))
+    return payload
 
 @app.route("/api/health")
 def api_health():
@@ -3496,6 +3775,33 @@ def api_health():
     }
     payload.update(_model_watchdog_health())
     return jsonify(payload)
+
+
+@app.route("/api/runtime/session")
+def api_runtime_session():
+    """Return active runtime context for UI refresh/reconnect reattach."""
+    chain = _chain_runtime_snapshot()
+    pipeline = _pipeline_runtime_snapshot()
+
+    active_repo_path = ""
+    if bool(pipeline.get("active")) and str(pipeline.get("repo_path") or "").strip():
+        active_repo_path = str(pipeline.get("repo_path") or "").strip()
+    elif bool(chain.get("active")) and str(chain.get("repo_path") or "").strip():
+        active_repo_path = str(chain.get("repo_path") or "").strip()
+    elif str(pipeline.get("repo_path") or "").strip():
+        active_repo_path = str(pipeline.get("repo_path") or "").strip()
+    elif str(chain.get("repo_path") or "").strip():
+        active_repo_path = str(chain.get("repo_path") or "").strip()
+
+    return jsonify(
+        {
+            "ok": True,
+            "time_epoch_ms": int(time.time() * 1000),
+            "active_repo_path": active_repo_path,
+            "chain": chain,
+            "pipeline": pipeline,
+        }
+    )
 
 
 @app.route("/api/system/model-watchdog/status")
@@ -3747,6 +4053,8 @@ def api_status():
             payload = summary_fn(since_results=since_results)
         else:
             payload = executor.get_state()
+    if isinstance(payload, dict):
+        payload = _attach_chain_runtime_fields(payload)
     return jsonify(_attach_stop_guidance(payload, mode="chain"))
 
 
@@ -3955,6 +4263,17 @@ def api_diagnostics_run_action():
                 }
             ),
             400,
+        )
+
+    if action_key == "snapshot_worktree_commit":
+        result = _diagnostics_snapshot_worktree_commit(report)
+        return jsonify(
+            {
+                "action_key": action.key,
+                "title": action.title,
+                "command": action.command,
+                **result,
+            }
         )
 
     args = _diagnostics_action_args(action_key, report)
@@ -4899,7 +5218,7 @@ def _github_repo_metadata_from_api(
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "codex-manager-git-sync-metadata",
+        "User-Agent": "warpfoundry-git-sync-metadata",
     }
     if token_value:
         headers["Authorization"] = f"Bearer {token_value}"
@@ -5519,7 +5838,7 @@ def _git_preflight_before_run(
         if auto_stash:
             stash_before = _resolve_stash_ref(repo)
             stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-            stash_message = f"codex-manager:preflight-auto-stash {stamp}"
+            stash_message = f"warpfoundry:preflight-auto-stash {stamp}"
             stash_result = _run_git_sync_command(
                 repo,
                 "stash",
@@ -6703,7 +7022,7 @@ def api_git_sync_stash_pull():
     try:
         stash_before = _resolve_stash_ref(repo)
         stash_message = (
-            "codex-manager:auto-stash-before-pull "
+            "warpfoundry:auto-stash-before-pull "
             f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
         )
         stash_result = _run_git_sync_command(
@@ -8083,9 +8402,12 @@ def api_pipeline_status():
     if _pipeline_executor is None:
         from codex_manager.pipeline.phases import PipelineState
 
+        payload = _attach_pipeline_runtime_fields(
+            PipelineState().to_summary(since_results=since_results)
+        )
         return jsonify(
             _attach_stop_guidance(
-                PipelineState().to_summary(since_results=since_results),
+                payload,
                 mode="pipeline",
             )
         )
@@ -8099,6 +8421,8 @@ def api_pipeline_status():
         except TypeError:
             # Backward-compatible fallback for patched/mocked states in tests.
             payload = to_summary()
+    if isinstance(payload, dict):
+        payload = _attach_pipeline_runtime_fields(payload)
     return jsonify(_attach_stop_guidance(payload, mode="pipeline"))
 
 
@@ -8477,7 +8801,7 @@ def api_cua_start():
         return jsonify(
             {
                 "error": f"CUA dependencies not installed: {exc}. "
-                "Install with: pip install codex-manager[cua] then python -m playwright install"
+                "Install with: pip install warpfoundry[cua] then python -m playwright install"
             }
         ), 400
     except Exception as exc:
@@ -8748,7 +9072,7 @@ def run_gui(
 
     if open_browser_:
         Timer(1.5, _open_browser, args=[port]).start()
-    print(f"\n  Codex Manager GUI \u2192 http://127.0.0.1:{port}\n")
+    print(f"\n  {_project_display_name()} GUI \u2192 http://127.0.0.1:{port}\n")
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
 
 

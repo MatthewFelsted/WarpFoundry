@@ -1,4 +1,4 @@
-# codex-manager: all dependencies (main + brain + cua + dev)
+# warpfoundry: all dependencies (main + brain + cua + dev)
 # Install: pip install -r requirements.txt
 
 # Core

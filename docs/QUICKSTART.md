@@ -12,7 +12,7 @@ This is the shortest reliable path from install to first successful run.
 ## 2. Install
 
 ```bash
-cd codex_manager
+cd <repo-root>
 python -m venv .venv
 ```
 
@@ -59,7 +59,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 ## 4. Run setup diagnostics (recommended)
 
 ```bash
-python -m codex_manager doctor --repo /path/to/repo
+warpfoundry doctor --repo /path/to/repo
 ```
 
 If diagnostics report failures, fix those first (repo path, auth, binaries) before running loops.
@@ -69,7 +69,7 @@ Diagnostics also verify that the git worktree is clean so dry-run/apply modes do
 ## 5. Start GUI and run one chain
 
 ```bash
-python -m codex_manager gui
+warpfoundry gui
 ```
 
 Then in UI, choose one of these paths:
@@ -96,23 +96,24 @@ Tip: in the GUI header, open `Outputs` for a built-in guide to artifact location
 ## 7. Strategic CLI run (optional)
 
 ```bash
-python -m codex_manager strategic --repo /path/to/repo --mode dry-run --rounds 6
+warpfoundry strategic --repo /path/to/repo --mode dry-run --rounds 6
 ```
 
 For Discover Chain specifically:
 
 ```bash
-python -m codex_manager strategic --repo /path/to/discover-chain --mode dry-run --rounds 6
+warpfoundry strategic --repo /path/to/discover-chain --mode dry-run --rounds 6
 ```
 
 ## 8. First generic CLI run (optional)
 
 ```bash
-python -m codex_manager --repo /path/to/repo --goal "Improve docs and tests" --rounds 2 --mode dry-run
+warpfoundry --repo /path/to/repo --goal "Improve docs and tests" --rounds 2 --mode dry-run
 ```
 
 ## 9. First pipeline run (optional)
 
 ```bash
-python -m codex_manager pipeline --repo /path/to/repo --mode dry-run --cycles 1
+warpfoundry pipeline --repo /path/to/repo --mode dry-run --cycles 1
 ```
+

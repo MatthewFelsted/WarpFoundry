@@ -229,6 +229,27 @@ class TestCodexRunnerBuildCommand:
         assert captured["cmd"][-1] == "-"
         assert captured["stdin_text"] == "very long prompt payload"
 
+    def test_should_pipe_prompt_early_for_windows_batch_shims(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(codex_binary=str(tmp_path / "codex.cmd"))
+        monkeypatch.setattr("codex_manager.codex_cli.os.name", "nt")
+
+        # Above cmd.exe practical limit once quoted.
+        prompt = "x" * 7000
+        assert (
+            runner._should_pipe_prompt_via_stdin(
+                prompt,
+                repo_path=repo,
+                use_json=True,
+                full_auto=True,
+                extra_args=None,
+            )
+            is True
+        )
+
 
 class TestCodexRunnerAggregate:
     def test_infers_error_from_unknown_event_on_nonzero_exit(self):

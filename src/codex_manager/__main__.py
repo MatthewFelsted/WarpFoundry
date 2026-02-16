@@ -1,4 +1,4 @@
-"""CLI entrypoint: ``python -m codex_manager``."""
+"""CLI entrypoint for WarpFoundry."""
 
 from __future__ import annotations
 
@@ -48,8 +48,8 @@ DISCOVER_CHAIN_FOCUS = (
 def _build_parser() -> argparse.ArgumentParser:
     """Build and return the command-line parser for all supported modes."""
     p = argparse.ArgumentParser(
-        prog="codex_manager",
-        description="AI Manager - orchestrate OpenAI Codex CLI for iterative repo improvement.",
+        prog="warpfoundry",
+        description="WarpFoundry - orchestrate AI coding agents for iterative repo improvement.",
     )
     # -- Sub-commands ---------------------------------------------------------
     sub = p.add_subparsers(dest="command")
@@ -438,11 +438,12 @@ def main(argv: list[str] | None = None) -> int:
     if not args.repo or not args.goal:
         parser.print_help()
         print(
-            "\nTip: run 'python -m codex_manager gui' to launch the web GUI,\n"
-            "     'python -m codex_manager doctor --repo <path>' to validate setup,\n"
-            "     'python -m codex_manager pipeline --repo <path>' for the autonomous pipeline,\n"
-            "     'python -m codex_manager strategic --repo <path>' for strategic product maximization,\n"
-            "     'python -m codex_manager visual-test --url <url>' for CUA visual testing,\n"
+            "\nTip: run 'warpfoundry gui' to launch the web GUI,\n"
+            "     'warpfoundry doctor --repo <path>' to validate setup,\n"
+            "     'warpfoundry pipeline --repo <path>' for the autonomous pipeline,\n"
+            "     'warpfoundry strategic --repo <path>' for strategic product maximization,\n"
+            "     'warpfoundry visual-test --url <url>' for CUA visual testing,\n"
+            "     (or use 'python -m codex_manager <command>' in source checkouts),\n"
             "     or provide --repo and --goal for CLI loop mode.",
             file=sys.stderr,
         )
@@ -463,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:
 def _print_doctor_report(report: PreflightReport) -> None:
     """Print a human-readable diagnostics report."""
 
-    print("\n  Codex Manager - Setup Diagnostics")
+    print("\n  WarpFoundry - Setup Diagnostics")
     print("  " + "=" * 58)
     print(f"  Repository: {report.resolved_repo_path or '(not provided)'}")
     print(f"  Agents:     {', '.join(report.requested_agents)}")
@@ -521,6 +522,7 @@ def _print_cli_preflight_guard(
         print(f"  - {message}", file=sys.stderr)
     print(
         "\nRun diagnostics for full details:\n"
+        f'  warpfoundry doctor --repo "{repo}" --agents {",".join(agents)}\n'
         f'  python -m codex_manager doctor --repo "{repo}" --agents {",".join(agents)}',
         file=sys.stderr,
     )
@@ -591,7 +593,7 @@ def _run_goal_loop(
 
     # Summary
     print("\n" + "=" * 60)
-    print("  Codex Manager - Run Summary")
+    print("  WarpFoundry - Run Summary")
     print("=" * 60)
     print(f"  Goal:        {state.goal}")
     print(f"  Mode:        {state.mode}")
@@ -686,7 +688,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
 
     # Summary
     print("\n" + "=" * 60)
-    print("  AI Manager - Pipeline Summary")
+    print("  WarpFoundry - Pipeline Summary")
     print("=" * 60)
     print(f"  Mode:        {config.mode}")
     print(f"  Cycles:      {state.total_cycles_completed} / {config.max_cycles}")
@@ -757,7 +759,7 @@ def _visual_test(args: argparse.Namespace) -> int:
         print(
             f"\nError: CUA dependencies not installed: {exc}\n"
             "Install with:\n"
-            "  pip install codex-manager[cua]\n"
+            "  pip install warpfoundry[cua]\n"
             "  python -m playwright install\n",
             file=sys.stderr,
         )
@@ -809,8 +811,8 @@ def _visual_test(args: argparse.Namespace) -> int:
             or "connection refused" in result.error.lower()
         ):
             print(
-                "\n  Hint: Start the app at that URL first. For the default Codex Manager GUI:\n"
-                "        python -m codex_manager gui\n"
+                "\n  Hint: Start the app at that URL first. For the default WarpFoundry GUI:\n"
+                "        warpfoundry gui\n"
             )
     if result.observations:
         print(f"\n  Observations ({len(result.observations)}):")
@@ -912,7 +914,7 @@ def _list_recipes(args: argparse.Namespace) -> int:
         if sequence:
             print(f"    Sequence: {sequence}")
 
-    print("\n  Detail: python -m codex_manager list-recipes --recipe <id>")
+    print("\n  Detail: warpfoundry list-recipes --recipe <id>")
     print()
     return 0
 

@@ -333,7 +333,7 @@ def test_chain_start_git_preflight_auto_stash_and_auto_pull(
     assert "config" in started
 
     stash_list = _run_git("stash", "list", cwd=local).stdout
-    assert "codex-manager:preflight-auto-stash" in stash_list
+    assert "warpfoundry:preflight-auto-stash" in stash_list
 
 
 def test_pipeline_start_preflight_blocks_dirty_worktree_when_git_preflight_disabled(
@@ -576,6 +576,65 @@ def test_health_endpoint_reports_chain_and_pipeline_status(client, monkeypatch):
     assert data["model_watchdog_enabled"] is True
     assert data["model_watchdog_running"] is True
     assert data["model_watchdog_last_status"] == "ok"
+
+
+def test_runtime_session_reports_active_chain_and_pipeline_context(
+    client, monkeypatch, tmp_path: Path
+):
+    chain_repo = _make_repo(tmp_path / "chain", git=True)
+    pipeline_repo = _make_repo(tmp_path / "pipeline", git=True)
+
+    chain_exec = types.SimpleNamespace(
+        is_running=True,
+        config=types.SimpleNamespace(
+            repo_path=str(chain_repo),
+            name="Chain Runtime Test",
+            mode="apply",
+            max_loops=5,
+            unlimited=True,
+            steps=[types.SimpleNamespace(enabled=True), types.SimpleNamespace(enabled=False)],
+        ),
+        state=types.SimpleNamespace(
+            paused=False,
+            current_loop=3,
+            current_step=1,
+            current_step_name="Implement feature",
+        ),
+    )
+    pipeline_exec = types.SimpleNamespace(
+        is_running=False,
+        repo_path=pipeline_repo,
+        config=types.SimpleNamespace(mode="dry-run", max_cycles=4, unlimited=False),
+        state=types.SimpleNamespace(
+            paused=True,
+            current_cycle=2,
+            current_phase="testing",
+            current_iteration=1,
+        ),
+    )
+
+    monkeypatch.setattr(gui_app_module, "executor", chain_exec)
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", pipeline_exec)
+
+    resp = client.get("/api/runtime/session")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is True
+    assert data["active_repo_path"] == str(pipeline_repo)
+    assert data["chain"]["active"] is True
+    assert data["chain"]["repo_path"] == str(chain_repo)
+    assert data["chain"]["mode"] == "apply"
+    assert data["chain"]["run_max_loops"] == 5
+    assert data["chain"]["run_unlimited"] is True
+    assert data["chain"]["configured_steps_count"] == 2
+    assert data["chain"]["enabled_steps_count"] == 1
+    assert data["pipeline"]["active"] is True
+    assert data["pipeline"]["repo_path"] == str(pipeline_repo)
+    assert data["pipeline"]["mode"] == "dry-run"
+    assert data["pipeline"]["run_max_cycles"] == 4
+    assert data["pipeline"]["run_unlimited"] is False
 
 
 def test_index_route_applies_gzip_when_requested(client):
@@ -2529,6 +2588,25 @@ def test_owner_feature_dreams_helpers_write_roundtrip_and_fallback(tmp_path: Pat
     assert gui_app_module._feature_dreams_has_open_items(fallback_content) is True
 
 
+def test_owner_workspace_writes_install_repo_local_gitignore_rules(tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    gitignore = repo / ".gitignore"
+    gitignore.write_text(".codex_manager/\n", encoding="utf-8")
+
+    gui_app_module._write_todo_wishlist(repo, "- [ ] Add one concrete improvement\n")
+    gui_app_module._write_feature_dreams(repo, "- [ ] Add one differentiating capability\n")
+
+    saved = gui_app_module._read_text_utf8_resilient(gitignore)
+    assert gui_app_module._CODEX_MANAGER_GITIGNORE_BEGIN in saved
+    assert gui_app_module._CODEX_MANAGER_GITIGNORE_END in saved
+    assert "!.codex_manager/" in saved
+    assert ".codex_manager/outputs/" in saved
+    assert ".codex_manager/logs/" in saved
+    assert saved.count(gui_app_module._CODEX_MANAGER_GITIGNORE_BEGIN) == 1
+    assert (repo / ".codex_manager" / "owner" / "TODO_WISHLIST.md").is_file()
+    assert (repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md").is_file()
+
+
 def test_chain_status_includes_actionable_stop_guidance(client, monkeypatch):
     class _Exec:
         @staticmethod
@@ -2590,6 +2668,38 @@ def test_chain_status_supports_results_delta_polling(client, monkeypatch):
     assert data["total_results"] == 4
     assert len(data["results_delta"]) == 1
     assert "results" not in data
+
+
+def test_chain_status_includes_runtime_reconnect_metadata(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+
+    class _Exec:
+        is_running = True
+        config = types.SimpleNamespace(
+            repo_path=str(repo),
+            mode="dry-run",
+            max_loops=7,
+            unlimited=False,
+            steps=[types.SimpleNamespace(enabled=True)],
+        )
+        state = types.SimpleNamespace(paused=False, current_loop=1, current_step=0)
+
+        @staticmethod
+        def get_state():
+            return {"running": True, "paused": False, "stop_reason": None}
+
+    monkeypatch.setattr(gui_app_module, "executor", _Exec())
+    resp = client.get("/api/chain/status")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["repo_path"] == str(repo)
+    assert data["mode"] == "dry-run"
+    assert data["run_max_loops"] == 7
+    assert data["run_unlimited"] is False
+    assert data["configured_steps_count"] == 1
+    assert data["enabled_steps_count"] == 1
 
 
 def test_chain_stop_after_step_api_arms_and_clears_toggle(client, monkeypatch):
@@ -2703,6 +2813,40 @@ def test_pipeline_status_supports_results_delta_polling(client, monkeypatch):
     assert data["total_results"] == 8
     assert len(data["results_delta"]) == 1
     assert "results" not in data
+
+
+def test_pipeline_status_includes_runtime_reconnect_metadata(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+
+    class _PipelineState:
+        @staticmethod
+        def to_summary(*, since_results: int | None = None):
+            return {
+                "running": True,
+                "paused": False,
+                "stop_reason": None,
+                "total_cycles": 1,
+                "total_phases": 2,
+                "total_results": 2,
+                "results_delta": [] if since_results is not None else [],
+            }
+
+    class _Exec:
+        is_running = True
+        repo_path = repo
+        config = types.SimpleNamespace(mode="apply", max_cycles=9, unlimited=True)
+        state = _PipelineState()
+
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _Exec())
+    resp = client.get("/api/pipeline/status")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["repo_path"] == str(repo)
+    assert data["mode"] == "apply"
+    assert data["run_max_cycles"] == 9
+    assert data["run_unlimited"] is True
 
 
 def _check_by_key(payload: dict, category: str, key: str) -> dict:
@@ -3438,7 +3582,7 @@ def test_git_sync_stash_pull_stashes_local_changes_then_pulls(client, tmp_path: 
     assert (local / "REMOTE_STASH.md").is_file()
 
     stash_list = _run_git("stash", "list", cwd=local).stdout
-    assert "codex-manager:auto-stash-before-pull" in stash_list
+    assert "warpfoundry:auto-stash-before-pull" in stash_list
 
 
 def test_git_sync_push_pushes_local_commit(client, tmp_path: Path):
@@ -3738,6 +3882,62 @@ def test_diagnostics_run_action_executes_runnable_command(client, monkeypatch):
     assert observed["args"] == ["codex-missing", "--version"]
     assert observed["cwd"] is None
     assert data["command"] == gui_app_module.subprocess.list2cmdline(observed["args"])
+
+
+def test_diagnostics_reports_runnable_snapshot_action_for_dirty_worktree(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="diag-dirty-snapshot-action")
+    (local / "DIRTY_DIAG_ACTION.md").write_text("dirty\n", encoding="utf-8")
+
+    resp = client.post(
+        "/api/diagnostics",
+        json={
+            "repo_path": str(local),
+            "codex_binary": "codex",
+            "claude_binary": "claude",
+            "agents": ["codex"],
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    actions = data.get("next_actions", [])
+    snapshot = next((a for a in actions if a.get("key") == "snapshot_worktree_commit"), None)
+    assert snapshot is not None
+    assert snapshot.get("can_run") is True
+    assert "add -A" in str(snapshot.get("command") or "")
+    assert "commit -m" in str(snapshot.get("command") or "")
+
+
+def test_diagnostics_run_action_snapshot_worktree_commit(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="diag-run-snapshot-action")
+    (local / "SNAPSHOT_ME.md").write_text("pending\n", encoding="utf-8")
+
+    resp = client.post(
+        "/api/diagnostics/actions/run",
+        json={
+            "repo_path": str(local),
+            "codex_binary": "codex",
+            "claude_binary": "claude",
+            "agents": ["codex"],
+            "action_key": "snapshot_worktree_commit",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["ok"] is True
+    assert data["exit_code"] == 0
+    assert data["action_key"] == "snapshot_worktree_commit"
+    assert str(data.get("commit_message") or "").startswith("warpfoundry: preflight snapshot")
+    assert isinstance(data.get("commit"), dict)
+    assert data["commit"].get("available") is True
+
+    status_after = _run_git("status", "--short", cwd=local).stdout.strip()
+    assert status_after == ""
 
 
 def test_diagnostics_run_action_rejects_non_runnable_action(client, monkeypatch):

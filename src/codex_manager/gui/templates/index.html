@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Codex Manager</title>
+<title>{{ project_display_name }}</title>
 <style>
 /* Ã¢â€â‚¬Ã¢â€â‚¬ Reset & Base Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -1110,7 +1110,7 @@ body.mode-medium .easy-only{display:none}
 <!-- Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â -->
 <header>
   <div class="header-brand">
-    <div class="logo"><span>&#9889;</span> Codex Manager</div>
+    <div class="logo"><span>&#9889;</span> {{ project_display_name }}</div>
     <div class="header-doc-links">
       <button class="btn" onclick="openDoc('quickstart')" title="Open quick start guide">Quickstart</button>
       <button class="btn" onclick="openDoc('output_artifacts')" title="Open outputs and artifacts guide">Outputs</button>
@@ -1793,7 +1793,7 @@ body.mode-medium .easy-only{display:none}
         <input
           type="text"
           id="pipe-pr-feature-branch"
-          placeholder="codex-manager/pr/my-feature"
+          placeholder="warpfoundry/pr/my-feature"
           oninput="syncPipePrAwareOptions()"
         >
       </div>
@@ -2387,7 +2387,7 @@ body.mode-medium .easy-only{display:none}
 <!-- Onboarding (first visit) -->
 <div id="onboarding-overlay" class="hidden">
   <div class="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
-    <h2 id="onboarding-title">Welcome to Codex Manager</h2>
+    <h2 id="onboarding-title">Welcome to {{ project_display_name }}</h2>
     <p>Configure and run AI-powered task chains on your repo: discovery, implementation, testing, refactoring, and more. Choose how much control you want:</p>
     <div class="mode-row"><strong>Autopilot</strong><span>Pick a recipe, set your repo path, and hit Start. Best for quick runs.</span></div>
     <div class="mode-row"><strong>Customize</strong><span>Build and reorder steps, set loop counts and stop conditions. No advanced options.</span></div>
@@ -2406,7 +2406,7 @@ body.mode-medium .easy-only{display:none}
       <p class="first-run-wizard-subtitle">Set your repository, run setup diagnostics, apply safe defaults, and start one dry-run strategic pass.</p>
     </div>
     <div class="first-run-wizard-steps">
-      <div class="first-run-wizard-step"><strong>1. Set Repo</strong>Pick the repository folder you want Codex Manager to work on.</div>
+      <div class="first-run-wizard-step"><strong>1. Set Repo</strong>Pick the repository folder you want {{ project_display_name }} to work on.</div>
       <div class="first-run-wizard-step"><strong>2. Run Diagnostics</strong>Check repo access, CLI binaries, and authentication for selected agents.</div>
       <div class="first-run-wizard-step"><strong>3. Fix Required Items</strong>Use copy/run actions for missing dependencies and auth setup.</div>
       <div class="first-run-wizard-step"><strong>4. Start Safe Run</strong>Apply dry-run defaults and launch one strategic chain run.</div>
@@ -2965,7 +2965,7 @@ body.mode-medium .easy-only{display:none}
       <div class="field-help" id="clone-branch-help">Load branch names from the remote (optional).</div>
     </div>
 
-    <div class="meta">After clone, Codex Manager scaffolding is initialized under <code>.codex_manager/</code>.</div>
+    <div class="meta">After clone, {{ project_display_name }} scaffolding is initialized under <code>.codex_manager/</code>.</div>
     <div class="status" id="clone-repo-status"></div>
 
     <div class="actions">
@@ -4471,6 +4471,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       scheduleDiagnosticsRefresh('pipeline');
     });
   }
+  await restoreRuntimeSession();
   refreshDiagnostics('chain', { silent: true });
   refreshDiagnostics('pipeline', { silent: true });
   if (typeof localStorage !== 'undefined' && !localStorage.getItem('cm_onboarded')) {
@@ -4490,6 +4491,97 @@ document.addEventListener('DOMContentLoaded', async () => {
     setGitSyncDrawerOpen(false);
   });
 });
+
+async function restoreRuntimeSession() {
+  const session = await api('/api/runtime/session');
+  if (!session || session.error) return false;
+
+  const chain = (session.chain && typeof session.chain === 'object') ? session.chain : {};
+  const pipeline = (session.pipeline && typeof session.pipeline === 'object') ? session.pipeline : {};
+  const chainActive = !!chain.active;
+  const pipelineActive = !!pipeline.active;
+  if (!chainActive && !pipelineActive) return false;
+
+  const chainRepoPath = String(chain.repo_path || '').trim();
+  const pipelineRepoPath = String(pipeline.repo_path || '').trim();
+
+  if (chainRepoPath) {
+    config.repo_path = chainRepoPath;
+    const repoInput = document.getElementById('repo-path');
+    if (repoInput) repoInput.value = chainRepoPath;
+    if (chain.mode === 'apply' || chain.mode === 'dry-run') {
+      setMode(chain.mode);
+    }
+    const chainRunMaxLoops = Number(chain.run_max_loops);
+    if (Number.isFinite(chainRunMaxLoops) && chainRunMaxLoops > 0) {
+      config.max_loops = chainRunMaxLoops;
+      const maxLoopsInput = document.getElementById('max-loops');
+      if (maxLoopsInput) maxLoopsInput.value = String(chainRunMaxLoops);
+    }
+    if (typeof chain.run_unlimited === 'boolean') {
+      config.unlimited = !!chain.run_unlimited;
+      const unlimitedInput = document.getElementById('unlimited');
+      if (unlimitedInput) unlimitedInput.checked = config.unlimited;
+      toggleUnlimited();
+    }
+    validateRepo();
+    refreshChainOutputs(false);
+  }
+
+  if (pipelineRepoPath) {
+    pipeConfig.repo_path = pipelineRepoPath;
+    const pipeRepoInput = document.getElementById('pipe-repo-path');
+    if (pipeRepoInput) pipeRepoInput.value = pipelineRepoPath;
+    if (pipeline.mode === 'apply' || pipeline.mode === 'dry-run') {
+      setPipeMode(pipeline.mode);
+    }
+    const pipeRunMaxCycles = Number(pipeline.run_max_cycles);
+    if (Number.isFinite(pipeRunMaxCycles) && pipeRunMaxCycles > 0) {
+      pipeConfig.max_cycles = pipeRunMaxCycles;
+      const maxCyclesInput = document.getElementById('pipe-cycles');
+      if (maxCyclesInput) maxCyclesInput.value = String(pipeRunMaxCycles);
+    }
+    if (typeof pipeline.run_unlimited === 'boolean') {
+      pipeConfig.unlimited = !!pipeline.run_unlimited;
+      const pipeUnlimitedInput = document.getElementById('pipe-unlimited');
+      if (pipeUnlimitedInput) pipeUnlimitedInput.checked = pipeConfig.unlimited;
+      togglePipeUnlimited();
+    }
+    validatePipeRepo();
+    schedulePipelineResumeRefresh(pipelineRepoPath, { delayMs: 0, silent: true });
+    refreshPipelineRunComparison({ repoPath: pipelineRepoPath, silent: true });
+  }
+
+  if (chainActive) {
+    chainRunning = true;
+    chainPaused = !!chain.paused;
+    setControlsRunning(true);
+    connectSSE();
+    startPolling();
+    await pollStatus();
+  }
+
+  if (pipelineActive) {
+    pipeRunning = true;
+    pipePaused = !!pipeline.paused;
+    setPipeControlsRunning(true);
+    connectPipeSSE();
+    startPipePolling();
+    await pollPipeStatus();
+  }
+
+  renderActivityHeartbeats();
+  if (pipelineActive && !chainActive) switchTab('pipeline');
+  if (chainActive || pipelineActive) {
+    const labels = [];
+    if (chainActive) labels.push('chain');
+    if (pipelineActive) labels.push('pipeline');
+    toast('Reattached to active ' + labels.join(' + ') + ' run after refresh.', 'info');
+    refreshWorkspaceRepos({ silent: true, includeBranches: true });
+    scheduleGitSyncRefresh({ delayMs: 0, silent: true, force: true });
+  }
+  return true;
+}
 
 function dismissOnboarding() {
   _closeOverlay('onboarding-overlay');
@@ -8893,7 +8985,8 @@ async function runDiagnosticsAction(btn) {
       exit_code: Number(result && result.exit_code ? result.exit_code : 0),
     };
     if (result && result.ok) {
-      toast('Diagnostics action completed.', 'success');
+      const successMsg = String((result && result.message) || 'Diagnostics action completed.');
+      toast(successMsg, 'success');
     } else {
       const err = (result && result.stderr) ? result.stderr.split('\n')[0] : '';
       toast(
@@ -9538,6 +9631,13 @@ async function pollStatus() {
 function updateProgress(s) {
   chainRunning = !!s.running;
   chainPaused = !!s.paused;
+  const statusRepoPath = String(s.repo_path || '').trim();
+  if (statusRepoPath && !config.repo_path) {
+    config.repo_path = statusRepoPath;
+    const repoInput = document.getElementById('repo-path');
+    if (repoInput) repoInput.value = statusRepoPath;
+    validateRepo();
+  }
   const stopAfterCurrentStep = !!s.stop_after_current_step;
   const stopAfterCheckbox = document.getElementById('stop-after-step');
   if (stopAfterCheckbox) stopAfterCheckbox.checked = stopAfterCurrentStep;
@@ -9545,19 +9645,31 @@ function updateProgress(s) {
   if (s.last_log_epoch_ms) chainLastActivityMs = s.last_log_epoch_ms;
   renderActivityHeartbeats();
   _renderLastLogHint('progress-last-log', s);
-  const enabled = config.steps.filter(x => x.enabled).length;
+  const configuredStepsFromConfig = config.steps.length;
+  const configuredStepsFromStatus = Number.isFinite(Number(s.configured_steps_count))
+    ? Number(s.configured_steps_count)
+    : 0;
+  const configuredSteps = configuredStepsFromConfig > 0
+    ? configuredStepsFromConfig
+    : Math.max(0, configuredStepsFromStatus);
+  const enabledFromConfig = config.steps.filter(x => x.enabled).length;
+  const enabledFromStatus = Number.isFinite(Number(s.enabled_steps_count))
+    ? Number(s.enabled_steps_count)
+    : 0;
+  const enabledSteps = enabledFromConfig > 0 ? enabledFromConfig : Math.max(0, enabledFromStatus);
   const done = s.total_steps_completed || 0;
   const runUnlimited = typeof s.run_unlimited === 'boolean' ? s.run_unlimited : !!config.unlimited;
   const runMaxLoops = Number.isFinite(Number(s.run_max_loops)) && Number(s.run_max_loops) > 0
     ? Number(s.run_max_loops)
     : (parseInt(document.getElementById('max-loops').value) || config.max_loops || 1);
+  const totalSteps = Math.max(1, configuredSteps || enabledSteps);
 
   let pct;
   if (runUnlimited) {
     // In unlimited mode the bar shows improvement remaining (100% = lots of room, approaching 0% = converging)
     pct = Math.min(100, Math.max(0, Math.round(s.improvement_pct || 100)));
   } else {
-    const maxSteps = enabled * runMaxLoops;
+    const maxSteps = enabledSteps * runMaxLoops;
     pct = maxSteps > 0 ? Math.min(100, Math.round(done / maxSteps * 100)) : 0;
   }
 
@@ -9582,7 +9694,7 @@ function updateProgress(s) {
     const runningFor = s.current_step_started_at_epoch_ms
       ? Math.max(0, Math.floor((Date.now() - s.current_step_started_at_epoch_ms) / 1000))
       : 0;
-    text = '[' + _spinnerFrame() + '] ' + loopLabel + ' \u2022 Step ' + (s.current_step + 1) + '/' + config.steps.length;
+    text = '[' + _spinnerFrame() + '] ' + loopLabel + ' \u2022 Step ' + (s.current_step + 1) + '/' + totalSteps;
     if (s.current_step_name) text += ' \u2022 ' + esc(s.current_step_name);
     if (stopAfterCurrentStep) text += ' \u2022 stopping after this step';
     if (runningFor > 0) text += ' \u2022 running ' + _formatElapsedSeconds(runningFor);
@@ -11313,8 +11425,9 @@ async function pollPipeStatus() {
       clearInterval(pipelinePollTimer);
       pipelinePollTimer = null;
       if (pipelineSSE) { pipelineSSE.close(); pipelineSSE = null; }
-      schedulePipelineResumeRefresh(pipeConfig.repo_path, { delayMs: 0, silent: true });
-      refreshPipelineRunComparison({ repoPath: pipeConfig.repo_path, silent: true });
+      const completedRepoPath = String(pipeConfig.repo_path || s.repo_path || '').trim();
+      schedulePipelineResumeRefresh(completedRepoPath, { delayMs: 0, silent: true });
+      refreshPipelineRunComparison({ repoPath: completedRepoPath, silent: true });
     }
   } catch(e) {}
 }
@@ -11355,17 +11468,28 @@ async function maybeHandlePipelineSelfRestart(statusPayload) {
 function updatePipeProgress(s) {
   pipeRunning = !!s.running;
   pipePaused = !!s.paused;
+  const statusRepoPath = String(s.repo_path || '').trim();
+  if (statusRepoPath && !pipeConfig.repo_path) {
+    pipeConfig.repo_path = statusRepoPath;
+    const repoInput = document.getElementById('pipe-repo-path');
+    if (repoInput) repoInput.value = statusRepoPath;
+    validatePipeRepo();
+  }
+  const runUnlimited = typeof s.run_unlimited === 'boolean' ? !!s.run_unlimited : !!pipeConfig.unlimited;
+  const runMaxCycles = Number.isFinite(Number(s.run_max_cycles)) && Number(s.run_max_cycles) > 0
+    ? Number(s.run_max_cycles)
+    : Math.max(1, Number(pipeConfig.max_cycles) || 1);
   const stopGuidance = s.stop_guidance || null;
   if (s.last_log_epoch_ms) pipeLastActivityMs = s.last_log_epoch_ms;
   renderActivityHeartbeats();
   _renderLastLogHint('pipe-progress-last-log', s);
   let pct;
-  if (pipeConfig.unlimited) {
+  if (runUnlimited) {
     // In unlimited mode the bar shows improvement remaining (approaching 0% = converging)
     pct = Math.min(100, Math.max(0, Math.round(s.improvement_pct || 100)));
   } else {
     pct = Math.min(100, Math.max(0, Math.round(
-      (s.total_cycles || 0) / Math.max(1, pipeConfig.max_cycles) * 100
+      (s.total_cycles || 0) / Math.max(1, runMaxCycles) * 100
     )));
   }
   const pipeProgressFill = document.getElementById('pipe-progress-fill');
@@ -11387,15 +11511,15 @@ function updatePipeProgress(s) {
       ? Math.max(0, Math.floor((Date.now() - s.current_phase_started_at_epoch_ms) / 1000))
       : 0;
     const iter = s.current_iteration || 0;
-    const cycleLabel = pipeConfig.unlimited
+    const cycleLabel = runUnlimited
       ? 'Cycle ' + (s.current_cycle || 1) + ' / \u221e'
-      : 'Cycle ' + (s.current_cycle || 1) + '/' + pipeConfig.max_cycles;
+      : 'Cycle ' + (s.current_cycle || 1) + '/' + runMaxCycles;
     text = '[' + _spinnerFrame() + '] ' + cycleLabel
          + ' \u2022 Phase: ' + (s.current_phase || '...')
          + (iter > 0 ? (' (iter ' + iter + ')') : '')
          + ' \u2022 ' + (s.total_phases || 0) + ' phases completed';
     if (runningFor > 0) text += ' \u2022 running ' + _formatElapsedSeconds(runningFor);
-    if (!pipeConfig.unlimited) text += ' \u2022 ' + pct + '%';
+    if (!runUnlimited) text += ' \u2022 ' + pct + '%';
   } else if (s.stop_reason) {
     const label = stopGuidance && stopGuidance.label ? stopGuidance.label : s.stop_reason;
     text = 'Finished: ' + label + ' (' + (s.total_cycles || 0) + ' cycles)';

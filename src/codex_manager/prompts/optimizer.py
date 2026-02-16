@@ -2,7 +2,7 @@
 
 Usage::
 
-    python -m codex_manager optimize-prompts [--model gpt-5.2] [--dry-run]
+    warpfoundry optimize-prompts [--model gpt-5.2] [--dry-run]
 
 This is a one-time (or occasional) process.  The optimizer:
 1. Loads all prompts from the catalog

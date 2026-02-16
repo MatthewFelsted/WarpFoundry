@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════════
-#  AI Manager — Prompt Catalog
+#  WarpFoundry Prompt Catalog
 # ═══════════════════════════════════════════════════════════════════
 #
 # Every prompt the system uses lives here.  Edit freely.
-# Run `python -m codex_manager optimize-prompts` to AI-refine them.
+# Run `warpfoundry optimize-prompts` to AI-refine them.
 #
 # Structure:
 #   pipeline.*   — prompts for the autonomous improvement pipeline

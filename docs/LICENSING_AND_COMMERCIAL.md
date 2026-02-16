@@ -1,10 +1,10 @@
-# Licensing and Commercial Planning
+﻿# Licensing and Commercial Planning
 
 This guide explains the built-in licensing/commercial packaging support added to New Project creation.
 
 ## What It Generates
 
-When enabled in **New Project -> Licensing & Commercial Packaging**, Codex Manager creates:
+When enabled in **New Project -> Licensing & Commercial Packaging**, WarpFoundry creates:
 
 - `.codex_manager/business/licensing_profile.json`
 - `.codex_manager/business/legal_review.json`
@@ -66,3 +66,4 @@ You can tighten source policy checks with environment variables:
   - Allowlist used when filtering native deep-research citations.
 - `DEEP_RESEARCH_BLOCKED_SOURCE_DOMAINS`
   - Denylist used when filtering native deep-research citations.
+

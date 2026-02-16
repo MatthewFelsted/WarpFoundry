@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 600  # 10 minutes
 DEFAULT_CODEX_MODEL = "gpt-5.3-codex"
 _WINDOWS_COMMAND_LINE_LIMIT = 32767
+_WINDOWS_CMD_EXE_LIMIT = 8191
 _COMMAND_LINE_SAFETY_MARGIN = 2048
 _POSIX_PROMPT_ARG_LIMIT = 60000
 
@@ -221,7 +222,9 @@ class CodexRunner(AgentRunner):
     ) -> bool:
         """Return True when prompt should be supplied via stdin instead of argv.
 
-        On Windows, large prompts can exceed CreateProcess command-line limits.
+        On Windows, large prompts can exceed either:
+        - CreateProcess command-line limits (~32k), or
+        - cmd.exe wrapper limits (~8k) when the resolved CLI is a .cmd/.bat shim.
         """
         if os.name != "nt":
             return len(prompt) >= _POSIX_PROMPT_ARG_LIMIT
@@ -241,7 +244,18 @@ class CodexRunner(AgentRunner):
         except Exception:
             estimated = sum(len(part) for part in base_cmd) + len(prompt) + len(base_cmd) + 1
 
-        return estimated >= (_WINDOWS_COMMAND_LINE_LIMIT - _COMMAND_LINE_SAFETY_MARGIN)
+        command_limit = self._effective_windows_command_limit(base_cmd)
+        return estimated >= (command_limit - _COMMAND_LINE_SAFETY_MARGIN)
+
+    @staticmethod
+    def _effective_windows_command_limit(base_cmd: list[str]) -> int:
+        """Return the best-effort command length ceiling for the resolved launcher."""
+        if not base_cmd:
+            return _WINDOWS_COMMAND_LINE_LIMIT
+        launcher = (base_cmd[0] or "").strip().lower()
+        if launcher.endswith(".cmd") or launcher.endswith(".bat"):
+            return _WINDOWS_CMD_EXE_LIMIT
+        return _WINDOWS_COMMAND_LINE_LIMIT
 
     def _execute(self, cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
         """Spawn the subprocess and consume its JSONL stdout."""

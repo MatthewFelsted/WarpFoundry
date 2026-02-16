@@ -1,4 +1,4 @@
-"""Allow ``python -m codex_manager.gui`` to launch the web GUI directly."""
+"""Allow ``python -m codex_manager.gui`` or ``warpfoundry gui`` to launch the web GUI."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """Brain package — multi-AI connector + intelligent decision layer.
 
-The brain provides the "thinking" capability for the AI Manager:
+The brain provides the "thinking" capability for WarpFoundry:
 - Connect to multiple AI providers (OpenAI, Anthropic, Gemini, xAI, Ollama)
 - Plan and refine prompts before sending them to Codex
 - Evaluate results and decide follow-up actions

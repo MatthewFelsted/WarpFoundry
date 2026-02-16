@@ -57,18 +57,9 @@ def diff_stat(repo: str | Path, revspec: str | None = None) -> str:
     return _run_git(*args, cwd=Path(repo)).stdout.strip()
 
 
-def diff_numstat_entries(repo: str | Path, revspec: str | None = None) -> list[dict[str, Any]]:
-    """Return file-level diff entries from ``git diff --numstat``.
-
-    Each entry contains:
-    - ``path``: file path
-    - ``insertions``: integer or ``None`` for non-text/binary entries
-    - ``deletions``: integer or ``None`` for non-text/binary entries
-    """
-    args = ["diff", "--numstat"]
-    if revspec:
-        args.append(revspec)
-    out = _run_git(*args, cwd=Path(repo)).stdout.strip()
+def _parse_numstat_output(raw: str) -> list[dict[str, Any]]:
+    """Parse ``git diff --numstat`` output into structured entries."""
+    out = str(raw or "").strip()
     if not out:
         return []
 
@@ -94,6 +85,122 @@ def diff_numstat_entries(repo: str | Path, revspec: str | None = None) -> list[d
             }
         )
     return entries
+
+
+def diff_numstat_entries(
+    repo: str | Path,
+    revspec: str | None = None,
+    *,
+    cached: bool = False,
+) -> list[dict[str, Any]]:
+    """Return file-level diff entries from ``git diff --numstat``.
+
+    Each entry contains:
+    - ``path``: file path
+    - ``insertions``: integer or ``None`` for non-text/binary entries
+    - ``deletions``: integer or ``None`` for non-text/binary entries
+    """
+    args = ["diff", "--numstat"]
+    if cached and not revspec:
+        args.append("--cached")
+    if revspec:
+        args.append(revspec)
+    out = _run_git(*args, cwd=Path(repo)).stdout
+    return _parse_numstat_output(out)
+
+
+def _count_text_file_lines(path: Path) -> int | None:
+    """Return line count for a likely-text file, ``None`` for binary/unreadable."""
+    try:
+        with path.open("rb") as handle:
+            newline_count = 0
+            saw_any = False
+            last_byte = b""
+            while True:
+                chunk = handle.read(8192)
+                if not chunk:
+                    break
+                saw_any = True
+                if b"\x00" in chunk:
+                    return None
+                newline_count += chunk.count(b"\n")
+                last_byte = chunk[-1:]
+            if not saw_any:
+                return 0
+            return newline_count if last_byte == b"\n" else newline_count + 1
+    except OSError:
+        return None
+
+
+def _untracked_numstat_entries(repo: str | Path) -> list[dict[str, Any]]:
+    """Return synthetic numstat entries for untracked files."""
+    raw = _run_git("ls-files", "--others", "--exclude-standard", "-z", cwd=Path(repo)).stdout
+    if not raw:
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for rel in (part for part in raw.split("\x00") if part):
+        rel_path = Path(rel)
+        abs_path = Path(repo) / rel_path
+        if not abs_path.is_file():
+            continue
+        lines = _count_text_file_lines(abs_path)
+        entries.append(
+            {
+                "path": rel_path.as_posix(),
+                "insertions": lines,
+                "deletions": 0 if isinstance(lines, int) else None,
+            }
+        )
+    return entries
+
+
+def pending_numstat_entries(repo: str | Path) -> list[dict[str, Any]]:
+    """Return pending repo deltas (staged + unstaged + untracked) vs current HEAD."""
+    cwd = Path(repo)
+    entries_by_path: dict[str, dict[str, Any]] = {}
+
+    def _merge(entries: Sequence[dict[str, Any]]) -> None:
+        for entry in entries:
+            path = str(entry.get("path") or "").strip()
+            if not path:
+                continue
+            existing = entries_by_path.get(path)
+            ins = entry.get("insertions")
+            dels = entry.get("deletions")
+            if existing is None:
+                entries_by_path[path] = {
+                    "path": path,
+                    "insertions": int(ins) if isinstance(ins, int) else None,
+                    "deletions": int(dels) if isinstance(dels, int) else None,
+                }
+                continue
+            prev_ins = existing.get("insertions")
+            prev_dels = existing.get("deletions")
+            existing["insertions"] = (
+                int(prev_ins) + int(ins) if isinstance(prev_ins, int) and isinstance(ins, int) else None
+            )
+            existing["deletions"] = (
+                int(prev_dels) + int(dels) if isinstance(prev_dels, int) and isinstance(dels, int) else None
+            )
+
+    # Preferred path: one tracked diff against HEAD captures staged + unstaged.
+    tracked_entries: list[dict[str, Any]]
+    try:
+        tracked_entries = diff_numstat_entries(cwd, revspec="HEAD")
+    except GitError:
+        # Unborn HEAD fallback (new repo before first commit).
+        tracked_entries = diff_numstat_entries(cwd)
+        tracked_entries.extend(diff_numstat_entries(cwd, cached=True))
+
+    _merge(tracked_entries)
+    _merge(_untracked_numstat_entries(cwd))
+    return list(entries_by_path.values())
+
+
+def pending_numstat(repo: str | Path) -> tuple[int, int, int]:
+    """Return ``(files_changed, insertions, deletions)`` for pending repo deltas."""
+    return summarize_numstat_entries(pending_numstat_entries(repo))
 
 
 def summarize_numstat_entries(entries: Sequence[dict[str, Any]]) -> tuple[int, int, int]:
@@ -155,8 +262,8 @@ def ensure_git_identity(repo: str | Path) -> None:
     """
     cwd = Path(repo)
     for key, fallback in [
-        ("user.name", "Codex Manager"),
-        ("user.email", "codex-manager@localhost"),
+        ("user.name", "WarpFoundry"),
+        ("user.email", "warpfoundry@localhost"),
     ]:
         result = _run_git("config", key, cwd=cwd, check=False)
         if result.returncode != 0 or not result.stdout.strip():
@@ -168,11 +275,11 @@ def create_branch(repo: str | Path, branch_name: str | None = None) -> str:
     """Create and checkout a new branch; return its name.
 
     If *branch_name* is None a timestamped name is generated:
-    ``codex-manager/20260206T153012``.
+    ``warpfoundry/20260206T153012``.
     """
     if branch_name is None:
         ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
-        branch_name = f"codex-manager/{ts}"
+        branch_name = f"warpfoundry/{ts}"
     _run_git("checkout", "-b", branch_name, cwd=Path(repo))
     logger.info("Created branch %s", branch_name)
     return branch_name
@@ -190,7 +297,7 @@ def revert_all(repo: str | Path) -> None:
     """Reset the working tree to HEAD while preserving tool runtime artifacts."""
     cwd = Path(repo)
     _run_git("checkout", "--", ".", cwd=cwd, check=False)
-    # Preserve codex-manager runtime artifacts (logs, step outputs).
+    # Preserve WarpFoundry runtime artifacts (logs, step outputs).
     _run_git("clean", "-fd", "-e", ".codex_manager/", cwd=cwd, check=False)
     logger.info("Reverted working tree to HEAD in %s", cwd)
 
@@ -204,9 +311,9 @@ def reset_to_ref(repo: str | Path, ref: str) -> None:
 
 
 def generate_commit_message(round_number: int, prompt: str, eval_summary: str) -> str:
-    """Build a structured commit message for a Codex-manager round."""
+    """Build a structured commit message for a WarpFoundry round."""
     # Sanitise the prompt to one line, max 72 chars for the subject
     subject = re.sub(r"\s+", " ", prompt).strip()
     if len(subject) > 60:
         subject = subject[:57] + "..."
-    return f"[codex-manager] round {round_number}: {subject}\n\nEval: {eval_summary}\n"
+    return f"[warpfoundry] round {round_number}: {subject}\n\nEval: {eval_summary}\n"

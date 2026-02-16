@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _WISHLIST_TEMPLATE = """\
 # WISHLIST — Feature Ideas & Improvements
 
-> Auto-maintained by AI Manager Pipeline. Items are added during ideation,
+> Auto-maintained by WarpFoundry Pipeline. Items are added during ideation,
 > prioritized and bundled during prioritization, and implemented in order.
 
 ## Priority Queue
@@ -44,7 +44,7 @@ _WISHLIST_TEMPLATE = """\
 _TESTPLAN_TEMPLATE = """\
 # TEST PLAN — Test Cases & Coverage
 
-> Auto-maintained by AI Manager Pipeline. Test cases are designed during
+> Auto-maintained by WarpFoundry Pipeline. Test cases are designed during
 > the testing phase and tracked here.
 
 ## Coverage Summary
@@ -60,7 +60,7 @@ _TESTPLAN_TEMPLATE = """\
 _ERRORS_TEMPLATE = """\
 # ERROR LOG — Issues & Root Cause Analysis
 
-> Auto-maintained by AI Manager Pipeline. Errors are logged during
+> Auto-maintained by WarpFoundry Pipeline. Errors are logged during
 > debugging with root cause analysis and fix descriptions.
 
 ## Summary
@@ -76,7 +76,7 @@ _ERRORS_TEMPLATE = """\
 _EXPERIMENTS_TEMPLATE = """\
 # EXPERIMENTS — Hypotheses, Tests & Findings
 
-> Auto-maintained by AI Manager Pipeline (Scientist Mode). Contains
+> Auto-maintained by WarpFoundry Pipeline (Scientist Mode). Contains
 > hypotheses, experimental protocols, results, and analysis.
 
 ## Summary
@@ -92,7 +92,7 @@ _EXPERIMENTS_TEMPLATE = """\
 _PROGRESS_TEMPLATE = """\
 # PROGRESS — Development Progress Tracker
 
-> Auto-maintained by AI Manager Pipeline. Records what was accomplished
+> Auto-maintained by WarpFoundry Pipeline. Records what was accomplished
 > each cycle and tracks overall project health.
 
 ## Project Status
@@ -109,7 +109,7 @@ _PROGRESS_TEMPLATE = """\
 _RESEARCH_TEMPLATE = """\
 # RESEARCH — Deep Research Findings
 
-> Auto-maintained by AI Manager Pipeline (Deep Research mode). Captures
+> Auto-maintained by WarpFoundry Pipeline (Deep Research mode). Captures
 > external research questions, summaries, and actionable implementation links.
 
 ## Summary

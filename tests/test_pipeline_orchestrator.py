@@ -1098,7 +1098,7 @@ def test_pr_aware_mode_syncs_pull_request_description(monkeypatch, tmp_path: Pat
     assert state.stop_reason == "max_cycles_reached"
     assert patched_bodies
     latest = patched_bodies[-1]
-    assert "Codex Manager Pipeline Summary" in latest
+    assert "WarpFoundry Pipeline Summary" in latest
     assert "Stop reason: `max_cycles_reached`" in latest
 
 

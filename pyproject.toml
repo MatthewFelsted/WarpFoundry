@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codex-manager"
+name = "warpfoundry"
 version = "0.1.0"
-description = "AI Manager that orchestrates OpenAI Codex CLI in non-interactive mode"
+description = "WarpFoundry orchestrates AI coding agents in non-interactive mode"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -37,11 +37,15 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 all = [
-    "codex-manager[brain,cua,memory,dev]",
+    "warpfoundry[brain,cua,memory,dev]",
 ]
 
+[project.scripts]
+warpfoundry = "codex_manager.__main__:main"
+codex-manager = "codex_manager.__main__:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/codex_manager"]
+packages = ["src/codex_manager", "src/warpfoundry"]
 
 [tool.ruff]
 target-version = "py310"
