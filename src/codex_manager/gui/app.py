@@ -1944,6 +1944,14 @@ def _safe_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _safe_str(value: object, default: str = "") -> str:
+    """Coerce *value* to a trimmed string, with fallback for empty values."""
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if text else default
+
+
 def _safe_bool(value: object, default: bool = False) -> bool:
     """Coerce common boolean-like values."""
     if isinstance(value, bool):
@@ -6788,15 +6796,15 @@ def api_git_sync_push():
 def api_create_project():
     """Create a new project directory with git init and optional remote."""
     data = request.get_json(silent=True) or {}
-    parent_dir = data.get("parent_dir", "").strip()
-    project_name = data.get("project_name", "").strip()
-    remote_url = data.get("remote_url", "").strip()
-    description = data.get("description", "").strip()
+    parent_dir = _safe_str(data.get("parent_dir"))
+    project_name = _safe_str(data.get("project_name"))
+    remote_url = _safe_str(data.get("remote_url"))
+    description = _safe_str(data.get("description"))
     add_readme = data.get("add_readme", True)
     add_gitignore = data.get("add_gitignore", True)
-    initial_branch = data.get("initial_branch", "main").strip() or "main"
-    git_name = (data.get("git_name") or data.get("gitName") or "").strip()
-    git_email = (data.get("git_email") or data.get("gitEmail") or "").strip()
+    initial_branch = _safe_str(data.get("initial_branch"), "main")
+    git_name = _safe_str(data.get("git_name") or data.get("gitName"))
+    git_email = _safe_str(data.get("git_email") or data.get("gitEmail"))
     foundation_enabled = _safe_bool(data.get("foundation_enabled"), False)
     foundational_prompt = str(data.get("foundational_prompt") or "").strip()
     foundational_prompt_improved = str(data.get("foundational_prompt_improved") or "").strip()
@@ -6828,6 +6836,10 @@ def api_create_project():
         return jsonify({"error": "Project name is required"}), 400
     if foundation_enabled and not (foundational_prompt or foundational_prompt_improved):
         return jsonify({"error": "Foundational prompt is required when foundation setup is enabled."}), 400
+    if remote_url and (remote_url.startswith("-") or "\x00" in remote_url):
+        return jsonify({"error": "Remote URL is invalid"}), 400
+    if not _valid_clone_branch_name(initial_branch):
+        return jsonify({"error": f"Invalid initial branch name: {initial_branch}"}), 400
 
     # Sanitize project name (allow alphanumeric, hyphens, underscores, dots)
     safe_name = "".join(c for c in project_name if c.isalnum() or c in "-_. ").strip()

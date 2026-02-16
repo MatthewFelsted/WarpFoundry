@@ -2803,6 +2803,63 @@ def test_project_clone_endpoint_rejects_dash_prefixed_remote_url(client, tmp_pat
     assert "Remote URL is invalid" in data["error"]
 
 
+def test_project_create_rejects_dash_prefixed_remote_url(client, tmp_path: Path):
+    parent = tmp_path / "workspace-create-remote"
+    parent.mkdir(parents=True, exist_ok=True)
+
+    resp = client.post(
+        "/api/project/create",
+        json={
+            "parent_dir": str(parent),
+            "project_name": "safe-name",
+            "remote_url": "--upload-pack=malicious",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Remote URL is invalid" in data["error"]
+
+
+def test_project_create_rejects_invalid_initial_branch(client, tmp_path: Path):
+    parent = tmp_path / "workspace-create-branch"
+    parent.mkdir(parents=True, exist_ok=True)
+
+    resp = client.post(
+        "/api/project/create",
+        json={
+            "parent_dir": str(parent),
+            "project_name": "safe-name",
+            "initial_branch": "bad branch",
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Invalid initial branch name" in data["error"]
+
+
+def test_project_create_handles_non_string_initial_branch_payload(client, tmp_path: Path):
+    parent = tmp_path / "workspace-create-non-string"
+    parent.mkdir(parents=True, exist_ok=True)
+
+    resp = client.post(
+        "/api/project/create",
+        json={
+            "parent_dir": str(parent),
+            "project_name": "safe-name",
+            "initial_branch": ["main"],
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "Invalid initial branch name" in data["error"]
+
+
 def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path):
     remote = _make_remote_repo(tmp_path)
     local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-status")
