@@ -2766,6 +2766,13 @@ class PipelineOrchestrator:
             self._history_logbook = history
         except Exception as exc:
             self._log("warn", f"History logbook disabled: {exc}")
+        try:
+            config_snapshot = config.model_dump(mode="json")
+        except Exception:
+            try:
+                config_snapshot = config.model_dump()
+            except Exception:
+                config_snapshot = {}
 
         self._record_history_note(
             "run_started",
@@ -2802,6 +2809,7 @@ class PipelineOrchestrator:
                 "pr_base_branch": str(config.pr_base_branch or ""),
                 "pr_auto_push": bool(config.pr_auto_push),
                 "pr_sync_description": bool(config.pr_sync_description),
+                "config_snapshot": config_snapshot,
             },
         )
 

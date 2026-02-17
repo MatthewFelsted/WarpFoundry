@@ -98,6 +98,7 @@ These are based on the current codebase and CLI parser, not marketing copy:
 - Autonomous pipeline (`warpfoundry pipeline --repo <path>`)
 - GitHub Actions workflow generation for pipeline CI (`warpfoundry github-actions --repo <path>`)
 - Git Sync signing setup (GPG/SSH) with validation and push guardrails in GUI
+- Pipeline "Promote Last Dry-Run to Apply" action with diff/test summary confirmation
 - Setup diagnostics with actionable next steps (`warpfoundry doctor --repo <path>`)
 - Prompt tools (`list-prompts`, `optimize-prompts`, `list-recipes`)
 - Optional visual UI testing via CUA (`warpfoundry visual-test --url <url>`)

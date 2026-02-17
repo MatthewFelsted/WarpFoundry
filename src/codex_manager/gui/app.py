@@ -1040,6 +1040,20 @@ def _safe_float(value: object, default: float = 0.0) -> float:
         return default
 
 
+def _safe_bool(value: object, default: bool = False) -> bool:
+    """Coerce *value* to bool where possible."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    raw = str(value).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _run_configuration_label(scope: str, context: dict[str, object]) -> str:
     """Return a compact run-configuration summary label."""
     mode = str(context.get("mode") or "unknown").strip() or "unknown"
@@ -1105,8 +1119,10 @@ def _new_run_aggregate(
 ) -> dict[str, object]:
     """Initialize an in-progress run aggregate from a ``run_started`` event."""
     started_epoch_ms = _parse_iso_epoch_ms(timestamp)
+    context_run_id = str(context.get("run_id") or "").strip()
+    run_id = context_run_id or event_id or f"{scope}_run_{started_epoch_ms}"
     return {
-        "run_id": event_id or f"{scope}_run_{started_epoch_ms}",
+        "run_id": run_id,
         "scope": scope,
         "started_at": timestamp,
         "started_at_epoch_ms": started_epoch_ms,
@@ -1123,6 +1139,10 @@ def _new_run_aggregate(
         "result_events": 0,
         "_token_usage_from_results": 0,
         "_commit_shas": set(),
+        "_files_changed_total": 0,
+        "_net_lines_changed_total": 0,
+        "_changed_path_set": set(),
+        "_start_context": dict(context),
     }
 
 
@@ -1151,6 +1171,23 @@ def _record_run_result_event(run: dict[str, object], context: dict[str, object])
     commits = run.get("_commit_shas")
     if isinstance(commits, set) and commit_sha and commit_sha.lower() != "none":
         commits.add(commit_sha)
+
+    run["_files_changed_total"] = _safe_int(run.get("_files_changed_total"), 0) + max(
+        0, _safe_int(context.get("files_changed"), 0)
+    )
+    run["_net_lines_changed_total"] = _safe_int(
+        run.get("_net_lines_changed_total"), 0
+    ) + _safe_int(context.get("net_lines_changed"), 0)
+
+    changed_paths = run.get("_changed_path_set")
+    changed_payload = context.get("changed_files")
+    if isinstance(changed_paths, set) and isinstance(changed_payload, list):
+        for item in changed_payload:
+            if not isinstance(item, dict):
+                continue
+            raw_path = str(item.get("path") or "").strip()
+            if raw_path:
+                changed_paths.add(raw_path)
 
 
 def _finalize_run_aggregate(
@@ -1216,6 +1253,20 @@ def _finalize_run_aggregate(
         "stop_reason": stop_reason,
         "commit_count": commit_count,
     }
+    changed_paths = run.get("_changed_path_set")
+    changed_list = (
+        sorted(str(item) for item in changed_paths if str(item).strip())
+        if isinstance(changed_paths, set)
+        else []
+    )
+    finalized["diff_summary"] = {
+        "files_changed_total": _safe_int(run.get("_files_changed_total"), 0),
+        "net_lines_changed_total": _safe_int(run.get("_net_lines_changed_total"), 0),
+        "changed_paths_count": len(changed_list),
+        "changed_paths": changed_list[:120],
+    }
+    start_context = run.get("_start_context")
+    finalized["start_context"] = dict(start_context) if isinstance(start_context, dict) else {}
     finalized["overall_score"] = _run_overall_score(finalized)
     return finalized
 
@@ -1406,6 +1457,304 @@ def _pipeline_run_comparison(
         },
         "message": "",
     }
+
+
+def _default_test_policy_for_phase_key(phase_key: str) -> str:
+    """Return default test policy for a pipeline phase key."""
+    key = str(phase_key or "").strip()
+    if not key:
+        return "skip"
+    try:
+        from codex_manager.pipeline.phases import PipelinePhase, default_test_policy_for_phase
+
+        return str(default_test_policy_for_phase(PipelinePhase(key)))
+    except Exception:
+        return "skip"
+
+
+def _phase_row_from_key(phase_key: str, *, default_agent: str) -> dict[str, object] | None:
+    """Build a normalized GUI phase row from a phase key."""
+    key = str(phase_key or "").strip()
+    if not key:
+        return None
+    try:
+        from codex_manager.pipeline.phases import PipelinePhase
+
+        phase_value = PipelinePhase(key).value
+    except Exception:
+        return None
+    agent = str(default_agent or "codex").strip() or "codex"
+    return {
+        "phase": phase_value,
+        "enabled": True,
+        "iterations": 1,
+        "agent": agent,
+        "on_failure": "skip",
+        "test_policy": _default_test_policy_for_phase_key(phase_value),
+        "custom_prompt": "",
+    }
+
+
+def _normalize_pipeline_phase_rows(
+    raw_phases: object,
+    *,
+    default_agent: str,
+) -> list[dict[str, object]]:
+    """Normalize raw phase rows into ``PipelineGUIConfig``-compatible dicts."""
+    items = raw_phases if isinstance(raw_phases, list) else []
+    normalized: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        phase_key = str(item.get("phase") or "").strip()
+        if not phase_key:
+            continue
+        row = _phase_row_from_key(phase_key, default_agent=default_agent)
+        if row is None:
+            continue
+        row["enabled"] = _safe_bool(item.get("enabled"), True)
+        row["iterations"] = max(1, _safe_int(item.get("iterations"), 1))
+        row["agent"] = str(item.get("agent") or default_agent or "codex").strip() or "codex"
+        on_failure = str(item.get("on_failure") or "skip").strip().lower()
+        row["on_failure"] = on_failure if on_failure in {"skip", "retry", "abort"} else "skip"
+        test_policy = str(item.get("test_policy") or "").strip().lower()
+        if test_policy not in {"skip", "smoke", "full"}:
+            test_policy = _default_test_policy_for_phase_key(str(row.get("phase") or ""))
+        row["test_policy"] = test_policy
+        row["custom_prompt"] = str(item.get("custom_prompt") or "")
+        normalized.append(row)
+    return normalized
+
+
+def _promoted_pipeline_config_from_history(
+    repo: Path,
+    *,
+    start_context: dict[str, object],
+) -> dict[str, object]:
+    """Build a validated apply-mode config from a dry-run history entry."""
+    repo_path = str(repo.resolve())
+    defaults = PipelineGUIConfig().model_dump()
+
+    snapshot = start_context.get("config_snapshot")
+    if isinstance(snapshot, dict):
+        candidate = dict(snapshot)
+        candidate["repo_path"] = repo_path
+        candidate["mode"] = "apply"
+        default_agent = str(candidate.get("agent") or "codex").strip() or "codex"
+        candidate["phases"] = _normalize_pipeline_phase_rows(
+            candidate.get("phases"),
+            default_agent=default_agent,
+        )
+        if not candidate["phases"]:
+            phase_order = candidate.get("phase_order")
+            if isinstance(phase_order, list):
+                rows: list[dict[str, object]] = []
+                for phase_key in phase_order:
+                    row = _phase_row_from_key(str(phase_key), default_agent=default_agent)
+                    if row is not None:
+                        rows.append(row)
+                if rows:
+                    candidate["phases"] = rows
+        try:
+            validated = PipelineGUIConfig(**candidate)
+            return validated.model_dump()
+        except Exception:
+            logger.exception("Could not validate config snapshot from dry-run history.")
+
+    promoted = dict(defaults)
+    promoted.update(
+        {
+            "repo_path": repo_path,
+            "mode": "apply",
+            "max_cycles": max(1, _safe_int(start_context.get("max_cycles"), defaults["max_cycles"])),
+            "unlimited": _safe_bool(start_context.get("unlimited"), False),
+            "science_enabled": _safe_bool(
+                start_context.get("science_enabled"),
+                bool(defaults.get("science_enabled")),
+            ),
+            "brain_enabled": _safe_bool(
+                start_context.get("brain_enabled"),
+                bool(defaults.get("brain_enabled")),
+            ),
+            "vector_memory_enabled": _safe_bool(
+                start_context.get("vector_memory_enabled"),
+                bool(defaults.get("vector_memory_enabled")),
+            ),
+            "vector_memory_backend": str(
+                start_context.get("vector_memory_backend")
+                or defaults.get("vector_memory_backend")
+                or "chroma"
+            ),
+            "deep_research_enabled": _safe_bool(
+                start_context.get("deep_research_enabled"),
+                bool(defaults.get("deep_research_enabled")),
+            ),
+            "deep_research_providers": str(
+                start_context.get("deep_research_providers")
+                or defaults.get("deep_research_providers")
+                or "both"
+            ),
+            "deep_research_max_age_hours": max(
+                1,
+                _safe_int(
+                    start_context.get("deep_research_max_age_hours"),
+                    int(defaults.get("deep_research_max_age_hours", 168)),
+                ),
+            ),
+            "deep_research_dedupe": _safe_bool(
+                start_context.get("deep_research_dedupe"),
+                bool(defaults.get("deep_research_dedupe")),
+            ),
+            "deep_research_native_enabled": _safe_bool(
+                start_context.get("deep_research_native_enabled"),
+                bool(defaults.get("deep_research_native_enabled")),
+            ),
+            "deep_research_retry_attempts": max(
+                1,
+                _safe_int(
+                    start_context.get("deep_research_retry_attempts"),
+                    int(defaults.get("deep_research_retry_attempts", 2)),
+                ),
+            ),
+            "deep_research_daily_quota": max(
+                1,
+                _safe_int(
+                    start_context.get("deep_research_daily_quota"),
+                    int(defaults.get("deep_research_daily_quota", 8)),
+                ),
+            ),
+            "deep_research_max_provider_tokens": max(
+                512,
+                _safe_int(
+                    start_context.get("deep_research_max_provider_tokens"),
+                    int(defaults.get("deep_research_max_provider_tokens", 12000)),
+                ),
+            ),
+            "deep_research_budget_usd": max(
+                0.0,
+                _safe_float(
+                    start_context.get("deep_research_budget_usd"),
+                    float(defaults.get("deep_research_budget_usd", 5.0)),
+                ),
+            ),
+            "deep_research_openai_model": str(
+                start_context.get("deep_research_openai_model")
+                or defaults.get("deep_research_openai_model")
+                or "gpt-5.2"
+            ),
+            "deep_research_google_model": str(
+                start_context.get("deep_research_google_model")
+                or defaults.get("deep_research_google_model")
+                or "gemini-3-pro-preview"
+            ),
+            "self_improvement_enabled": _safe_bool(
+                start_context.get("self_improvement_enabled"),
+                bool(defaults.get("self_improvement_enabled")),
+            ),
+            "self_improvement_auto_restart": _safe_bool(
+                start_context.get("self_improvement_auto_restart"),
+                bool(defaults.get("self_improvement_auto_restart")),
+            ),
+            "pr_aware_enabled": _safe_bool(
+                start_context.get("pr_aware_enabled"),
+                bool(defaults.get("pr_aware_enabled")),
+            ),
+            "pr_feature_branch": str(start_context.get("pr_feature_branch") or ""),
+            "pr_remote": str(start_context.get("pr_remote") or ""),
+            "pr_base_branch": str(start_context.get("pr_base_branch") or ""),
+            "pr_auto_push": _safe_bool(
+                start_context.get("pr_auto_push"),
+                bool(defaults.get("pr_auto_push", True)),
+            ),
+            "pr_sync_description": _safe_bool(
+                start_context.get("pr_sync_description"),
+                bool(defaults.get("pr_sync_description", True)),
+            ),
+        }
+    )
+    if not promoted["self_improvement_enabled"]:
+        promoted["self_improvement_auto_restart"] = False
+    if not promoted["pr_aware_enabled"]:
+        promoted["pr_auto_push"] = False
+        promoted["pr_sync_description"] = False
+
+    default_agent = str(promoted.get("agent") or "codex").strip() or "codex"
+    phase_order = start_context.get("phase_order")
+    phase_rows: list[dict[str, object]] = []
+    if isinstance(phase_order, list):
+        for phase_key in phase_order:
+            row = _phase_row_from_key(str(phase_key), default_agent=default_agent)
+            if row is not None:
+                phase_rows.append(row)
+    promoted["phases"] = phase_rows
+
+    try:
+        return PipelineGUIConfig(**promoted).model_dump()
+    except Exception:
+        logger.exception("Could not validate reconstructed dry-run promote config.")
+        return defaults
+
+
+def _pipeline_promote_last_dry_run_payload(repo: Path) -> dict[str, object]:
+    """Return preview payload for promoting the most recent dry-run to apply mode."""
+    comparison = _pipeline_run_comparison(repo, scope="pipeline", limit=50)
+    base = {
+        "available": False,
+        "repo_path": str(repo.resolve()),
+        "history_path": str(_history_jsonl_path(repo).resolve()),
+        "run": None,
+        "promoted_config": None,
+        "message": "",
+    }
+    runs_obj = comparison.get("runs")
+    runs = runs_obj if isinstance(runs_obj, list) else []
+    dry_run = next(
+        (item for item in runs if str(item.get("mode") or "").strip().lower() == "dry-run"),
+        None,
+    )
+    if dry_run is None:
+        base["message"] = "No completed dry-run pipeline runs were found in history yet."
+        return base
+
+    start_context_obj = dry_run.get("start_context")
+    start_context = start_context_obj if isinstance(start_context_obj, dict) else {}
+    promoted = _promoted_pipeline_config_from_history(repo, start_context=start_context)
+    diff_obj = dry_run.get("diff_summary")
+    diff_summary = dict(diff_obj) if isinstance(diff_obj, dict) else {}
+    tests_obj = dry_run.get("tests")
+    tests = dict(tests_obj) if isinstance(tests_obj, dict) else {}
+
+    base["available"] = True
+    base["run"] = {
+        "run_id": str(dry_run.get("run_id") or ""),
+        "finished_at": str(dry_run.get("finished_at") or ""),
+        "duration_seconds": _safe_float(dry_run.get("duration_seconds"), 0.0),
+        "token_usage": _safe_int(dry_run.get("token_usage"), 0),
+        "configuration": str(dry_run.get("configuration") or ""),
+        "stop_reason": str(dry_run.get("stop_reason") or ""),
+        "tests_summary": str(dry_run.get("tests_summary") or ""),
+        "tests": {
+            "passed": _safe_int(tests.get("passed"), 0),
+            "failed": _safe_int(tests.get("failed"), 0),
+            "skipped": _safe_int(tests.get("skipped"), 0),
+            "error": _safe_int(tests.get("error"), 0),
+            "unknown": _safe_int(tests.get("unknown"), 0),
+        },
+        "diff_summary": {
+            "files_changed_total": _safe_int(diff_summary.get("files_changed_total"), 0),
+            "net_lines_changed_total": _safe_int(diff_summary.get("net_lines_changed_total"), 0),
+            "changed_paths_count": _safe_int(diff_summary.get("changed_paths_count"), 0),
+            "changed_paths": (
+                diff_summary.get("changed_paths")
+                if isinstance(diff_summary.get("changed_paths"), list)
+                else []
+            ),
+        },
+        "commit_count": _safe_int(dry_run.get("commit_count"), 0),
+    }
+    base["promoted_config"] = promoted
+    base["message"] = ""
+    return base
 
 
 def _extract_markdown_section_lines(
@@ -9518,27 +9867,20 @@ def api_pipeline_resume_state_clear():
     )
 
 
-@app.route("/api/pipeline/start", methods=["POST"])
-def api_pipeline_start():
-    """Start the autonomous pipeline."""
+def _start_pipeline_from_gui_config(gui_config: PipelineGUIConfig) -> tuple[dict[str, object], int]:
+    """Validate and start pipeline execution from GUI config payload."""
     global _pipeline_executor
 
     if _pipeline_executor is not None and _pipeline_executor.is_running:
-        return jsonify({"error": "Pipeline is already running"}), 409
-
-    data = request.get_json(silent=True) or {}
-    try:
-        gui_config = PipelineGUIConfig(**data)
-    except Exception as exc:
-        return jsonify({"error": f"Invalid config: {exc}"}), 400
+        return {"error": "Pipeline is already running"}, 409
 
     if not Path(gui_config.repo_path).is_dir():
-        return jsonify({"error": f"Repo path not found: {gui_config.repo_path}"}), 400
+        return {"error": f"Repo path not found: {gui_config.repo_path}"}, 400
 
     issues = _pipeline_preflight_issues(gui_config)
     if issues:
         msg = "Preflight checks failed:\n" + "\n".join(f"- {i}" for i in issues)
-        return jsonify({"error": msg, "issues": issues}), 400
+        return {"error": msg, "issues": issues}, 400
 
     git_preflight: dict[str, object] | None = None
     if gui_config.git_preflight_enabled:
@@ -9549,16 +9891,16 @@ def api_pipeline_start():
                 auto_pull=bool(gui_config.git_preflight_auto_pull),
             )
         except subprocess.TimeoutExpired:
-            return jsonify({"error": "Git pre-flight checks timed out."}), 504
+            return {"error": "Git pre-flight checks timed out."}, 504
         except RuntimeError as exc:
-            return jsonify({"error": f"Git pre-flight checks failed: {exc}"}), 502
+            return {"error": f"Git pre-flight checks failed: {exc}"}, 502
         except Exception as exc:
-            return jsonify({"error": f"Git pre-flight checks failed: {exc}"}), 500
+            return {"error": f"Git pre-flight checks failed: {exc}"}, 500
 
         git_issues = [str(item) for item in git_preflight.get("issues", []) if str(item).strip()]
         if git_issues:
             msg = "Git pre-flight checks failed:\n" + "\n".join(f"- {i}" for i in git_issues)
-            return jsonify({"error": msg, "issues": git_issues, "git_preflight": git_preflight}), 400
+            return {"error": msg, "issues": git_issues, "git_preflight": git_preflight}, 400
 
     # Convert GUI config to pipeline config
     from codex_manager.pipeline.phases import PhaseConfig, PipelineConfig, PipelinePhase
@@ -9582,7 +9924,7 @@ def api_pipeline_start():
             invalid_phases.append(pg.phase)
     if invalid_phases:
         msg = ", ".join(sorted(set(invalid_phases)))
-        return jsonify({"error": f"Invalid pipeline phase(s): {msg}"}), 400
+        return {"error": f"Invalid pipeline phase(s): {msg}"}, 400
 
     config = PipelineConfig(
         mode=gui_config.mode,
@@ -9662,7 +10004,78 @@ def api_pipeline_start():
     payload: dict[str, object] = {"status": "started"}
     if git_preflight is not None:
         payload["git_preflight"] = git_preflight
-    return jsonify(payload)
+    return payload, 200
+
+
+@app.route("/api/pipeline/start", methods=["POST"])
+def api_pipeline_start():
+    """Start the autonomous pipeline."""
+    data = request.get_json(silent=True) or {}
+    try:
+        gui_config = PipelineGUIConfig(**data)
+    except Exception as exc:
+        return jsonify({"error": f"Invalid config: {exc}"}), 400
+
+    payload, status = _start_pipeline_from_gui_config(gui_config)
+    return jsonify(payload), status
+
+
+@app.route("/api/pipeline/promote-last-dry-run")
+def api_pipeline_promote_last_dry_run():
+    """Return preview payload for promoting the latest dry-run to apply mode."""
+    repo = _resolve_pipeline_logs_repo(request.args.get("repo_path", ""))
+    if repo is None:
+        return jsonify(
+            {
+                "available": False,
+                "repo_path": "",
+                "history_path": "",
+                "run": None,
+                "promoted_config": None,
+                "message": "Set Repository Path in the Pipeline panel to load dry-run promotion details.",
+            }
+        )
+    return jsonify(_pipeline_promote_last_dry_run_payload(repo))
+
+
+@app.route("/api/pipeline/promote-last-dry-run/start", methods=["POST"])
+def api_pipeline_promote_last_dry_run_start():
+    """Promote latest dry-run pipeline config to apply mode and start the run."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    repo = _resolve_pipeline_logs_repo(repo_raw)
+    if repo is None:
+        return jsonify({"error": "repo_path is required and must point to a valid repository."}), 400
+
+    preview = _pipeline_promote_last_dry_run_payload(repo)
+    if not preview.get("available"):
+        return jsonify({"error": preview.get("message") or "No promotable dry-run found."}), 400
+
+    config_payload_obj = preview.get("promoted_config")
+    if not isinstance(config_payload_obj, dict):
+        return jsonify({"error": "Promoted config was not available from run history."}), 500
+
+    try:
+        gui_config = PipelineGUIConfig(**config_payload_obj)
+    except Exception as exc:
+        return jsonify({"error": f"Promoted config is invalid: {exc}"}), 500
+
+    payload, status = _start_pipeline_from_gui_config(gui_config)
+    if status != 200:
+        return jsonify(payload), status
+
+    run_obj = preview.get("run")
+    run = dict(run_obj) if isinstance(run_obj, dict) else {}
+    payload.update(
+        {
+            "promoted": True,
+            "promoted_from_run_id": str(run.get("run_id") or ""),
+            "promoted_from_finished_at": str(run.get("finished_at") or ""),
+            "promoted_mode": "apply",
+            "promoted_config": gui_config.model_dump(),
+        }
+    )
+    return jsonify(payload), 200
 
 
 @app.route("/api/pipeline/stop", methods=["POST"])

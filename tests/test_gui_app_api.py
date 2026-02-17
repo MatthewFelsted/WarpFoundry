@@ -2368,6 +2368,261 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
     assert pipeline_only["runs"][0]["scope"] == "pipeline"
 
 
+def test_pipeline_promote_last_dry_run_preview_requires_repo_hint(client, monkeypatch):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    resp = client.get("/api/pipeline/promote-last-dry-run")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is False
+    assert "Set Repository Path" in data["message"]
+
+
+def test_pipeline_promote_last_dry_run_preview_returns_diff_and_config(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "hist_promote_start",
+            "timestamp": "2026-02-16T10:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {
+                "run_id": "run-dry-001",
+                "mode": "dry-run",
+                "max_cycles": 2,
+                "unlimited": False,
+                "phase_order": ["ideation", "implementation"],
+                "science_enabled": True,
+                "brain_enabled": True,
+                "config_snapshot": {
+                    "mode": "dry-run",
+                    "max_cycles": 2,
+                    "unlimited": False,
+                    "agent": "claude_code",
+                    "science_enabled": True,
+                    "brain_enabled": True,
+                    "brain_model": "gpt-5.2",
+                    "phases": [
+                        {
+                            "phase": "ideation",
+                            "enabled": True,
+                            "iterations": 2,
+                            "agent": "claude_code",
+                            "on_failure": "retry",
+                            "test_policy": "skip",
+                            "custom_prompt": "Focus on impact.",
+                        },
+                        {
+                            "phase": "implementation",
+                            "enabled": True,
+                            "iterations": 1,
+                            "agent": "claude_code",
+                            "on_failure": "abort",
+                            "test_policy": "smoke",
+                            "custom_prompt": "",
+                        },
+                    ],
+                },
+            },
+        },
+        {
+            "id": "hist_promote_phase_1",
+            "timestamp": "2026-02-16T10:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Phase result",
+            "context": {
+                "test_outcome": "passed",
+                "files_changed": 3,
+                "net_lines_changed": 21,
+                "changed_files": [{"path": "src/main.py", "insertions": 20, "deletions": 1}],
+            },
+        },
+        {
+            "id": "hist_promote_phase_2",
+            "timestamp": "2026-02-16T10:01:00+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "warn",
+            "summary": "Phase result",
+            "context": {
+                "test_outcome": "skipped",
+                "files_changed": 2,
+                "net_lines_changed": -5,
+                "changed_files": [{"path": "README.md", "insertions": 0, "deletions": 5}],
+            },
+        },
+        {
+            "id": "hist_promote_finish",
+            "timestamp": "2026-02-16T10:01:30+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {
+                "run_id": "run-dry-001",
+                "stop_reason": "max_cycles_reached",
+                "total_tokens": 500,
+                "elapsed_seconds": 90.0,
+            },
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/promote-last-dry-run",
+        query_string={"repo_path": str(repo)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is True
+    assert data["repo_path"] == str(repo.resolve())
+    run = data["run"]
+    assert run["run_id"] == "run-dry-001"
+    assert run["tests_summary"] == "1 passed / 0 failed / 1 skipped"
+    assert run["diff_summary"]["files_changed_total"] == 5
+    assert run["diff_summary"]["net_lines_changed_total"] == 16
+    assert run["diff_summary"]["changed_paths_count"] == 2
+
+    promoted = data["promoted_config"]
+    assert promoted["mode"] == "apply"
+    assert promoted["repo_path"] == str(repo.resolve())
+    assert promoted["agent"] == "claude_code"
+    assert promoted["phases"][0]["phase"] == "ideation"
+    assert promoted["phases"][0]["iterations"] == 2
+    assert promoted["phases"][0]["on_failure"] == "retry"
+
+
+def test_pipeline_promote_last_dry_run_start_runs_apply_pipeline(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "hist_promote_start",
+            "timestamp": "2026-02-16T11:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {
+                "run_id": "run-dry-002",
+                "mode": "dry-run",
+                "max_cycles": 3,
+                "unlimited": False,
+                "phase_order": ["ideation", "implementation"],
+                "config_snapshot": {
+                    "mode": "dry-run",
+                    "max_cycles": 3,
+                    "unlimited": False,
+                    "agent": "codex",
+                    "phases": [
+                        {
+                            "phase": "ideation",
+                            "enabled": True,
+                            "iterations": 1,
+                            "agent": "codex",
+                            "on_failure": "skip",
+                            "test_policy": "skip",
+                            "custom_prompt": "",
+                        },
+                        {
+                            "phase": "implementation",
+                            "enabled": True,
+                            "iterations": 2,
+                            "agent": "codex",
+                            "on_failure": "retry",
+                            "test_policy": "smoke",
+                            "custom_prompt": "Use smallest safe patch.",
+                        },
+                    ],
+                },
+            },
+        },
+        {
+            "id": "hist_promote_finish",
+            "timestamp": "2026-02-16T11:02:00+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {
+                "run_id": "run-dry-002",
+                "stop_reason": "max_cycles_reached",
+                "total_tokens": 321,
+                "elapsed_seconds": 120.0,
+            },
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    class _StubOrchestrator:
+        def __init__(self, repo_path, config):
+            captured["repo_path"] = str(repo_path)
+            captured["config"] = config
+            self.is_running = False
+
+        def start(self):
+            captured["started"] = True
+
+    monkeypatch.setattr(
+        "codex_manager.pipeline.orchestrator.PipelineOrchestrator",
+        _StubOrchestrator,
+    )
+
+    resp = client.post(
+        "/api/pipeline/promote-last-dry-run/start",
+        json={"repo_path": str(repo)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "started"
+    assert data["promoted"] is True
+    assert data["promoted_mode"] == "apply"
+    assert data["promoted_from_run_id"] == "run-dry-002"
+    assert captured.get("started") is True
+    assert captured.get("repo_path") == str(repo)
+
+    config = captured["config"]
+    assert config.mode == "apply"
+    assert config.max_cycles == 3
+    assert config.phases
+    assert config.phases[0].phase.value == "ideation"
+    assert config.phases[1].phase.value == "implementation"
+    assert config.phases[1].iterations == 2
+    assert config.phases[1].on_failure == "retry"
+
+
 def test_pipeline_science_dashboard_returns_structured_payload(
     client, monkeypatch, tmp_path: Path
 ):
@@ -2826,8 +3081,12 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert "/api/pipeline/resume-state?repo_path=" in html
     assert "/api/pipeline/resume-state/clear" in html
     assert 'id="pipe-run-compare-body"' in html
+    assert 'onclick="promoteLastDryRunToApply()"' in html
+    assert "async function promoteLastDryRunToApply()" in html
     assert "async function refreshPipelineRunComparison" in html
     assert "/api/pipeline/run-comparison?repo_path=" in html
+    assert "/api/pipeline/promote-last-dry-run?repo_path=" in html
+    assert "/api/pipeline/promote-last-dry-run/start" in html
     assert 'id="pipe-smoke-test-cmd"' in html
     assert "default_test_policy" in html
     assert "data-phase-test-policy" in html

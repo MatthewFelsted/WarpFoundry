@@ -483,6 +483,7 @@ summary:focus-visible{
   justify-content:space-between;
   gap:10px;
 }
+.results-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .results-head .field-help{margin-top:2px}
 .run-compare-summary{font-size:12px;color:var(--text2);margin-top:6px}
 .run-compare-run-label{display:flex;flex-direction:column;gap:4px}
@@ -2426,7 +2427,10 @@ body.mode-medium .easy-only{display:none}
   <div class="results-section">
     <div class="results-head">
       <h3>Recent Run Comparison</h3>
-      <button class="btn" type="button" onclick="refreshPipelineRunComparison()">Refresh</button>
+      <div class="results-head-actions">
+        <button class="btn btn-success" type="button" onclick="promoteLastDryRunToApply()">Promote Last Dry-Run</button>
+        <button class="btn" type="button" onclick="refreshPipelineRunComparison()">Refresh</button>
+      </div>
     </div>
     <div class="run-compare-summary" id="pipe-run-compare-summary">
       Compare recent finished runs to identify the most effective configuration.
@@ -12401,6 +12405,122 @@ async function refreshPipelineRunComparison(opts = {}) {
       message: 'Could not load run comparison metrics.',
     });
   }
+}
+
+function _formatPromoteDiffSummary(run) {
+  const diff = (run && typeof run === 'object' && run.diff_summary && typeof run.diff_summary === 'object')
+    ? run.diff_summary
+    : {};
+  const files = Number(diff.files_changed_total || 0);
+  const net = Number(diff.net_lines_changed_total || 0);
+  const touched = Number(diff.changed_paths_count || 0);
+  const filesText = Number.isFinite(files) ? Math.max(0, Math.round(files)).toLocaleString() : '0';
+  const touchedText = Number.isFinite(touched) ? Math.max(0, Math.round(touched)).toLocaleString() : '0';
+  const netValue = Number.isFinite(net) ? Math.round(net) : 0;
+  const netText = (netValue >= 0 ? '+' : '') + netValue.toLocaleString();
+  return filesText + ' files changed, ' + netText + ' net lines, ' + touchedText + ' touched paths';
+}
+
+async function promoteLastDryRunToApply() {
+  if (pipeRunning || pipePaused) {
+    toast('Pipeline is already running.', 'info');
+    return;
+  }
+  const repoPath = String(pipeConfig.repo_path || document.getElementById('pipe-repo-path').value || '').trim();
+  if (!repoPath) {
+    toast('Set a repository path first', 'error');
+    return;
+  }
+
+  let preview;
+  try {
+    preview = await api('/api/pipeline/promote-last-dry-run?repo_path=' + encodeURIComponent(repoPath));
+  } catch (_err) {
+    toast('Could not load dry-run promotion details.', 'error');
+    return;
+  }
+  if (preview && preview.error) {
+    toast(preview.error, 'error');
+    return;
+  }
+  if (!preview || !preview.available) {
+    toast((preview && preview.message) || 'No completed dry-run pipeline runs were found in history yet.', 'info');
+    return;
+  }
+
+  const run = (preview.run && typeof preview.run === 'object') ? preview.run : {};
+  const runId = String(run.run_id || 'n/a');
+  const stopReason = String(run.stop_reason || 'unknown');
+  const testsSummary = String(run.tests_summary || 'n/a');
+  const diffSummary = _formatPromoteDiffSummary(run);
+  const confirmText = [
+    'Promote the latest dry-run pipeline run to apply mode and start now?',
+    '',
+    'Run ID: ' + runId,
+    'Finished: ' + _formatRunCompareTimestamp(run.finished_at),
+    'Stop reason: ' + stopReason,
+    'Tests: ' + testsSummary,
+    'Diff: ' + diffSummary,
+  ].join('\n');
+  if (!window.confirm(confirmText)) {
+    return;
+  }
+
+  pipeLogEntries = [];
+  pipeResultsCache = [];
+  pipeResultsCount = 0;
+  _pipeResultsRenderSignature = '';
+  pipeLastActivityMs = 0;
+  pipeRunning = true;
+  pipePaused = false;
+  renderActivityHeartbeats();
+  renderPipelineResumeCard();
+  document.getElementById('pipe-progress-last-log').textContent = 'Last log: waiting for first message...';
+  renderStopGuidance('pipe-stop-guidance', null, false);
+  document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card loading">Connecting to live log stream...</div>';
+  document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card loading">Waiting for phase results...</div></td></tr>';
+
+  const startResp = await postJson('/api/pipeline/promote-last-dry-run/start', { repo_path: repoPath });
+  if (startResp.error) {
+    pipeRunning = false;
+    pipePaused = false;
+    renderActivityHeartbeats();
+    renderPipelineResumeCard();
+    document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card error">Could not start pipeline. Check diagnostics and configuration.</div>';
+    document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
+    toast(startResp.error, 'error');
+    return;
+  }
+
+  const promotedConfig = (startResp.promoted_config && typeof startResp.promoted_config === 'object')
+    ? startResp.promoted_config
+    : ((preview.promoted_config && typeof preview.promoted_config === 'object') ? preview.promoted_config : null);
+  if (promotedConfig) {
+    Object.assign(pipeConfig, cloneState(promotedConfig));
+    applyPipeConfigToUi();
+  }
+  setPipeMode('apply');
+  setPipeControlsRunning(true);
+  connectPipeSSE();
+  startPipePolling();
+
+  const gitPreflight = (startResp && typeof startResp.git_preflight === 'object') ? startResp.git_preflight : null;
+  if (gitPreflight) {
+    const actions = Array.isArray(gitPreflight.actions) ? gitPreflight.actions : [];
+    const warnings = Array.isArray(gitPreflight.warnings) ? gitPreflight.warnings : [];
+    if (actions.length) {
+      toast('Git pre-flight: ' + actions.join(' | '), 'info');
+    }
+    if (warnings.length) {
+      toast('Git pre-flight warnings: ' + warnings.join(' | '), 'warn');
+    }
+  }
+
+  const summaryEl = document.getElementById('pipe-run-compare-summary');
+  if (summaryEl) {
+    summaryEl.textContent = 'Promoted dry-run ' + runId + ' to apply mode and started pipeline. Last dry-run: ' + testsSummary + ' | ' + diffSummary + '.';
+  }
+  toast('Promoted last dry-run to apply mode and started pipeline.', 'success');
 }
 
 async function viewLogFile(filename) {

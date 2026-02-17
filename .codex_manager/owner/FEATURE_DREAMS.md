@@ -8,7 +8,7 @@ Execution order: top to bottom. Keep this list feature-only and implementation-r
 - [x] [M] Add signed commits/tags support (GPG or SSH signing) with setup UI, key validation, and pre-push blocking when signing is misconfigured. (Completed: added Git Sync Signing modal + `/api/git/signing` setup/validation endpoints and push guard that blocks misconfigured signing before `git push`.)
 - [x] [S] Add CLI checkpoint resume support: `warpfoundry pipeline --resume-checkpoint <path>` plus `warpfoundry pipeline --resume-state` for headless recovery without GUI restart. (Completed: added pipeline resume flags, checkpoint payload loading/validation, resume-state default lookup, repo mismatch guard, and checkpoint-consume cleanup in CLI mode with docs/tests coverage.)
 - [x] [S] Add run-completion webhooks (Slack/Discord/generic HTTP): send success/failure payloads with repo, run id, stop reason, tests, tokens, and artifact links. (Completed: added pipeline run-completion webhook delivery with Slack/Discord formatting plus generic JSON payloads, CLI + GUI config wiring, payload includes run id/stop reason/tests/tokens/artifact links, and preflight URL validation.)
-- [ ] [M] Add "Promote Last Dry-Run to Apply" flow that copies the last dry-run config, shows diff/test summary, and starts apply mode with one confirmation.
+- [x] [M] Add "Promote Last Dry-Run to Apply" flow that copies the last dry-run config, shows diff/test summary, and starts apply mode with one confirmation. (Completed: added dry-run promotion preview/start APIs, run diff-summary aggregation in run-comparison history, and a one-click Pipeline UI action that confirms using test+diff summary before starting apply mode from the promoted config.)
 
 ## P1 - Product Leverage
 
