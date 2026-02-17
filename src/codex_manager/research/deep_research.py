@@ -18,6 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from codex_manager.preflight import first_env_secret
+
 logger = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
@@ -427,7 +429,7 @@ def _call_openai_native(
     max_output_tokens: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    api_key = str(os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY") or "").strip()
+    api_key = str(first_env_secret(("OPENAI_API_KEY", "CODEX_API_KEY")) or "").strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY (or CODEX_API_KEY) is not configured.")
     payload = {
@@ -496,7 +498,7 @@ def _call_google_native(
     max_output_tokens: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    api_key = str(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or "").strip()
+    api_key = str(first_env_secret(("GOOGLE_API_KEY", "GEMINI_API_KEY")) or "").strip()
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not configured.")
     payload = {

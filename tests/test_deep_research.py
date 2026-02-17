@@ -104,3 +104,55 @@ def test_run_native_deep_research_serializes_quota_checks(monkeypatch, tmp_path:
     assert len([r for r in results if r.ok]) == 1
     blocked = [r for r in results if not r.ok and r.quota_blocked]
     assert len(blocked) == 1
+
+
+def test_call_openai_native_uses_non_placeholder_fallback_key(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_http_json(url, *, method, headers=None, payload=None, timeout_seconds=0):
+        captured["auth"] = str((headers or {}).get("Authorization") or "")
+        return {
+            "output_text": "OpenAI summary",
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+
+    monkeypatch.setattr(deep_research_module, "_http_json", _fake_http_json)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")
+    monkeypatch.setenv("CODEX_API_KEY", "sk-proj-real-secret")
+
+    result = deep_research_module._call_openai_native(
+        topic="Auth fallback",
+        guidance="check fallback key selection",
+        model="gpt-5.2",
+        max_output_tokens=300,
+        timeout_seconds=15,
+    )
+
+    assert captured["auth"] == "Bearer sk-proj-real-secret"
+    assert result["summary"] == "OpenAI summary"
+
+
+def test_call_google_native_uses_non_placeholder_fallback_key(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_http_json(url, *, method, headers=None, payload=None, timeout_seconds=0):
+        captured["url"] = str(url)
+        return {
+            "candidates": [{"content": {"parts": [{"text": "Google summary"}]}}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 9},
+        }
+
+    monkeypatch.setattr(deep_research_module, "_http_json", _fake_http_json)
+    monkeypatch.setenv("GOOGLE_API_KEY", "your-key-here")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-real-secret")
+
+    result = deep_research_module._call_google_native(
+        topic="Auth fallback",
+        guidance="check fallback key selection",
+        model="gemini-3-pro-preview",
+        max_output_tokens=300,
+        timeout_seconds=15,
+    )
+
+    assert "key=gemini-real-secret" in captured["url"]
+    assert result["summary"] == "Google summary"

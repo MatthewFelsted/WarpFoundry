@@ -104,3 +104,51 @@ def test_watchdog_update_config_normalizes_values(tmp_path: Path):
     assert config["request_timeout_seconds"] == 60
     assert config["history_limit"] == 10
     assert config["auto_run_on_start"] is False
+
+
+def test_fetch_openai_models_uses_non_placeholder_fallback_key(
+    monkeypatch, tmp_path: Path
+) -> None:
+    watchdog = ModelCatalogWatchdog(
+        root_dir=tmp_path / "watchdog",
+        provider_fetchers={},
+        dependency_packages=(),
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")
+    monkeypatch.setenv("CODEX_API_KEY", "sk-proj-real-secret")
+
+    captured: dict[str, str] = {}
+
+    def _fake_http_json(url: str, *, headers: dict[str, str], timeout_s: int):
+        captured["auth"] = str(headers.get("Authorization") or "")
+        return {"data": [{"id": "gpt-test-model"}]}
+
+    monkeypatch.setattr(watchdog, "_http_json", _fake_http_json)
+
+    models = watchdog._fetch_openai_models(timeout_s=10)
+
+    assert models == ["gpt-test-model"]
+    assert captured["auth"] == "Bearer sk-proj-real-secret"
+
+
+def test_fetch_xai_models_supports_grok_api_key_alias(monkeypatch, tmp_path: Path) -> None:
+    watchdog = ModelCatalogWatchdog(
+        root_dir=tmp_path / "watchdog",
+        provider_fetchers={},
+        dependency_packages=(),
+    )
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.setenv("GROK_API_KEY", "xai-real-secret")
+
+    captured: dict[str, str] = {}
+
+    def _fake_http_json(url: str, *, headers: dict[str, str], timeout_s: int):
+        captured["auth"] = str(headers.get("Authorization") or "")
+        return {"data": [{"id": "grok-test-model"}]}
+
+    monkeypatch.setattr(watchdog, "_http_json", _fake_http_json)
+
+    models = watchdog._fetch_xai_models(timeout_s=10)
+
+    assert models == ["grok-test-model"]
+    assert captured["auth"] == "Bearer xai-real-secret"

@@ -178,6 +178,26 @@ def _env_secret_present(var_names: tuple[str, ...]) -> bool:
     return False
 
 
+def first_env_secret(var_names: tuple[str, ...]) -> str | None:
+    """Return the first non-placeholder env secret value from *var_names*."""
+    for name in var_names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        if _looks_like_placeholder_secret(value):
+            continue
+        return value
+    return None
+
+
+def env_secret_present(var_names: tuple[str, ...]) -> bool:
+    """Return True when at least one env var has a non-placeholder secret."""
+    return _env_secret_present(var_names)
+
+
 def _placeholder_env_vars(var_names: tuple[str, ...]) -> list[str]:
     """Return env-var names that are set to obvious placeholder key text."""
     placeholders: list[str] = []
@@ -191,6 +211,16 @@ def _placeholder_env_vars(var_names: tuple[str, ...]) -> list[str]:
         if _looks_like_placeholder_secret(value):
             placeholders.append(name)
     return placeholders
+
+
+def env_secret_issue(
+    var_names: tuple[str, ...],
+    missing_detail: str,
+) -> str | None:
+    """Return placeholder/missing detail when env secrets are not configured."""
+    if _env_secret_present(var_names):
+        return None
+    return _auth_failure_detail(_placeholder_env_vars(var_names), missing_detail)
 
 
 def binary_exists(binary: str) -> bool:
@@ -216,7 +246,7 @@ def binary_exists(binary: str) -> bool:
 
 def has_codex_auth() -> bool:
     """Detect Codex/OpenAI auth in env vars or local auth files."""
-    if _env_secret_present(("CODEX_API_KEY", "OPENAI_API_KEY")):
+    if first_env_secret(("CODEX_API_KEY", "OPENAI_API_KEY")):
         return True
     home = Path.home()
     for path in (
@@ -230,7 +260,7 @@ def has_codex_auth() -> bool:
 
 def has_claude_auth() -> bool:
     """Detect Claude auth in env vars or local auth files."""
-    if _env_secret_present(("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")):
+    if first_env_secret(("ANTHROPIC_API_KEY", "CLAUDE_API_KEY")):
         return True
     home = Path.home()
     for path in (
@@ -481,15 +511,20 @@ def image_provider_auth_issue(
         return None
     provider_key = (provider or "openai").strip().lower()
     if provider_key == "google":
-        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
-            return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
-        return None
+        return env_secret_issue(
+            ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+            "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY.",
+        )
     codex_auth_check = codex_auth_detector or has_codex_auth
     if not codex_auth_check():
-        return (
+        requirement = (
             "Image generation (openai provider) requires OPENAI_API_KEY "
             "or CODEX_API_KEY (or Codex CLI auth)."
         )
+        placeholders = _placeholder_env_vars(("OPENAI_API_KEY", "CODEX_API_KEY"))
+        if placeholders:
+            return _auth_failure_detail(placeholders, requirement)
+        return requirement
     return None
 
 

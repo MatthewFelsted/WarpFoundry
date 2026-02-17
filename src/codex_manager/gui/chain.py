@@ -2461,7 +2461,9 @@ class ChainExecutor:
                 f"- Image generation: enabled using provider `{image_provider}` and model `{image_model}`."
             )
             if image_provider == "openai":
-                lines.append("- Requires OPENAI_API_KEY in environment.")
+                lines.append(
+                    "- Requires OPENAI_API_KEY or CODEX_API_KEY (or Codex CLI auth) in environment."
+                )
             else:
                 lines.append("- Requires GOOGLE_API_KEY or GEMINI_API_KEY in environment.")
             lines.append(

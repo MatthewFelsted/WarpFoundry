@@ -18,6 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from codex_manager.preflight import first_env_secret
+
 logger = logging.getLogger(__name__)
 
 AVAILABLE_MODEL_PROVIDERS: tuple[str, ...] = ("openai", "anthropic", "google", "xai", "ollama")
@@ -821,7 +823,7 @@ class ModelCatalogWatchdog:
         return payload
 
     def _fetch_openai_models(self, timeout_s: int) -> list[str]:
-        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
+        api_key = first_env_secret(("OPENAI_API_KEY", "CODEX_API_KEY"))
         if not api_key:
             raise RuntimeError("Missing OPENAI_API_KEY (or CODEX_API_KEY)")
         payload = self._http_json(
@@ -835,7 +837,7 @@ class ModelCatalogWatchdog:
         return [str(item.get("id", "")).strip() for item in data if isinstance(item, dict)]
 
     def _fetch_anthropic_models(self, timeout_s: int) -> list[str]:
-        api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+        api_key = first_env_secret(("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"))
         if not api_key:
             raise RuntimeError("Missing ANTHROPIC_API_KEY (or CLAUDE_API_KEY)")
         payload = self._http_json(
@@ -852,7 +854,7 @@ class ModelCatalogWatchdog:
         return [str(item.get("id", "")).strip() for item in data if isinstance(item, dict)]
 
     def _fetch_google_models(self, timeout_s: int) -> list[str]:
-        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = first_env_secret(("GOOGLE_API_KEY", "GEMINI_API_KEY"))
         if not api_key:
             raise RuntimeError("Missing GOOGLE_API_KEY (or GEMINI_API_KEY)")
         query = urlencode({"key": api_key})
@@ -876,9 +878,9 @@ class ModelCatalogWatchdog:
         return models
 
     def _fetch_xai_models(self, timeout_s: int) -> list[str]:
-        api_key = os.getenv("XAI_API_KEY")
+        api_key = first_env_secret(("XAI_API_KEY", "GROK_API_KEY"))
         if not api_key:
-            raise RuntimeError("Missing XAI_API_KEY")
+            raise RuntimeError("Missing XAI_API_KEY (or GROK_API_KEY)")
         payload = self._http_json(
             "https://api.x.ai/v1/models",
             headers={"Authorization": f"Bearer {api_key}"},

@@ -31,6 +31,7 @@ from codex_manager.cua.actions import (
     ActionType,
     CUAAction,
 )
+from codex_manager.preflight import first_env_secret
 
 logger = logging.getLogger(__name__)
 
@@ -121,10 +122,11 @@ class AnthropicCUA:
                 raise RuntimeError(
                     "Anthropic SDK is required for Claude CUA. Install with: pip install anthropic"
                 ) from exc
-            api_key = os.getenv("ANTHROPIC_API_KEY")
+            api_key = first_env_secret(("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"))
             if not api_key:
                 raise RuntimeError(
-                    "ANTHROPIC_API_KEY is not set. Set it in your environment or .env file."
+                    "ANTHROPIC_API_KEY (or CLAUDE_API_KEY) is not set. "
+                    "Set it in your environment or .env file."
                 )
             self._client = Anthropic(api_key=api_key)
         return self._client

@@ -1,0 +1,59 @@
+{
+  "source": "chain_output",
+  "cards": [
+    {
+      "id": "card-001",
+      "title": "Scope",
+      "summary": "Debugged pipeline-mode preflight and dependency readiness behavior with focused regression testing.",
+      "decision": "pending",
+      "owner_prompt": "",
+      "source": "section"
+    },
+    {
+      "id": "card-002",
+      "title": "High-Impact Findings",
+      "summary": "1. Pipeline preflight auth checks accepted placeholder API keys as valid. - Root cause: `PipelineOrchestrator` duplicated auth detection logic and bypassed shared placeholder filtering. - Impact: Runs could pass preflight and then fail at runtime with invalid credentials. 2. Phase-level `agent=\"auto\"` resolved inconsistently in pipeline preflight. - Root cause: preflight mapped `auto` to `codex` unconditionally, while runtime execution inherited the global pipeline agent. - Impact: false dependency failures (for example requiring Codex when run would use Claude). 3. OpenAI image-generation preflight required only `OPENAI_API_KEY`. - Root cause: checks ignored Codex credential paths. - Impact: false preflight failures when valid Codex auth was present.",
+      "decision": "pending",
+      "owner_prompt": "",
+      "source": "section"
+    },
+    {
+      "id": "card-003",
+      "title": "Fixes Implemented",
+      "summary": "- `src/codex_manager/pipeline/orchestrator.py` - Reused shared preflight auth detectors (`shared_has_codex_auth`, `shared_has_claude_auth`) so placeholder secrets are rejected consistently. - Added canonical agent normalization/resolution helpers and used them for both preflight agent collection and runtime runner selection. - Updated openai image-provider auth check to accept Codex auth (`OPENAI_API_KEY` or `CODEX_API_KEY` or Codex CLI auth). - `src/codex_manager/gui/app.py` - Fixed pipeline preflight agent collection so phase `auto` inherits global pipeline agent. - Updated openai image-provider auth check to accept Codex auth.",
+      "decision": "pending",
+      "owner_prompt": "",
+      "source": "section"
+    },
+    {
+      "id": "card-004",
+      "title": "Regression Tests Added",
+      "summary": "- `tests/test_pipeline_orchestrator.py` - `test_preflight_rejects_placeholder_codex_auth_env` - `test_collect_required_agents_resolves_auto_phase_to_global_agent` - `test_preflight_openai_image_provider_accepts_codex_auth` - `tests/test_gui_app_api.py` - `test_image_provider_auth_accepts_codex_auth` - `test_pipeline_start_auto_phase_inherits_global_agent_for_preflight`",
+      "decision": "pending",
+      "owner_prompt": "",
+      "source": "section"
+    },
+    {
+      "id": "card-005",
+      "title": "Validation",
+      "summary": "- Targeted: - `python -m pytest -q tests/test_pipeline_orchestrator.py tests/test_gui_app_api.py` - Result: `208 passed, 1 skipped` - Full suite: - `python -m pytest -q` - Result: `527 passed, 1 skipped`",
+      "decision": "pending",
+      "owner_prompt": "",
+      "source": "section"
+    },
+    {
+      "id": "card-006",
+      "title": "LED Tracking",
+      "summary": "- No direct match to currently listed open LEDs (`LED-007`..`LED-024`) for these newly discovered preflight defects, so no existing LED is marked resolved in this pass. - Existing command-length and transient-network items remain tracked separately. [TERMINATE_STEP] --- ## Execution Evidence (Loop 1, Step 1) - Agent: Codex - Files changed: 4 - Net lines changed: +154 - Commit: 0b5a0fd - Changed files: - `src/codex_manager/gui/app.py` (+15 / -4) - `src/codex_manager/pipeline/orchestrator.py` (+42 / -33) - `tests/test_gui_app_api.py` (+61 / -0) - `tests/test_pipeline_orchestrator.py` (+73 / -0) - Improvement Notes: ```text [TERMINATE_STEP] ```",
+      "decision": "pending",
+      "owner_prompt": "",
+      "source": "section"
+    }
+  ],
+  "governance_warnings": [
+    "Research/citation links missing. Add credible source URLs before approving."
+  ],
+  "version": 1,
+  "updated_at": "2026-02-17T05:42:21.510029Z",
+  "repo_path": "C:\\Users\\futur\\OneDrive\\Desktop\\AgenticAI\\AI_Manager\\codex_manager"
+}

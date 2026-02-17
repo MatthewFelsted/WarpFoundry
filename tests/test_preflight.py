@@ -334,3 +334,37 @@ def test_build_preflight_report_flags_placeholder_env_values(monkeypatch, tmp_pa
     assert claude_auth.status == "fail"
     assert "placeholder" in claude_auth.detail.lower()
     assert "ANTHROPIC_API_KEY" in claude_auth.detail
+
+
+def test_first_env_secret_skips_placeholder_and_uses_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")
+    monkeypatch.setenv("CODEX_API_KEY", "sk-proj-real-secret")
+
+    value = preflight.first_env_secret(("OPENAI_API_KEY", "CODEX_API_KEY"))
+
+    assert value == "sk-proj-real-secret"
+
+
+def test_env_secret_issue_reports_placeholder_values(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "your-key-here")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    issue = preflight.env_secret_issue(
+        ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "GOOGLE_API_KEY or GEMINI_API_KEY is required.",
+    )
+
+    assert issue is not None
+    assert "placeholder" in issue.lower()
+    assert "GOOGLE_API_KEY" in issue
+
+
+def test_image_provider_auth_issue_rejects_placeholder_google_key(monkeypatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "your-key-here")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    issue = preflight.image_provider_auth_issue(True, "google")
+
+    assert issue is not None
+    assert "placeholder" in issue.lower()
+    assert "GOOGLE_API_KEY" in issue

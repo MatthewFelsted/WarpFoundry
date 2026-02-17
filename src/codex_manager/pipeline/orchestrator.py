@@ -79,6 +79,7 @@ from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.preflight import (
     agent_preflight_issues as shared_agent_preflight_issues,
     binary_exists as shared_binary_exists,
+    env_secret_issue as shared_env_secret_issue,
     has_claude_auth as shared_has_claude_auth,
     has_codex_auth as shared_has_codex_auth,
     image_provider_auth_issue as shared_image_provider_auth_issue,
@@ -2397,18 +2398,20 @@ class PipelineOrchestrator:
 
         if config.deep_research_enabled and config.deep_research_native_enabled:
             providers = (config.deep_research_providers or "both").strip().lower()
-            if providers in {"both", "openai"} and not (
-                os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
-            ):
-                issues.append(
-                    "Native deep research (openai provider) requires OPENAI_API_KEY or CODEX_API_KEY."
+            if providers in {"both", "openai"}:
+                openai_issue = shared_env_secret_issue(
+                    ("OPENAI_API_KEY", "CODEX_API_KEY"),
+                    "Native deep research (openai provider) requires OPENAI_API_KEY or CODEX_API_KEY.",
                 )
-            if providers in {"both", "google"} and not (
-                os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-            ):
-                issues.append(
-                    "Native deep research (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+                if openai_issue:
+                    issues.append(openai_issue)
+            if providers in {"both", "google"}:
+                google_issue = shared_env_secret_issue(
+                    ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+                    "Native deep research (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY.",
                 )
+                if google_issue:
+                    issues.append(google_issue)
 
         issues.extend(
             shared_agent_preflight_issues(
@@ -2431,8 +2434,12 @@ class PipelineOrchestrator:
                     issues.append(
                         "CUA visual test requires the OpenAI SDK. Install with: pip install openai"
                     )
-                if not os.getenv("OPENAI_API_KEY"):
-                    issues.append("CUA visual test (openai provider) requires OPENAI_API_KEY.")
+                openai_issue = shared_env_secret_issue(
+                    ("OPENAI_API_KEY", "CODEX_API_KEY"),
+                    "CUA visual test (openai provider) requires OPENAI_API_KEY or CODEX_API_KEY.",
+                )
+                if openai_issue:
+                    issues.append(openai_issue)
             elif provider == "anthropic":
                 try:
                     import anthropic  # noqa: F401
@@ -2440,10 +2447,12 @@ class PipelineOrchestrator:
                     issues.append(
                         "CUA visual test requires the Anthropic SDK. Install with: pip install anthropic"
                     )
-                if not (os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")):
-                    issues.append(
-                        "CUA visual test (anthropic provider) requires ANTHROPIC_API_KEY or CLAUDE_API_KEY."
-                    )
+                anthropic_issue = shared_env_secret_issue(
+                    ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+                    "CUA visual test (anthropic provider) requires ANTHROPIC_API_KEY or CLAUDE_API_KEY.",
+                )
+                if anthropic_issue:
+                    issues.append(anthropic_issue)
 
             try:
                 from playwright.async_api import async_playwright  # noqa: F401
@@ -3720,7 +3729,9 @@ class PipelineOrchestrator:
                 f"Image generation: enabled using provider `{image_provider}` and model `{image_model}`."
             )
             if image_provider == "openai":
-                parts.append("Requires OPENAI_API_KEY in environment.")
+                parts.append(
+                    "Requires OPENAI_API_KEY or CODEX_API_KEY (or Codex CLI auth) in environment."
+                )
             else:
                 parts.append("Requires GOOGLE_API_KEY or GEMINI_API_KEY in environment.")
             parts.append(

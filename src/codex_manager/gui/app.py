@@ -48,6 +48,7 @@ from codex_manager.preflight import (
 from codex_manager.preflight import (
     agent_preflight_issues as shared_agent_preflight_issues,
     build_preflight_report,
+    env_secret_issue as shared_env_secret_issue,
     image_provider_auth_issue as shared_image_provider_auth_issue,
     parse_agents,
 )
@@ -749,18 +750,20 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
 
     if config.deep_research_native_enabled and config.deep_research_enabled:
         providers = str(config.deep_research_providers or "both").strip().lower()
-        if providers in {"both", "openai"} and not (
-            os.getenv("OPENAI_API_KEY") or os.getenv("CODEX_API_KEY")
-        ):
-            issues.append(
-                "Native deep research (OpenAI) requires OPENAI_API_KEY or CODEX_API_KEY."
+        if providers in {"both", "openai"}:
+            issue = shared_env_secret_issue(
+                ("OPENAI_API_KEY", "CODEX_API_KEY"),
+                "Native deep research (OpenAI) requires OPENAI_API_KEY or CODEX_API_KEY.",
             )
-        if providers in {"both", "google"} and not (
-            os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        ):
-            issues.append(
-                "Native deep research (Google) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+            if issue:
+                issues.append(issue)
+        if providers in {"both", "google"}:
+            issue = shared_env_secret_issue(
+                ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+                "Native deep research (Google) requires GOOGLE_API_KEY or GEMINI_API_KEY.",
             )
+            if issue:
+                issues.append(issue)
 
     return issues
 
@@ -8963,14 +8966,14 @@ def api_cua_providers():
             "name": "OpenAI CUA",
             "model": "computer-use-preview",
             "description": "GPT-4o vision + reasoning for GUI interaction",
-            "requires": "OPENAI_API_KEY",
+            "requires": "OPENAI_API_KEY (or CODEX_API_KEY)",
         },
         {
             "id": "anthropic",
             "name": "Anthropic Claude CUA",
             "model": "claude-opus-4-6",
             "description": "Claude computer use tool with desktop automation",
-            "requires": "ANTHROPIC_API_KEY",
+            "requires": "ANTHROPIC_API_KEY (or CLAUDE_API_KEY)",
         },
     ]
     return jsonify(providers)

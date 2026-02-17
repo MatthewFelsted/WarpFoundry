@@ -39,3 +39,14 @@ ai_result_cache.db.*
 .coverage.*
 htmlcov/
 .hypothesis/
+
+# --- WarpFoundry managed rules ---
+# Keep WarpFoundry owner/planning docs versioned while ignoring runtime artifacts.
+!.codex_manager/
+.codex_manager/logs/
+.codex_manager/outputs/
+.codex_manager/output_history/
+.codex_manager/state/
+.codex_manager/memory/
+.codex_manager/ledger/
+# --- End WarpFoundry managed rules ---

@@ -741,6 +741,60 @@ def test_pipeline_start_preflight_requires_image_provider_auth(
     )
 
 
+def test_pipeline_start_preflight_rejects_placeholder_google_image_auth(
+    client, monkeypatch, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.setenv("GOOGLE_API_KEY", "your-key-here")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            repo,
+            image_generation_enabled=True,
+            image_provider="google",
+            image_model="nano-banana",
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any(
+        "placeholder" in str(issue).lower() and "GOOGLE_API_KEY" in str(issue)
+        for issue in data.get("issues", [])
+    )
+
+
+def test_pipeline_start_preflight_rejects_placeholder_native_deep_research_auth(
+    client, monkeypatch, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            repo,
+            deep_research_enabled=True,
+            deep_research_native_enabled=True,
+            deep_research_providers="openai",
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert any(
+        "placeholder" in str(issue).lower() and "OPENAI_API_KEY" in str(issue)
+        for issue in data.get("issues", [])
+    )
+
+
 def test_pipeline_start_auto_phase_inherits_global_agent_for_preflight(
     client, monkeypatch, tmp_path: Path
 ) -> None:

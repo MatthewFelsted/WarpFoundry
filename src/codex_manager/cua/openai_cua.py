@@ -34,6 +34,7 @@ from codex_manager.cua.actions import (
     ActionType,
     CUAAction,
 )
+from codex_manager.preflight import first_env_secret
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +123,11 @@ class OpenAICUA:
                 raise RuntimeError(
                     "OpenAI SDK is required for CUA. Install with: pip install openai"
                 ) from exc
-            api_key = os.getenv("OPENAI_API_KEY")
+            api_key = first_env_secret(("OPENAI_API_KEY", "CODEX_API_KEY"))
             if not api_key:
                 raise RuntimeError(
-                    "OPENAI_API_KEY is not set. Set it in your environment or in a .env file "
+                    "OPENAI_API_KEY (or CODEX_API_KEY) is not set. "
+                    "Set it in your environment or in a .env file "
                     "(same key as for OpenAI chatbots)."
                 )
             self._client = OpenAI(api_key=api_key)

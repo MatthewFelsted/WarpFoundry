@@ -1526,6 +1526,56 @@ def test_preflight_openai_image_provider_accepts_codex_auth(
     assert not any("Image generation (openai provider)" in issue for issue in issues)
 
 
+def test_preflight_rejects_placeholder_google_deep_research_auth(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    monkeypatch.setattr(PipelineOrchestrator, "_binary_exists", staticmethod(lambda _binary: True))
+    monkeypatch.setattr(PipelineOrchestrator, "_has_codex_auth", staticmethod(lambda: True))
+    monkeypatch.setenv("GOOGLE_API_KEY", "your-key-here")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        deep_research_enabled=True,
+        deep_research_native_enabled=True,
+        deep_research_providers="google",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    issues = orch._preflight_issues(cfg, repo.resolve())
+
+    assert any("placeholder" in issue.lower() and "GOOGLE_API_KEY" in issue for issue in issues)
+
+
+def test_preflight_rejects_placeholder_openai_cua_auth(monkeypatch, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    monkeypatch.setattr(PipelineOrchestrator, "_binary_exists", staticmethod(lambda _binary: True))
+    monkeypatch.setattr(PipelineOrchestrator, "_has_codex_auth", staticmethod(lambda: True))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        cua_enabled=True,
+        cua_provider="openai",
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    issues = orch._preflight_issues(cfg, repo.resolve())
+
+    assert any("placeholder" in issue.lower() and "OPENAI_API_KEY" in issue for issue in issues)
+
+
 def test_preflight_fails_fast_when_repo_worktree_is_dirty(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)
