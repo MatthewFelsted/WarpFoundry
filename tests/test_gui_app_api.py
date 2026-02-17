@@ -1242,6 +1242,39 @@ def test_system_restart_spawns_replacement_server_with_checkpoint(
     assert "terminated" in observed
 
 
+def test_restart_working_directory_prefers_project_root(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    restart_cwd = gui_app_module._restart_working_directory()
+
+    assert (restart_cwd / "pyproject.toml").is_file()
+    assert restart_cwd == Path(gui_app_module.__file__).resolve().parents[3]
+
+
+def test_run_gui_retries_bind_race_before_serving(monkeypatch):
+    class _WatchdogStub:
+        def start(self):
+            return False
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+
+    observed = {"runs": 0, "sleeps": []}
+
+    def _fake_app_run(*, host, port, debug, threaded):
+        observed["runs"] += 1
+        if observed["runs"] == 1:
+            raise OSError(10048, "Only one usage of each socket address is normally permitted")
+        raise RuntimeError("stop-after-retry")
+
+    monkeypatch.setattr(gui_app_module.app, "run", _fake_app_run)
+    monkeypatch.setattr(gui_app_module.time, "sleep", lambda secs: observed["sleeps"].append(secs))
+
+    with pytest.raises(RuntimeError, match="stop-after-retry"):
+        gui_app_module.run_gui(port=6112, open_browser_=False)
+
+    assert observed["runs"] == 2
+    assert observed["sleeps"] == [gui_app_module._GUI_STARTUP_BIND_RETRY_SECONDS]
+
+
 def test_pipeline_resume_state_reports_checkpoint_payload(client, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     checkpoint = repo / ".codex_manager" / "state" / "pipeline_resume.json"

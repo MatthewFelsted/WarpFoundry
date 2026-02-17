@@ -168,6 +168,8 @@ _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
     }
 )
 _SSE_REPLAY_BATCH_LIMIT = 500
+_GUI_STARTUP_BIND_RETRIES = 20
+_GUI_STARTUP_BIND_RETRY_SECONDS = 0.25
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
@@ -9019,9 +9021,17 @@ def _build_gui_restart_command(
     return cmd
 
 
+def _restart_working_directory() -> Path:
+    """Return the best cwd for spawning a replacement GUI process."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").is_file():
+            return parent
+    return Path.cwd()
+
+
 def _launch_replacement_server(command: list[str]) -> None:
     kwargs: dict[str, object] = {
-        "cwd": str(Path.cwd()),
+        "cwd": str(_restart_working_directory()),
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
@@ -9038,6 +9048,40 @@ def _terminate_current_process(delay_seconds: float = 0.75) -> None:
         os._exit(0)
 
     Timer(delay_seconds, _exit_now).start()
+
+
+def _is_address_in_use_error(exc: OSError) -> bool:
+    """Return True when Flask startup failed because the port is still in use."""
+    err_no = getattr(exc, "errno", None)
+    win_error = getattr(exc, "winerror", None)
+    text = str(exc).lower()
+    return (
+        err_no in {48, 98, 10048}
+        or win_error in {10048}
+        or "address already in use" in text
+        or "only one usage of each socket address" in text
+    )
+
+
+def _run_gui_server(host: str, port: int) -> None:
+    """Run Flask server with startup retries for transient bind races."""
+    retries = max(0, int(_GUI_STARTUP_BIND_RETRIES))
+    for attempt in range(retries + 1):
+        try:
+            app.run(host=host, port=port, debug=False, threaded=True)
+            return
+        except OSError as exc:
+            if (not _is_address_in_use_error(exc)) or attempt >= retries:
+                raise
+            logger.warning(
+                "GUI restart bind race on %s:%s (attempt %s/%s): %s",
+                host,
+                port,
+                attempt + 1,
+                retries + 1,
+                exc,
+            )
+            time.sleep(_GUI_STARTUP_BIND_RETRY_SECONDS)
 
 
 @app.route("/api/system/restart", methods=["POST"])
@@ -9171,6 +9215,6 @@ def run_gui(
     if open_browser_:
         Timer(1.5, _open_browser, args=[port]).start()
     print(f"\n  {_project_display_name()} GUI \u2192 http://127.0.0.1:{port}\n")
-    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+    _run_gui_server(host="127.0.0.1", port=port)
 
 
