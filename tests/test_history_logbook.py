@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from codex_manager.history_log import HistoryLogbook
+
+pytestmark = pytest.mark.integration
 
 
 def test_history_logbook_writes_markdown_and_jsonl(tmp_path: Path):

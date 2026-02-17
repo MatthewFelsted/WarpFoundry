@@ -8,8 +8,12 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from codex_manager.claude_code import ClaudeCodeRunner
 from codex_manager.codex_cli import CodexRunner
+
+pytestmark = pytest.mark.integration
 
 
 def _make_stub_cli(tmp_path: Path, name: str, script_body: str) -> str:

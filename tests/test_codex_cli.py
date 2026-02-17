@@ -250,6 +250,84 @@ class TestCodexRunnerBuildCommand:
             is True
         )
 
+    def test_transient_network_error_retries_then_recovers(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(
+            codex_binary="codex",
+            transient_network_retries=2,
+            transient_retry_backoff_seconds=0,
+        )
+
+        calls = {"count": 0}
+
+        def _fake_execute(_cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return RunResult(
+                    success=False,
+                    exit_code=1,
+                    errors=[
+                        "stream disconnected before completion: "
+                        "error sending request for url (https://chatgpt.com/backend-api/codex/models)"
+                    ],
+                )
+            return RunResult(success=True, exit_code=0, final_message="ok")
+
+        monkeypatch.setattr(runner, "_execute", _fake_execute)
+        result = runner.run(repo, "retry me")
+
+        assert result.success is True
+        assert calls["count"] == 2
+
+    def test_non_transient_failure_does_not_retry(self, monkeypatch, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(
+            codex_binary="codex",
+            transient_network_retries=2,
+            transient_retry_backoff_seconds=0,
+        )
+
+        calls = {"count": 0}
+
+        def _fake_execute(_cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
+            calls["count"] += 1
+            return RunResult(success=False, exit_code=1, errors=["permission denied"])
+
+        monkeypatch.setattr(runner, "_execute", _fake_execute)
+        result = runner.run(repo, "fail fast")
+
+        assert result.success is False
+        assert calls["count"] == 1
+
+    def test_transient_network_retry_respects_retry_cap(self, monkeypatch, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(
+            codex_binary="codex",
+            transient_network_retries=1,
+            transient_retry_backoff_seconds=0,
+        )
+
+        calls = {"count": 0}
+
+        def _fake_execute(_cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
+            calls["count"] += 1
+            return RunResult(
+                success=False,
+                exit_code=1,
+                errors=["network error: error sending request for url (https://chatgpt.com)"],
+            )
+
+        monkeypatch.setattr(runner, "_execute", _fake_execute)
+        result = runner.run(repo, "still failing")
+
+        assert result.success is False
+        assert calls["count"] == 2
+
 
 class TestCodexRunnerAggregate:
     def test_infers_error_from_unknown_event_on_nonzero_exit(self):

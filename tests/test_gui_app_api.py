@@ -18,6 +18,8 @@ import codex_manager.gui.chain as chain_module
 import codex_manager.preflight as preflight_module
 from codex_manager.cua.actions import CUASessionResult
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture()
 def client():

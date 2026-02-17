@@ -34,6 +34,22 @@ _WINDOWS_COMMAND_LINE_LIMIT = 32767
 _WINDOWS_CMD_EXE_LIMIT = 8191
 _COMMAND_LINE_SAFETY_MARGIN = 2048
 _POSIX_PROMPT_ARG_LIMIT = 60000
+_DEFAULT_TRANSIENT_NETWORK_RETRIES = 2
+_DEFAULT_TRANSIENT_RETRY_BACKOFF_SECONDS = 1.0
+_MAX_TRANSIENT_RETRY_BACKOFF_SECONDS = 8.0
+_TRANSIENT_NETWORK_ERROR_SUBSTRINGS = (
+    "stream disconnected before completion",
+    "error sending request for url",
+    "network error",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "failed to refresh available models",
+    "service unavailable",
+    "temporarily unavailable",
+    "timed out",
+    "timeout",
+)
 
 
 class CodexRunner(AgentRunner):
@@ -65,6 +81,10 @@ class CodexRunner(AgentRunner):
         in ``extra_args``.
     bypass_approvals_and_sandbox:
         If True, uses ``--dangerously-bypass-approvals-and-sandbox``.
+    transient_network_retries:
+        Number of automatic retries for transient network transport failures.
+    transient_retry_backoff_seconds:
+        Base backoff delay used between transient retries.
     """
 
     name = "Codex"
@@ -79,6 +99,8 @@ class CodexRunner(AgentRunner):
         reasoning_effort: str = "xhigh",
         model: str = DEFAULT_CODEX_MODEL,
         bypass_approvals_and_sandbox: bool = False,
+        transient_network_retries: int = _DEFAULT_TRANSIENT_NETWORK_RETRIES,
+        transient_retry_backoff_seconds: float = _DEFAULT_TRANSIENT_RETRY_BACKOFF_SECONDS,
     ) -> None:
         self.codex_binary = codex_binary
         self.timeout = max(0, coerce_int(timeout))
@@ -96,6 +118,14 @@ class CodexRunner(AgentRunner):
         self.reasoning_effort = normalized_effort
         self.model = (model or DEFAULT_CODEX_MODEL).strip() or DEFAULT_CODEX_MODEL
         self.bypass_approvals_and_sandbox = bypass_approvals_and_sandbox
+        self.transient_network_retries = max(0, coerce_int(transient_network_retries))
+        try:
+            backoff_seconds = float(transient_retry_backoff_seconds)
+        except (TypeError, ValueError, OverflowError):
+            backoff_seconds = _DEFAULT_TRANSIENT_RETRY_BACKOFF_SECONDS
+        if backoff_seconds < 0:
+            backoff_seconds = _DEFAULT_TRANSIENT_RETRY_BACKOFF_SECONDS
+        self.transient_retry_backoff_seconds = backoff_seconds
 
     # ------------------------------------------------------------------
     # Public API
@@ -153,18 +183,44 @@ class CodexRunner(AgentRunner):
         logger.info("Running: %s (cwd=%s)", " ".join(cmd), repo_path)
 
         start = time.monotonic()
-        try:
-            result = self._execute(
-                cmd,
-                cwd=repo_path,
-                stdin_text=prompt if use_stdin_prompt else None,
+        max_attempts = self.transient_network_retries + 1
+        result: RunResult | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = self._execute(
+                    cmd,
+                    cwd=repo_path,
+                    stdin_text=prompt if use_stdin_prompt else None,
+                )
+            except Exception as exc:
+                return RunResult(
+                    success=False,
+                    exit_code=-1,
+                    errors=[f"Failed to execute codex: {exc}"],
+                    duration_seconds=time.monotonic() - start,
+                )
+
+            if result.success:
+                break
+            if attempt >= max_attempts or not self._is_transient_network_failure(result):
+                break
+
+            delay_seconds = self._retry_delay_seconds(attempt)
+            logger.warning(
+                "Transient Codex transport failure (attempt %d/%d); retrying in %.1fs",
+                attempt,
+                max_attempts,
+                delay_seconds,
             )
-        except Exception as exc:
-            return RunResult(
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+
+        if result is None:  # pragma: no cover - defensive, loop always assigns.
+            result = RunResult(
                 success=False,
                 exit_code=-1,
-                errors=[f"Failed to execute codex: {exc}"],
-                duration_seconds=time.monotonic() - start,
+                errors=["Codex execution produced no result"],
             )
         result.duration_seconds = time.monotonic() - start
         return result
@@ -289,6 +345,28 @@ class CodexRunner(AgentRunner):
             stderr_text,
             execution.raw_lines,
         )
+
+    def _is_transient_network_failure(self, result: RunResult) -> bool:
+        """Return True when result looks like a retriable transient transport failure."""
+        if result.success:
+            return False
+
+        parts = [str(item or "") for item in result.errors]
+        if result.final_message:
+            parts.append(result.final_message)
+        if not parts:
+            return False
+
+        haystack = "\n".join(parts).lower()
+        return any(marker in haystack for marker in _TRANSIENT_NETWORK_ERROR_SUBSTRINGS)
+
+    def _retry_delay_seconds(self, attempt: int) -> float:
+        """Return exponential backoff delay for transient retry attempts."""
+        base = max(0.0, float(self.transient_retry_backoff_seconds or 0.0))
+        if base <= 0:
+            return 0.0
+        exponent = max(0, coerce_int(attempt) - 1)
+        return min(_MAX_TRANSIENT_RETRY_BACKOFF_SECONDS, base * (2**exponent))
 
     # ------------------------------------------------------------------
     # JSONL parsing helpers
