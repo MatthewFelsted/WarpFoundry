@@ -64,6 +64,28 @@ warpfoundry pipeline --repo <path> [options]
 | `--local-only` | false |
 | `--skip-preflight` | false |
 
+## Subcommand: `github-actions`
+
+```bash
+warpfoundry github-actions --repo <path> [options]
+```
+
+Generates `.github/workflows/warpfoundry-pipeline.yml` (or a custom filename) to run
+`warpfoundry pipeline` on push/pull request and upload `.codex_manager/logs` plus run
+summary markdown artifacts.
+
+| Option | Default |
+|---|---|
+| `--workflow-file` | `warpfoundry-pipeline.yml` |
+| `--branch` | auto-detect current branch (fallback: `main`) |
+| `--python-version` | `3.11` |
+| `--mode` | `dry-run` |
+| `--cycles` | `1` |
+| `--max-time` | `120` minutes |
+| `--agent` | `codex` (`codex` or `claude_code`) |
+| `--artifact-prefix` | `warpfoundry-pipeline` |
+| `--overwrite` | false |
+
 ## Subcommand: `strategic`
 
 ```bash
@@ -153,6 +175,7 @@ Runs setup diagnostics before a run. Returns exit code `0` when ready, `1` when 
 warpfoundry --repo /repo --goal "Increase test coverage" --rounds 3 --mode dry-run
 warpfoundry strategic --repo /repo --mode dry-run --rounds 6
 warpfoundry strategic --repo /repo --focus reliability --focus ux --goal-extra "Prioritize first-run completion."
+warpfoundry github-actions --repo /repo --branch main --branch develop
 warpfoundry doctor --repo /repo --agents codex,claude_code
 warpfoundry pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
 warpfoundry pipeline --repo /repo --agent claude_code --claude-bin /usr/local/bin/claude

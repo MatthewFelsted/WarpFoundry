@@ -96,6 +96,7 @@ These are based on the current codebase and CLI parser, not marketing copy:
 - Classic goal loop (`warpfoundry --repo <path> --goal "<goal>"`)
 - Strategic shortcut (`warpfoundry strategic --repo <path>`)
 - Autonomous pipeline (`warpfoundry pipeline --repo <path>`)
+- GitHub Actions workflow generation for pipeline CI (`warpfoundry github-actions --repo <path>`)
 - Setup diagnostics with actionable next steps (`warpfoundry doctor --repo <path>`)
 - Prompt tools (`list-prompts`, `optimize-prompts`, `list-recipes`)
 - Optional visual UI testing via CUA (`warpfoundry visual-test --url <url>`)
@@ -170,6 +171,7 @@ warpfoundry doctor --repo /path/to/repo
 warpfoundry --repo /path/to/repo --goal "Improve tests and docs" --mode dry-run --rounds 2
 warpfoundry strategic --repo /path/to/repo --focus reliability --focus ux
 warpfoundry pipeline --repo /path/to/repo --mode dry-run --cycles 1
+warpfoundry github-actions --repo /path/to/repo --branch main
 warpfoundry list-recipes
 warpfoundry visual-test --url http://localhost:5088
 ```

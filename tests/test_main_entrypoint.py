@@ -55,7 +55,12 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
         calls["doctor_repo"] = args.repo
         return 15
 
+    def fake_github_actions(args):
+        calls["github_actions_repo"] = args.repo
+        return 17
+
     monkeypatch.setattr(main_module, "_run_pipeline", fake_pipeline)
+    monkeypatch.setattr(main_module, "_run_github_actions", fake_github_actions)
     monkeypatch.setattr(main_module, "_run_strategic", fake_strategic)
     monkeypatch.setattr(main_module, "_optimize_prompts", fake_optimize)
     monkeypatch.setattr(main_module, "_visual_test", fake_visual)
@@ -66,6 +71,7 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     assert main_module.main(["pipeline", "--repo", str(repo)]) == 10
+    assert main_module.main(["github-actions", "--repo", str(repo)]) == 17
     assert main_module.main(["strategic", "--repo", str(repo)]) == 14
     assert main_module.main(["optimize-prompts", "--model", "gpt-x"]) == 11
     assert main_module.main(["visual-test", "--provider", "anthropic"]) == 12
@@ -74,6 +80,7 @@ def test_main_dispatches_subcommands(monkeypatch, tmp_path: Path) -> None:
     assert main_module.main(["doctor", "--repo", str(repo)]) == 15
 
     assert calls["pipeline_repo"] == str(repo)
+    assert calls["github_actions_repo"] == str(repo)
     assert calls["strategic_repo"] == str(repo)
     assert calls["opt_model"] == "gpt-x"
     assert calls["visual_provider"] == "anthropic"
@@ -97,6 +104,30 @@ def test_pipeline_parser_accepts_binary_overrides() -> None:
     )
     assert args.codex_bin == "codex-dev"
     assert args.claude_bin == "claude-dev"
+
+
+def test_github_actions_parser_accepts_repeated_branches() -> None:
+    parser = main_module._build_parser()
+    args = parser.parse_args(
+        [
+            "github-actions",
+            "--repo",
+            "C:/repo",
+            "--workflow-file",
+            "ci.yml",
+            "--branch",
+            "main",
+            "--branch",
+            "release",
+            "--cycles",
+            "2",
+            "--overwrite",
+        ]
+    )
+    assert args.workflow_file == "ci.yml"
+    assert args.branch == ["main", "release"]
+    assert args.cycles == 2
+    assert args.overwrite is True
 
 
 def test_strategic_parser_accepts_focus_repetitions() -> None:
@@ -607,6 +638,64 @@ def test_run_pipeline_preflight_uses_selected_agent(monkeypatch, tmp_path: Path)
     assert captured_guard_args["agents"] == ["claude_code"]
     assert captured_guard_args["codex_bin"] == "codex-custom"
     assert captured_guard_args["claude_bin"] == "claude-custom"
+
+
+def test_run_github_actions_generates_workflow_file(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git_dir = repo / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/trunk\n", encoding="utf-8")
+
+    args = argparse.Namespace(
+        repo=str(repo),
+        workflow_file="pipeline-ci.yml",
+        branch=[],
+        python_version="3.11",
+        mode="dry-run",
+        cycles=1,
+        max_time=120,
+        agent="codex",
+        artifact_prefix="wf-ci",
+        overwrite=False,
+    )
+
+    rc = main_module._run_github_actions(args)
+    captured = capsys.readouterr()
+    workflow = repo / ".github" / "workflows" / "pipeline-ci.yml"
+    content = workflow.read_text(encoding="utf-8")
+
+    assert rc == 0
+    assert workflow.is_file()
+    assert "WarpFoundry - GitHub Actions Workflow" in captured.out
+    assert "      - trunk" in content
+    assert ".codex_manager/logs/**" in content
+    assert ".codex_manager/outputs/**/*.md" in content
+
+
+def test_run_github_actions_existing_file_requires_overwrite(capsys, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    workflow = repo / ".github" / "workflows" / "ci.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: existing\n", encoding="utf-8")
+
+    args = argparse.Namespace(
+        repo=str(repo),
+        workflow_file="ci.yml",
+        branch=["main"],
+        python_version="3.11",
+        mode="dry-run",
+        cycles=1,
+        max_time=120,
+        agent="codex",
+        artifact_prefix="wf-ci",
+        overwrite=False,
+    )
+
+    rc = main_module._run_github_actions(args)
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "workflow file already exists" in captured.err
 
 
 def test_optimize_prompts_local_only_uses_ollama_model(monkeypatch, capsys) -> None:

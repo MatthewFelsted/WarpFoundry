@@ -277,6 +277,74 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip setup diagnostics before running (not recommended).",
     )
 
+    # GitHub Actions workflow generator sub-command
+    gha_p = sub.add_parser(
+        "github-actions",
+        help="Generate a GitHub Actions workflow for automated pipeline runs.",
+    )
+    gha_p.add_argument(
+        "--repo",
+        type=str,
+        required=True,
+        help="Path to the target git repository.",
+    )
+    gha_p.add_argument(
+        "--workflow-file",
+        type=str,
+        default="warpfoundry-pipeline.yml",
+        help="Workflow filename under .github/workflows (default: warpfoundry-pipeline.yml).",
+    )
+    gha_p.add_argument(
+        "--branch",
+        action="append",
+        default=[],
+        help=(
+            "Branch to trigger on; repeat for multiple branches. "
+            "Defaults to current repo branch (or main)."
+        ),
+    )
+    gha_p.add_argument(
+        "--python-version",
+        type=str,
+        default="3.11",
+        help="Python version for actions/setup-python (default: 3.11).",
+    )
+    gha_p.add_argument(
+        "--mode",
+        choices=["dry-run", "apply"],
+        default="dry-run",
+        help="Pipeline mode inside CI workflow (default: dry-run).",
+    )
+    gha_p.add_argument(
+        "--cycles",
+        type=int,
+        default=1,
+        help="Pipeline cycles in CI workflow (default: 1).",
+    )
+    gha_p.add_argument(
+        "--max-time",
+        type=int,
+        default=120,
+        help="Pipeline max-time in minutes for CI workflow (default: 120).",
+    )
+    gha_p.add_argument(
+        "--agent",
+        choices=["codex", "claude_code"],
+        default="codex",
+        help="Pipeline agent in CI workflow (default: codex).",
+    )
+    gha_p.add_argument(
+        "--artifact-prefix",
+        type=str,
+        default="warpfoundry-pipeline",
+        help="Prefix for uploaded artifact names (default: warpfoundry-pipeline).",
+    )
+    gha_p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite the workflow file when it already exists.",
+    )
+
     # Strategic loop sub-command
     strategic_p = sub.add_parser(
         "strategic",
@@ -546,6 +614,9 @@ def main(argv: list[str] | None = None) -> int:
     # -- Pipeline mode --------------------------------------------------------
     if args.command == "pipeline":
         return _run_pipeline(args)
+    # -- GitHub Actions workflow generation -----------------------------------
+    if args.command == "github-actions":
+        return _run_github_actions(args)
     # -- Strategic loop mode --------------------------------------------------
     if args.command == "strategic":
         return _run_strategic(args)
@@ -571,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
             "\nTip: run 'warpfoundry gui' to launch the web GUI,\n"
             "     'warpfoundry doctor --repo <path>' to validate setup,\n"
             "     'warpfoundry pipeline --repo <path>' for the autonomous pipeline,\n"
+            "     'warpfoundry github-actions --repo <path>' to generate CI workflow,\n"
             "     'warpfoundry strategic --repo <path>' for strategic product maximization,\n"
             "     'warpfoundry visual-test --url <url>' for CUA visual testing,\n"
             "     (or use 'python -m codex_manager <command>' in source checkouts),\n"
@@ -772,6 +844,69 @@ def _run_strategic(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         skip_preflight=getattr(args, "skip_preflight", False),
     )
+
+
+def _run_github_actions(args: argparse.Namespace) -> int:
+    """Generate a GitHub Actions workflow that runs the WarpFoundry pipeline."""
+    from codex_manager.github_actions import (
+        PipelineWorkflowConfig,
+        detect_default_branch,
+        generate_pipeline_workflow,
+        normalize_branches,
+    )
+
+    repo = Path(args.repo).resolve()
+    if not repo.is_dir():
+        print(f"Error: repo path does not exist: {repo}", file=sys.stderr)
+        return 1
+    if int(args.cycles) < 1:
+        print("Error: --cycles must be at least 1.", file=sys.stderr)
+        return 1
+    if int(args.max_time) < 1:
+        print("Error: --max-time must be at least 1 minute.", file=sys.stderr)
+        return 1
+
+    branches = normalize_branches(list(getattr(args, "branch", []) or []))
+    if not branches:
+        branches = (detect_default_branch(repo),)
+
+    config = PipelineWorkflowConfig(
+        branches=branches,
+        python_version=str(args.python_version),
+        mode=str(args.mode),
+        cycles=int(args.cycles),
+        max_time_minutes=int(args.max_time),
+        agent=str(args.agent),
+        artifact_prefix=str(args.artifact_prefix),
+    )
+
+    try:
+        workflow_path = generate_pipeline_workflow(
+            repo,
+            config=config,
+            workflow_filename=str(args.workflow_file),
+            overwrite=bool(getattr(args, "overwrite", False)),
+        )
+    except (FileExistsError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        if isinstance(exc, FileExistsError):
+            print("Tip: rerun with --overwrite to replace it.", file=sys.stderr)
+        return 1
+
+    print("\n  WarpFoundry - GitHub Actions Workflow")
+    print("  " + "=" * 58)
+    print(f"  Repository: {repo}")
+    print(f"  Workflow:   {workflow_path}")
+    print(f"  Branches:   {', '.join(branches)}")
+    print(
+        "  Pipeline:   "
+        f"warpfoundry pipeline --repo . --mode {config.mode} --cycles {config.cycles} "
+        f"--max-time {config.max_time_minutes} --agent {config.agent}"
+    )
+    print("  Artifacts:  .codex_manager/logs/** and .codex_manager/outputs/**/*.md")
+    print("  Secrets:    Configure CODEX_API_KEY and/or provider API keys in repository secrets.")
+    print("  " + "=" * 58 + "\n")
+    return 0
 
 
 # Pipeline command
