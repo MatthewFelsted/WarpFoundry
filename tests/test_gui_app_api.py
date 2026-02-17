@@ -1154,6 +1154,65 @@ def test_github_auth_save_requires_available_secure_storage(client, monkeypatch,
     assert "no keyring backend" in data["error"]
 
 
+def test_api_keys_settings_roundtrip_with_secure_storage(client, monkeypatch):
+    secrets: dict[str, str] = {}
+    monkeypatch.setattr(gui_app_module, "_api_keyring_status", lambda: (True, "tests.fake", ""))
+    monkeypatch.setattr(gui_app_module, "_api_key_secret_get", lambda key: secrets.get(key, ""))
+    monkeypatch.setattr(gui_app_module, "_api_key_secret_set", lambda key, value: secrets.__setitem__(key, value))
+
+    def _delete_secret(key: str) -> None:
+        secrets.pop(key, None)
+
+    monkeypatch.setattr(gui_app_module, "_api_key_secret_delete", _delete_secret)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+    load_resp = client.get("/api/api-keys")
+    load_data = load_resp.get_json()
+    assert load_resp.status_code == 200
+    assert load_data
+    assert isinstance(load_data.get("supported_keys"), list)
+    assert any(item.get("env_var") == "CODEX_API_KEY" for item in load_data["supported_keys"])
+
+    save_resp = client.post(
+        "/api/api-keys",
+        json={
+            "keys": {
+                "CODEX_API_KEY": "codex-secret-123",
+                "ANTHROPIC_API_KEY": "anthropic-secret-456",
+            }
+        },
+    )
+    save_data = save_resp.get_json()
+    assert save_resp.status_code == 200
+    assert save_data
+    assert save_data["status"] == "saved"
+    assert secrets["CODEX_API_KEY"] == "codex-secret-123"
+    assert secrets["ANTHROPIC_API_KEY"] == "anthropic-secret-456"
+    assert os.getenv("CODEX_API_KEY") == "codex-secret-123"
+
+    clear_resp = client.post("/api/api-keys", json={"clear_keys": ["CODEX_API_KEY"]})
+    clear_data = clear_resp.get_json()
+    assert clear_resp.status_code == 200
+    assert clear_data
+    assert "CODEX_API_KEY" not in secrets
+    assert os.getenv("CODEX_API_KEY", "") == ""
+
+
+def test_api_keys_save_rejects_unsupported_env_var(client):
+    resp = client.post(
+        "/api/api-keys",
+        json={
+            "keys": {
+                "NOT_A_SUPPORTED_KEY": "value",
+            }
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data
+    assert "Unsupported API key environment variable" in data["error"]
+
+
 def test_github_auth_test_endpoint_uses_saved_pat(client, monkeypatch, tmp_path: Path):
     meta_path = tmp_path / "github_auth.json"
     monkeypatch.setattr(gui_app_module, "_GITHUB_AUTH_META_PATH", meta_path)
@@ -2738,6 +2797,21 @@ def test_index_includes_general_request_workspace_controls(client):
     assert "onTodoWishlistContextFilesChanged(this)" in html
 
 
+def test_index_includes_api_keys_and_about_controls(client):
+    resp = client.get("/")
+    html = resp.get_data(as_text=True)
+
+    assert resp.status_code == 200
+    assert 'showApiKeysModal()' in html
+    assert 'id="api-keys-overlay"' in html
+    assert "/api/api-keys" in html
+    assert "async function saveApiKeysState()" in html
+    assert 'showAboutModal()' in html
+    assert 'id="about-overlay"' in html
+    assert "/api/about" in html
+    assert "Author: Matthew Felsted" in html
+
+
 def test_index_includes_git_branch_switcher_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
@@ -4279,6 +4353,18 @@ def test_normalize_requested_agents_supports_iterable_items_with_csv_tokens():
         "codex",
         "claude_code",
     ]
+
+
+def test_about_api_returns_readme_and_author(client):
+    resp = client.get("/api/about")
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["author"] == "Matthew Felsted"
+    assert data["readme_filename"] == "README.md"
+    assert "WarpFoundry" in data["readme_content"]
+    assert isinstance(data.get("docs"), list)
 
 
 def test_docs_api_lists_curated_docs(client):

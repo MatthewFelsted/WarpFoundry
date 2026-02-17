@@ -747,6 +747,30 @@ body.mode-medium .easy-only{display:none}
 .github-auth-troubleshooting .next-steps strong{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.2px}
 .github-auth-troubleshooting .next-steps ol{margin:6px 0 0 18px;padding:0;color:var(--text2);font-size:12px;line-height:1.4}
 
+#api-keys-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
+#api-keys-overlay.hidden{display:none}
+.api-keys-card{max-width:760px;width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.api-keys-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.api-keys-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.api-keys-card .status{font-size:12px;color:var(--text2);margin-top:8px;min-height:1.2em}
+.api-keys-card .meta{margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.api-keys-card .fields{margin-top:10px;display:grid;gap:10px}
+.api-keys-card .field{border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:rgba(18,25,35,.55)}
+.api-keys-card .field label{margin-bottom:6px}
+.api-keys-card .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+
+#about-overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:2300;display:flex;align-items:center;justify-content:center;padding:24px}
+#about-overlay.hidden{display:none}
+.about-card{width:980px;max-width:100%;max-height:88vh;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.about-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.about-header h3{font-size:16px;color:var(--text);margin:0}
+.about-subtitle{font-size:12px;color:var(--text2);margin-top:4px}
+.about-body{padding:12px 16px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+.about-meta{padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);font-size:12px;color:var(--text2);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.about-doc-links{display:flex;gap:6px;flex-wrap:wrap}
+.about-doc-links .btn{padding:4px 9px;font-size:11px}
+.about-readme{padding:10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text);font-family:var(--mono);font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;overflow:auto}
+
 #git-commit-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2250;display:flex;align-items:center;justify-content:center;padding:24px}
 #git-commit-overlay.hidden{display:none}
 .git-commit-card{width:900px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
@@ -993,10 +1017,12 @@ body.mode-medium .easy-only{display:none}
 #clone-repo-overlay,
 #git-remote-overlay,
 #git-commit-overlay,
+#api-keys-overlay,
 #github-auth-overlay,
 #todo-wishlist-overlay,
 #feature-dreams-overlay,
 #general-request-overlay,
+#about-overlay,
 #browse-overlay,
 #docs-overlay,
 #permissions-help-overlay,
@@ -1011,10 +1037,12 @@ body.mode-medium .easy-only{display:none}
 .clone-repo-card,
 .git-remote-card,
 .git-commit-card,
+.api-keys-card,
 .github-auth-card,
 .todo-wishlist-card,
 .feature-dreams-card,
 .general-request-card,
+.about-card,
 .browse-modal,
 .docs-modal,
 .permissions-help-modal,
@@ -1087,7 +1115,7 @@ body.mode-medium .easy-only{display:none}
   .workspace-repo-actions{flex-direction:column;align-items:stretch}
   .workspace-repo-actions select{min-width:0;max-width:none;width:100%}
   #toast-stack{right:12px;bottom:12px}
-  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal,.first-run-wizard-card{max-height:88vh}
+  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal,.first-run-wizard-card,.api-keys-card,.about-card{max-height:88vh}
   .science-cards{grid-template-columns:1fr}
   .science-bar-row{grid-template-columns:72px 1fr 38px}
   .first-run-wizard-steps{grid-template-columns:1fr}
@@ -1116,6 +1144,8 @@ body.mode-medium .easy-only{display:none}
       <button class="btn" onclick="openDoc('output_artifacts')" title="Open outputs and artifacts guide">Outputs</button>
       <button class="btn" onclick="openDoc('troubleshooting')" title="Open troubleshooting guide">Troubleshooting</button>
       <button class="btn" onclick="openDoc('cli_reference')" title="Open CLI reference">CLI Reference</button>
+      <button class="btn" onclick="showApiKeysModal()" title="Configure API keys for supported providers">API Keys</button>
+      <button class="btn" onclick="showAboutModal()" title="View project details and README">About</button>
     </div>
     <div class="tab-nav" id="main-tabs" role="tablist" aria-label="Primary views">
       <button id="tab-chain" class="active" data-tab="chain" role="tab" tabindex="0" aria-selected="true" aria-controls="chain-view" onclick="switchTab('chain')">Chain Builder</button>
@@ -2760,6 +2790,24 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- API Keys modal -->
+<div id="api-keys-overlay" class="hidden" onclick="if(event.target===this)hideApiKeysModal()">
+  <div class="api-keys-card" role="dialog" aria-modal="true" aria-labelledby="api-keys-title">
+    <h2 id="api-keys-title">API Keys</h2>
+    <p class="subtitle">Store credentials for the API providers supported by this project.</p>
+    <div class="meta" id="api-keys-meta">Loading key status...</div>
+    <div class="fields" id="api-keys-fields">
+      <div class="state-card loading">Loading supported API keys...</div>
+    </div>
+    <div class="status" id="api-keys-status"></div>
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideApiKeysModal()">Close</button>
+      <button class="btn" type="button" onclick="loadApiKeysState()">Reload</button>
+      <button class="btn btn-primary" type="button" onclick="saveApiKeysState()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- GitHub Auth modal -->
 <div id="github-auth-overlay" class="hidden" onclick="if(event.target===this)hideGithubAuthModal()">
   <div class="github-auth-card" role="dialog" aria-modal="true" aria-labelledby="github-auth-title">
@@ -3051,8 +3099,10 @@ let watchdogAlertsTimer = null;
 let watchdogAlertsMutedUntil = 0;
 let watchdogAlertDigest = '';
 let watchdogMigrationSuggestions = [];
+let apiKeysState = null;
 let githubAuthState = null;
 let githubAuthTroubleshooting = null;
+let aboutState = null;
 const _autoVectorMemoryNotified = { chain: '', pipeline: '' };
 let gitSyncState = null;
 let gitSyncBranchState = null;
@@ -3111,10 +3161,12 @@ const _modalOverlayIds = [
   'clone-repo-overlay',
   'git-remote-overlay',
   'git-commit-overlay',
+  'api-keys-overlay',
   'github-auth-overlay',
   'todo-wishlist-overlay',
   'feature-dreams-overlay',
   'general-request-overlay',
+  'about-overlay',
   'onboarding-overlay',
   'first-run-wizard-overlay',
 ];
@@ -3306,6 +3358,10 @@ function _closeTopOverlay() {
     hideGitCommitModal();
     return true;
   }
+  if (overlayId === 'api-keys-overlay') {
+    hideApiKeysModal();
+    return true;
+  }
   if (overlayId === 'github-auth-overlay') {
     hideGithubAuthModal();
     return true;
@@ -3320,6 +3376,10 @@ function _closeTopOverlay() {
   }
   if (overlayId === 'general-request-overlay') {
     hideGeneralRequestModal();
+    return true;
+  }
+  if (overlayId === 'about-overlay') {
+    hideAboutModal();
     return true;
   }
   if (overlayId === 'onboarding-overlay') {
@@ -3607,6 +3667,142 @@ async function saveGovernancePolicy() {
     const message = (err && err.message) ? err.message : String(err);
     _setGovernancePolicyStatus('Could not save policy: ' + message, 'error');
     toast('Could not save governance policy: ' + message, 'error');
+  }
+}
+
+function _setApiKeysStatus(text, tone = 'muted') {
+  const el = document.getElementById('api-keys-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') el.style.color = 'var(--success)';
+  else if (tone === 'warn') el.style.color = 'var(--warning)';
+  else if (tone === 'error') el.style.color = 'var(--danger)';
+  else el.style.color = 'var(--text2)';
+}
+
+function _apiKeyFieldId(envVar, kind) {
+  const slug = String(envVar || '').replace(/[^A-Za-z0-9_]/g, '_');
+  return 'api-key-' + kind + '-' + slug;
+}
+
+function _apiKeysMetaText(state) {
+  const payload = state || {};
+  const storage = payload.secure_storage_available
+    ? ('Secure storage: available (' + String(payload.storage_backend || 'keyring') + ')')
+    : ('Secure storage: unavailable'
+      + (payload.storage_error ? (' - ' + String(payload.storage_error)) : ''));
+  const rows = Array.isArray(payload.supported_keys) ? payload.supported_keys : [];
+  const savedCount = rows.filter(item => !!(item && item.saved)).length;
+  const envCount = rows.filter(item => !!(item && item.in_environment)).length;
+  const summary = 'Saved keys: ' + savedCount + '/' + rows.length + ', loaded in session: ' + envCount + '/' + rows.length;
+  return [storage, summary].join('\n');
+}
+
+function _renderApiKeysFields(state) {
+  const fieldsEl = document.getElementById('api-keys-fields');
+  const metaEl = document.getElementById('api-keys-meta');
+  if (!fieldsEl) return;
+  const payload = state || {};
+  if (metaEl) metaEl.textContent = _apiKeysMetaText(payload);
+  const rows = Array.isArray(payload.supported_keys) ? payload.supported_keys : [];
+  if (!rows.length) {
+    fieldsEl.innerHTML = '<div class="state-card">No supported API key fields are configured.</div>';
+    return;
+  }
+  fieldsEl.innerHTML = rows.map((rawItem) => {
+    const item = rawItem && typeof rawItem === 'object' ? rawItem : {};
+    const envVar = String(item.env_var || '').trim();
+    const provider = String(item.provider || '').trim();
+    const description = String(item.description || '').trim();
+    const saved = !!item.saved;
+    const inEnv = !!item.in_environment;
+    const inputId = _apiKeyFieldId(envVar, 'input');
+    const clearId = _apiKeyFieldId(envVar, 'clear');
+    const savedText = saved ? 'Saved in secure storage.' : 'Not saved in secure storage.';
+    const envText = inEnv ? 'Loaded in current GUI session.' : 'Not loaded in current GUI session.';
+    return ''
+      + '<div class="field">'
+      + '<label for="' + escAttr(inputId) + '"><code>' + esc(envVar) + '</code>'
+      + (provider ? (' <span style="color:var(--text2)">(' + esc(provider) + ')</span>') : '')
+      + '</label>'
+      + '<input type="password" id="' + escAttr(inputId) + '" autocomplete="off" placeholder="Enter key to update">'
+      + (description ? ('<div class="field-help">' + esc(description) + '</div>') : '')
+      + '<div class="field-help">' + esc(savedText + ' ' + envText) + '</div>'
+      + '<label style="margin-top:6px"><input type="checkbox" id="' + escAttr(clearId) + '"' + (saved ? '' : ' disabled') + '> Remove saved key</label>'
+      + '</div>';
+  }).join('');
+
+  rows.forEach((rawItem) => {
+    const item = rawItem && typeof rawItem === 'object' ? rawItem : {};
+    const envVar = String(item.env_var || '').trim();
+    if (!envVar) return;
+    const inputEl = document.getElementById(_apiKeyFieldId(envVar, 'input'));
+    const clearEl = document.getElementById(_apiKeyFieldId(envVar, 'clear'));
+    if (!inputEl || !clearEl) return;
+    inputEl.addEventListener('input', () => {
+      if (String(inputEl.value || '').trim()) clearEl.checked = false;
+    });
+  });
+}
+
+async function loadApiKeysState(opts = {}) {
+  try {
+    const resp = await api('/api/api-keys');
+    if (resp.error) throw new Error(resp.error);
+    apiKeysState = resp || {};
+    _renderApiKeysFields(apiKeysState);
+    if (!opts.silent) _setApiKeysStatus('API key settings loaded.', 'ok');
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setApiKeysStatus('Could not load API key settings: ' + message, 'error');
+    if (!opts.silent) toast('Could not load API key settings: ' + message, 'error');
+  }
+}
+
+function showApiKeysModal() {
+  _openOverlay('api-keys-overlay', '#api-keys-overlay .btn-primary');
+  _setApiKeysStatus('');
+  loadApiKeysState({ silent: true });
+}
+
+function hideApiKeysModal() {
+  _closeOverlay('api-keys-overlay');
+}
+
+async function saveApiKeysState() {
+  const rows = Array.isArray(apiKeysState && apiKeysState.supported_keys)
+    ? apiKeysState.supported_keys
+    : [];
+  const payload = { keys: {}, clear_keys: [] };
+
+  rows.forEach((rawItem) => {
+    const item = rawItem && typeof rawItem === 'object' ? rawItem : {};
+    const envVar = String(item.env_var || '').trim();
+    if (!envVar) return;
+    const inputEl = document.getElementById(_apiKeyFieldId(envVar, 'input'));
+    const clearEl = document.getElementById(_apiKeyFieldId(envVar, 'clear'));
+    const value = String(inputEl ? inputEl.value : '').trim();
+    const clear = !!(clearEl && clearEl.checked);
+    if (value) payload.keys[envVar] = value;
+    else if (clear) payload.clear_keys.push(envVar);
+  });
+
+  if (!Object.keys(payload.keys).length && !payload.clear_keys.length) {
+    _setApiKeysStatus('No key updates selected.', 'warn');
+    return;
+  }
+
+  try {
+    const resp = await postJson('/api/api-keys', payload);
+    if (resp.error) throw new Error(resp.error);
+    apiKeysState = (resp && resp.settings) ? resp.settings : null;
+    _renderApiKeysFields(apiKeysState || {});
+    _setApiKeysStatus('API key settings saved.', 'ok');
+    toast('API key settings saved.', 'success');
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    _setApiKeysStatus('Could not save API key settings: ' + message, 'error');
+    toast('Could not save API key settings: ' + message, 'error');
   }
 }
 
@@ -3997,6 +4193,82 @@ function openDoc(docKey) {
   const overlay = _openOverlay('docs-overlay', '.docs-modal-header .btn');
   if (!overlay) return;
   loadDoc(docKey || 'quickstart');
+}
+
+function _renderAboutDocLinks(docs) {
+  const host = document.getElementById('about-doc-links');
+  if (!host) return;
+  const rows = Array.isArray(docs) ? docs : [];
+  if (!rows.length) {
+    host.innerHTML = '';
+    return;
+  }
+  host.innerHTML = rows
+    .filter(item => item && item.key && item.title)
+    .slice(0, 8)
+    .map(item => ''
+      + '<button class="btn" type="button" data-doc-key="' + escAttr(String(item.key)) + '">'
+      + esc(String(item.title))
+      + '</button>'
+    ).join('');
+  host.querySelectorAll('button[data-doc-key]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const docKey = String(btn.getAttribute('data-doc-key') || '').trim();
+      if (!docKey) return;
+      openDoc(docKey);
+    });
+  });
+}
+
+async function loadAboutModal(opts = {}) {
+  const titleEl = document.getElementById('about-title');
+  const subtitleEl = document.getElementById('about-subtitle');
+  const metaEl = document.getElementById('about-meta');
+  const readmeEl = document.getElementById('about-readme');
+  if (!readmeEl) return;
+
+  readmeEl.textContent = 'Loading README.md...';
+  if (metaEl) metaEl.textContent = 'Loading About details...';
+
+  try {
+    const resp = await api('/api/about');
+    if (resp.error) throw new Error(resp.error);
+    aboutState = resp || {};
+    const project = String(aboutState.project_display_name || PROGRAM_DISPLAY_NAME || 'WarpFoundry').trim();
+    const author = String(aboutState.author || 'Matthew Felsted').trim();
+    const version = String(aboutState.version || '').trim();
+    const readmeFilename = String(aboutState.readme_filename || 'README.md').trim();
+    if (titleEl) titleEl.textContent = 'About ' + project;
+    if (subtitleEl) subtitleEl.textContent = 'Author: ' + author;
+    if (metaEl) {
+      const metaLines = [
+        'Project: ' + project,
+        (version ? ('Version: ' + version) : ''),
+        'Source: ' + readmeFilename,
+      ].filter(Boolean);
+      metaEl.textContent = metaLines.join('\n');
+    }
+    readmeEl.textContent = String(aboutState.readme_content || '(empty)');
+    _renderAboutDocLinks(aboutState.docs);
+    if (!opts.silent) toast('About loaded', 'success');
+  } catch (err) {
+    const message = (err && err.message) ? err.message : String(err);
+    if (titleEl) titleEl.textContent = 'About';
+    if (subtitleEl) subtitleEl.textContent = 'Author: Matthew Felsted';
+    if (metaEl) metaEl.textContent = 'Could not load About data.';
+    readmeEl.textContent = 'Could not load README.md. ' + message;
+    _renderAboutDocLinks([]);
+    if (!opts.silent) toast('Could not load About details: ' + message, 'error');
+  }
+}
+
+function showAboutModal() {
+  _openOverlay('about-overlay', '#about-overlay .btn');
+  loadAboutModal({ silent: true });
+}
+
+function hideAboutModal() {
+  _closeOverlay('about-overlay');
 }
 
 let _runPlanResolver = null;
@@ -12044,6 +12316,23 @@ function escHtml(s) {
     <div class="browse-modal-footer">
       <button class="btn" onclick="browseClose()">Cancel</button>
       <button class="btn btn-primary" onclick="browseSelect()">Select This Folder</button>
+    </div>
+  </div>
+</div>
+
+<div id="about-overlay" class="hidden" onclick="if(event.target===this)hideAboutModal()">
+  <div class="about-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+    <div class="about-header">
+      <div>
+        <h3 id="about-title">About WarpFoundry</h3>
+        <div class="about-subtitle" id="about-subtitle">Author: Matthew Felsted</div>
+      </div>
+      <button class="btn" onclick="hideAboutModal()">Close</button>
+    </div>
+    <div class="about-body">
+      <div class="about-meta" id="about-meta">Loading About details...</div>
+      <div class="about-doc-links" id="about-doc-links"></div>
+      <pre class="about-readme" id="about-readme">Loading README.md...</pre>
     </div>
   </div>
 </div>

@@ -25,6 +25,7 @@ from urllib.request import Request, urlopen
 
 from flask import Flask, Response, jsonify, render_template, request
 
+from codex_manager import __version__
 from codex_manager.file_io import read_text_utf8_resilient
 from codex_manager.gui.chain import ChainExecutor
 from codex_manager.gui.models import (
@@ -43,20 +44,26 @@ from codex_manager.gui.recipes import (
 from codex_manager.gui.stop_guidance import get_stop_guidance
 from codex_manager.monitoring import ModelCatalogWatchdog
 from codex_manager.preflight import (
+    agent_preflight_issues as shared_agent_preflight_issues,
+)
+from codex_manager.preflight import (
     binary_exists as shared_binary_exists,
 )
 from codex_manager.preflight import (
-    agent_preflight_issues as shared_agent_preflight_issues,
     build_preflight_report,
-    env_secret_issue as shared_env_secret_issue,
-    image_provider_auth_issue as shared_image_provider_auth_issue,
     parse_agents,
+)
+from codex_manager.preflight import (
+    env_secret_issue as shared_env_secret_issue,
 )
 from codex_manager.preflight import (
     has_claude_auth as shared_has_claude_auth,
 )
 from codex_manager.preflight import (
     has_codex_auth as shared_has_codex_auth,
+)
+from codex_manager.preflight import (
+    image_provider_auth_issue as shared_image_provider_auth_issue,
 )
 from codex_manager.preflight import (
     repo_worktree_counts as shared_repo_worktree_counts,
@@ -145,6 +152,42 @@ _GITHUB_SECRET_SERVICE_LEGACY = "codex_manager.github_auth"
 _GITHUB_PAT_SECRET_KEY = "pat"
 _GITHUB_SSH_SECRET_KEY = "ssh_private_key"
 _GITHUB_AUTH_METHODS = frozenset({"https", "ssh"})
+_PROJECT_AUTHOR = "Matthew Felsted"
+_API_KEY_SECRET_SERVICE = "warpfoundry.api_keys"
+_API_KEY_SECRET_SERVICE_LEGACY = "codex_manager.api_keys"
+_API_KEY_FIELD_SPECS: tuple[tuple[str, str, str], ...] = (
+    (
+        "CODEX_API_KEY",
+        "Codex / OpenAI (preferred)",
+        "Primary key for Codex/OpenAI-backed agent and CUA flows.",
+    ),
+    (
+        "OPENAI_API_KEY",
+        "OpenAI",
+        "Alternative OpenAI key accepted by Codex and native deep-research flows.",
+    ),
+    (
+        "ANTHROPIC_API_KEY",
+        "Anthropic / Claude",
+        "Primary key for Claude and Anthropic-backed CUA flows.",
+    ),
+    (
+        "CLAUDE_API_KEY",
+        "Claude alias",
+        "Alias environment variable accepted for Claude/Anthropic auth checks.",
+    ),
+    (
+        "GOOGLE_API_KEY",
+        "Google Gemini",
+        "Primary key for Google-backed deep-research and generation providers.",
+    ),
+    (
+        "GEMINI_API_KEY",
+        "Gemini alias",
+        "Alias environment variable accepted for Google Gemini provider auth checks.",
+    ),
+)
+_API_KEY_ALLOWED_ENV_VARS = frozenset(spec[0] for spec in _API_KEY_FIELD_SPECS)
 _GITHUB_TEST_TIMEOUT_SECONDS = 20
 _GITHUB_REPO_METADATA_TIMEOUT_SECONDS = 8
 _GITHUB_REPO_METADATA_CACHE_TTL_SECONDS = 300
@@ -2329,6 +2372,29 @@ def _normalize_github_auth_method(value: object) -> str:
     return method if method in _GITHUB_AUTH_METHODS else "https"
 
 
+def _api_keyring_status() -> tuple[bool, str, str]:
+    """Return whether secure keyring storage is available for API keys."""
+    return _github_keyring_status()
+
+
+def _normalize_api_key_env_var(value: object) -> str:
+    """Normalize and validate one API-key env var name."""
+    env_var = str(value or "").strip().upper()
+    return env_var if env_var in _API_KEY_ALLOWED_ENV_VARS else ""
+
+
+def _api_key_catalog() -> list[dict[str, str]]:
+    """Return API-key metadata for GUI forms and status payloads."""
+    return [
+        {
+            "env_var": env_var,
+            "provider": provider,
+            "description": description,
+        }
+        for env_var, provider, description in _API_KEY_FIELD_SPECS
+    ]
+
+
 def _github_keyring_status() -> tuple[bool, str, str]:
     """Return whether secure keyring storage is usable and backend details."""
     if keyring is None:
@@ -2391,6 +2457,171 @@ def _github_secret_delete(secret_key: str) -> None:
         raise RuntimeError(f"Could not delete secure credential '{secret_key}': {exc}") from exc
     with suppress(PasswordDeleteError, KeyringError):
         keyring.delete_password(_GITHUB_SECRET_SERVICE_LEGACY, secret_key)
+
+
+def _api_key_secret_get(env_var: str) -> str:
+    """Read one API key credential from secure storage."""
+    ok, _backend, error = _api_keyring_status()
+    if not ok:
+        raise RuntimeError(error or "Secure storage unavailable.")
+    assert keyring is not None  # for type-checkers
+    try:
+        value = str(keyring.get_password(_API_KEY_SECRET_SERVICE, env_var) or "")
+        if value:
+            return value
+        return str(keyring.get_password(_API_KEY_SECRET_SERVICE_LEGACY, env_var) or "")
+    except KeyringError as exc:
+        raise RuntimeError(f"Could not read secure credential '{env_var}': {exc}") from exc
+
+
+def _api_key_secret_set(env_var: str, value: str) -> None:
+    """Persist one API key credential in secure storage."""
+    ok, _backend, error = _api_keyring_status()
+    if not ok:
+        raise RuntimeError(error or "Secure storage unavailable.")
+    assert keyring is not None  # for type-checkers
+    try:
+        keyring.set_password(_API_KEY_SECRET_SERVICE, env_var, value)
+    except KeyringError as exc:
+        raise RuntimeError(f"Could not store secure credential '{env_var}': {exc}") from exc
+
+
+def _api_key_secret_delete(env_var: str) -> None:
+    """Delete one API key credential from secure storage if present."""
+    ok, _backend, error = _api_keyring_status()
+    if not ok:
+        raise RuntimeError(error or "Secure storage unavailable.")
+    assert keyring is not None  # for type-checkers
+    try:
+        keyring.delete_password(_API_KEY_SECRET_SERVICE, env_var)
+    except PasswordDeleteError:
+        pass
+    except KeyringError as exc:
+        raise RuntimeError(f"Could not delete secure credential '{env_var}': {exc}") from exc
+    with suppress(PasswordDeleteError, KeyringError):
+        keyring.delete_password(_API_KEY_SECRET_SERVICE_LEGACY, env_var)
+
+
+def _initialize_api_keys_from_secure_storage() -> None:
+    """Populate process env from secure API-key storage when env vars are unset."""
+    storage_ok, _storage_backend, _storage_error = _api_keyring_status()
+    if not storage_ok:
+        return
+    for env_var in _API_KEY_ALLOWED_ENV_VARS:
+        if str(os.getenv(env_var, "")).strip():
+            continue
+        with suppress(RuntimeError):
+            value = _api_key_secret_get(env_var).strip()
+            if value:
+                os.environ[env_var] = value
+
+
+def _api_keys_state() -> dict[str, object]:
+    """Return API-key availability metadata without exposing secret values."""
+    storage_ok, storage_backend, storage_error = _api_keyring_status()
+    fields: list[dict[str, object]] = []
+
+    for item in _api_key_catalog():
+        env_var = str(item["env_var"])
+        saved = False
+        if storage_ok:
+            try:
+                value = _api_key_secret_get(env_var).strip()
+                saved = bool(value)
+                if value and not str(os.getenv(env_var, "")).strip():
+                    os.environ[env_var] = value
+            except RuntimeError as exc:
+                storage_ok = False
+                storage_error = str(exc)
+        fields.append(
+            {
+                "env_var": env_var,
+                "provider": item["provider"],
+                "description": item["description"],
+                "saved": saved,
+                "in_environment": bool(str(os.getenv(env_var, "")).strip()),
+            }
+        )
+
+    return {
+        "secure_storage_available": storage_ok,
+        "storage_backend": storage_backend,
+        "storage_error": storage_error,
+        "supported_keys": fields,
+    }
+
+
+def _save_api_keys_settings(
+    data: dict[str, object],
+) -> tuple[dict[str, object] | None, str | None, int]:
+    """Persist API keys in secure storage and mirror them into this process env."""
+    raw_keys = data.get("keys")
+    if raw_keys is None:
+        keys_payload: dict[object, object] = {}
+    elif isinstance(raw_keys, dict):
+        keys_payload = raw_keys
+    else:
+        return None, "'keys' must be a JSON object.", 400
+
+    raw_clear = data.get("clear_keys", [])
+    if raw_clear is None:
+        clear_payload: list[object] = []
+    elif isinstance(raw_clear, str):
+        clear_payload = [raw_clear]
+    elif isinstance(raw_clear, (list, tuple, set)):
+        clear_payload = list(raw_clear)
+    else:
+        return None, "'clear_keys' must be a list of env-var names.", 400
+
+    invalid_keys: list[str] = []
+    to_set: dict[str, str] = {}
+    for raw_name, raw_value in keys_payload.items():
+        env_var = _normalize_api_key_env_var(raw_name)
+        if not env_var:
+            invalid_keys.append(str(raw_name))
+            continue
+        value = str(raw_value or "").strip()
+        if value:
+            to_set[env_var] = value
+
+    to_clear: set[str] = set()
+    for raw_name in clear_payload:
+        env_var = _normalize_api_key_env_var(raw_name)
+        if not env_var:
+            invalid_keys.append(str(raw_name))
+            continue
+        to_clear.add(env_var)
+
+    if invalid_keys:
+        unique_invalid = sorted({key for key in invalid_keys if key})
+        detail = ", ".join(unique_invalid) if unique_invalid else "(empty)"
+        return (
+            None,
+            f"Unsupported API key environment variable(s): {detail}.",
+            400,
+        )
+
+    clear_only = to_clear.difference(to_set.keys())
+    requested_secret_mutation = bool(to_set or clear_only)
+    storage_ok, _storage_backend, storage_error = _api_keyring_status()
+    if requested_secret_mutation and not storage_ok:
+        return None, storage_error or "Secure storage is unavailable.", 503
+
+    try:
+        for env_var, value in to_set.items():
+            _api_key_secret_set(env_var, value)
+            os.environ[env_var] = value
+        for env_var in clear_only:
+            _api_key_secret_delete(env_var)
+            os.environ.pop(env_var, None)
+    except RuntimeError as exc:
+        return None, str(exc), 500
+
+    return _api_keys_state(), None, 200
+
+
+with suppress(Exception):
+    _initialize_api_keys_from_secure_storage()
 
 
 def _github_auth_meta_defaults() -> dict[str, object]:
@@ -3542,10 +3773,19 @@ def _foundation_bootstrap_status(repo_path: Path) -> dict[str, object]:
     return payload
 
 
+def _project_root_dir() -> Path:
+    """Return repository root resolved from this module location."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _readme_path() -> Path:
+    """Return the repository README path."""
+    return _project_root_dir() / "README.md"
+
+
 def _docs_dir() -> Path | None:
     """Resolve the local docs directory when available."""
-    this_file = Path(__file__).resolve()
-    candidates = [this_file.parents[3] / "docs"]
+    candidates = [_project_root_dir() / "docs"]
     seen: set[Path] = set()
     for candidate in candidates:
         resolved = candidate.resolve()
@@ -3970,6 +4210,49 @@ def api_github_auth_test():
 
 
 # â”€â”€ Presets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+
+@app.route("/api/api-keys")
+def api_api_keys():
+    """Return API-key availability and secure-storage status."""
+    return jsonify(_api_keys_state())
+
+
+@app.route("/api/api-keys", methods=["POST"])
+def api_api_keys_save():
+    """Persist API keys in secure storage and update process env."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required."}), 400
+    settings, error, status = _save_api_keys_settings(data)
+    if error:
+        return jsonify({"error": error}), status
+    return jsonify({"status": "saved", "settings": settings})
+
+
+@app.route("/api/about")
+def api_about():
+    """Return README-backed About payload for the GUI modal."""
+    readme_path = _readme_path().resolve()
+    project_root = _project_root_dir().resolve()
+    if not readme_path.is_file() or readme_path.parent != project_root:
+        return jsonify({"error": "README.md not found."}), 404
+
+    try:
+        readme_content = _read_text_utf8_resilient(readme_path)
+    except Exception as exc:
+        return jsonify({"error": f"Could not read README.md: {exc}"}), 500
+
+    return jsonify(
+        {
+            "project_display_name": _project_display_name(),
+            "version": str(__version__ or ""),
+            "author": _PROJECT_AUTHOR,
+            "readme_filename": readme_path.name,
+            "readme_content": readme_content,
+            "docs": _docs_manifest(),
+        }
+    )
 
 
 @app.route("/api/docs")
