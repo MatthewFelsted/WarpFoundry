@@ -78,6 +78,8 @@ from codex_manager.pipeline.phases import (
 from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.preflight import (
     binary_exists as shared_binary_exists,
+    has_claude_auth as shared_has_claude_auth,
+    has_codex_auth as shared_has_codex_auth,
 )
 from codex_manager.preflight import (
     repo_worktree_counts as shared_repo_worktree_counts,
@@ -2248,31 +2250,11 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _has_codex_auth() -> bool:
-        if os.getenv("CODEX_API_KEY") or os.getenv("OPENAI_API_KEY"):
-            return True
-        home = Path.home()
-        for path in (
-            home / ".codex" / "auth.json",
-            home / ".config" / "codex" / "auth.json",
-        ):
-            if path.exists():
-                return True
-        return False
+        return shared_has_codex_auth()
 
     @staticmethod
     def _has_claude_auth() -> bool:
-        if os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY"):
-            return True
-        home = Path.home()
-        for path in (
-            home / ".claude.json",
-            home / ".claude" / "auth.json",
-            home / ".config" / "claude" / "auth.json",
-            home / ".config" / "claude-code" / "auth.json",
-        ):
-            if path.exists():
-                return True
-        return False
+        return shared_has_claude_auth()
 
     @staticmethod
     def _repo_write_error(repo: Path) -> str | None:
@@ -2288,15 +2270,38 @@ class PipelineOrchestrator:
 
     def _collect_required_agents(self, config: PipelineConfig) -> set[str]:
         phase_order = config.get_phase_order()
+        default_agent = self._resolve_phase_agent_key(
+            phase_agent="",
+            default_agent=config.agent,
+        )
         agents = {
-            (p.agent or config.agent or "codex").strip().lower() for p in phase_order if p.enabled
+            self._resolve_phase_agent_key(
+                phase_agent=p.agent,
+                default_agent=config.agent,
+            )
+            for p in phase_order
+            if p.enabled
         }
         if not agents:
-            agents = {(config.agent or "codex").strip().lower()}
-        normalized = set()
-        for agent in agents:
-            normalized.add("codex" if agent in {"", "auto"} else agent)
-        return normalized
+            agents = {default_agent}
+        return agents
+
+    @staticmethod
+    def _normalize_agent_key(raw: str) -> str:
+        key = (raw or "").strip().lower()
+        if key in {"claude", "claude-code", "claude_code", "claudecode"}:
+            return "claude_code"
+        if key in {"", "auto"}:
+            return "auto"
+        return key
+
+    def _resolve_phase_agent_key(self, *, phase_agent: str, default_agent: str) -> str:
+        selected = self._normalize_agent_key(phase_agent)
+        if selected == "auto":
+            selected = self._normalize_agent_key(default_agent)
+        if selected == "auto":
+            selected = "codex"
+        return selected
 
     @staticmethod
     def _image_provider_auth_issue(provider: str) -> str | None:
@@ -2305,8 +2310,11 @@ class PipelineOrchestrator:
             if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
                 return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
             return None
-        if not os.getenv("OPENAI_API_KEY"):
-            return "Image generation (openai provider) requires OPENAI_API_KEY."
+        if not PipelineOrchestrator._has_codex_auth():
+            return (
+                "Image generation (openai provider) requires OPENAI_API_KEY "
+                "or CODEX_API_KEY (or Codex CLI auth)."
+            )
         return None
 
     def _write_restart_checkpoint(
@@ -3116,9 +3124,10 @@ class PipelineOrchestrator:
                             )
 
                             # Execute
-                            agent_key = (phase_cfg.agent or "").strip().lower()
-                            if agent_key in {"", "auto"}:
-                                agent_key = (config.agent or "codex").strip().lower()
+                            agent_key = self._resolve_phase_agent_key(
+                                phase_agent=phase_cfg.agent,
+                                default_agent=config.agent,
+                            )
                             runner = runners.get(agent_key, runners["codex"])
 
                             result = self._execute_phase(

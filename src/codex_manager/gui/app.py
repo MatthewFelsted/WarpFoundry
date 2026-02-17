@@ -338,11 +338,19 @@ def _collect_chain_agents(config: ChainConfig) -> set[str]:
 
 def _collect_pipeline_agents(config: PipelineGUIConfig) -> set[str]:
     """Collect normalized agent keys used by enabled pipeline phases."""
+    default_agent = _normalize_agent(config.agent)
     if config.phases:
         enabled = [p for p in config.phases if p.enabled]
         if enabled:
-            return {_normalize_agent(p.agent) for p in enabled}
-    return {_normalize_agent(config.agent)}
+            resolved: set[str] = set()
+            for phase in enabled:
+                phase_agent = (phase.agent or "").strip()
+                if not phase_agent or phase_agent.lower() == "auto":
+                    resolved.add(default_agent)
+                else:
+                    resolved.add(_normalize_agent(phase_agent))
+            return resolved
+    return {default_agent}
 
 
 def _agent_preflight_issues(
@@ -385,8 +393,11 @@ def _image_provider_auth_issue(enabled: bool, provider: str) -> str | None:
         if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
             return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
         return None
-    if not os.getenv("OPENAI_API_KEY"):
-        return "Image generation (openai provider) requires OPENAI_API_KEY."
+    if not _has_codex_auth():
+        return (
+            "Image generation (openai provider) requires OPENAI_API_KEY "
+            "or CODEX_API_KEY (or Codex CLI auth)."
+        )
     return None
 
 

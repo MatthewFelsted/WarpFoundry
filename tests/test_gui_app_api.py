@@ -688,6 +688,7 @@ def test_small_json_payload_is_not_compressed(client):
 def test_chain_start_preflight_requires_image_provider_auth(client, monkeypatch, tmp_path: Path):
     repo = _make_repo(tmp_path, git=True)
     monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.setattr(gui_app_module, "_has_codex_auth", lambda: False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     resp = client.post(
@@ -704,6 +705,13 @@ def test_chain_start_preflight_requires_image_provider_auth(client, monkeypatch,
     assert resp.status_code == 400
     assert data
     assert any("OPENAI_API_KEY" in issue for issue in data.get("issues", []))
+
+
+def test_image_provider_auth_accepts_codex_auth(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(gui_app_module, "_has_codex_auth", lambda: True)
+
+    assert gui_app_module._image_provider_auth_issue(True, "openai") is None
 
 
 def test_pipeline_start_preflight_requires_image_provider_auth(
@@ -731,6 +739,59 @@ def test_pipeline_start_preflight_requires_image_provider_auth(
         ("GOOGLE_API_KEY" in issue or "GEMINI_API_KEY" in issue)
         for issue in data.get("issues", [])
     )
+
+
+def test_pipeline_start_auto_phase_inherits_global_agent_for_preflight(
+    client, monkeypatch, tmp_path: Path
+) -> None:
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_binary_exists", lambda binary: binary == "claude")
+    monkeypatch.setattr(gui_app_module, "_has_codex_auth", lambda: False)
+    monkeypatch.setattr(gui_app_module, "_has_claude_auth", lambda: True)
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    captured: dict[str, object] = {}
+
+    class _StubOrchestrator:
+        def __init__(self, repo_path, config):
+            captured["repo_path"] = str(repo_path)
+            captured["config"] = config
+            self.is_running = False
+
+        def start(self):
+            captured["started"] = True
+
+    monkeypatch.setattr(
+        "codex_manager.pipeline.orchestrator.PipelineOrchestrator",
+        _StubOrchestrator,
+    )
+
+    resp = client.post(
+        "/api/pipeline/start",
+        json=_pipeline_payload(
+            repo,
+            agent="claude_code",
+            codex_binary="missing-codex",
+            claude_binary="claude",
+            phases=[
+                {
+                    "phase": "ideation",
+                    "enabled": True,
+                    "iterations": 1,
+                    "agent": "auto",
+                    "on_failure": "skip",
+                    "test_policy": "skip",
+                    "custom_prompt": "",
+                }
+            ],
+        ),
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data.get("status") == "started"
+    assert captured.get("started") is True
 
 
 def test_pipeline_start_rejects_auto_restart_without_self_improvement(

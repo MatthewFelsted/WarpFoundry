@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import codex_manager.pipeline.orchestrator as orchestrator_module
+import codex_manager.preflight as preflight_module
 from codex_manager.brain.manager import BrainDecision
 from codex_manager.git_tools import diff_numstat
 from codex_manager.pipeline.orchestrator import PipelineOrchestrator
@@ -1451,6 +1452,78 @@ def test_preflight_rejects_directory_path_as_codex_binary(monkeypatch, tmp_path:
 
     assert state.stop_reason == "preflight_failed"
     assert state.total_phases_completed == 0
+
+
+def test_preflight_rejects_placeholder_codex_auth_env(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(preflight_module.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(PipelineOrchestrator, "_binary_exists", staticmethod(lambda _binary: True))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-your-key-here")
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    issues = orch._preflight_issues(cfg, repo.resolve())
+
+    assert any("Codex auth not detected" in issue for issue in issues)
+
+
+def test_collect_required_agents_resolves_auto_phase_to_global_agent(tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    cfg = PipelineConfig(
+        agent="claude_code",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                agent="auto",
+                custom_prompt="noop",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+
+    assert orch._collect_required_agents(cfg) == {"claude_code"}
+
+
+def test_preflight_openai_image_provider_accepts_codex_auth(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    monkeypatch.setattr(PipelineOrchestrator, "_binary_exists", staticmethod(lambda _binary: True))
+    monkeypatch.setattr(PipelineOrchestrator, "_has_codex_auth", staticmethod(lambda: True))
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        image_generation_enabled=True,
+        image_provider="openai",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    issues = orch._preflight_issues(cfg, repo.resolve())
+
+    assert not any("Image generation (openai provider)" in issue for issue in issues)
 
 
 def test_preflight_fails_fast_when_repo_worktree_is_dirty(monkeypatch, tmp_path: Path):
