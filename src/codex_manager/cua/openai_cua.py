@@ -68,20 +68,24 @@ def parse_openai_action(action_data: Any) -> CUAAction:
 
     action_type_str = getattr(action_data, "type", raw.get("type", "click"))
     action_type = _OPENAI_ACTION_MAP.get(action_type_str, ActionType.CLICK)
+    is_dict_payload = isinstance(action_data, dict)
+
+    def _value(name: str, default: Any = 0) -> Any:
+        if is_dict_payload:
+            return raw.get(name, default)
+        return getattr(action_data, name, raw.get(name, default))
+
+    keys_value = raw.get("keys", []) if is_dict_payload else getattr(action_data, "keys", raw.get("keys", []))
 
     return CUAAction(
         action_type=action_type,
-        x=int(getattr(action_data, "x", raw.get("x", 0)) or 0),
-        y=int(getattr(action_data, "y", raw.get("y", 0)) or 0),
-        button=str(getattr(action_data, "button", raw.get("button", "left")) or "left"),
-        text=str(getattr(action_data, "text", raw.get("text", "")) or ""),
-        keys=list(getattr(action_data, "keys", raw.get("keys", [])) or []),
-        scroll_x=int(
-            getattr(action_data, "scrollX", raw.get("scrollX", raw.get("scroll_x", 0))) or 0
-        ),
-        scroll_y=int(
-            getattr(action_data, "scrollY", raw.get("scrollY", raw.get("scroll_y", 0))) or 0
-        ),
+        x=int(_value("x", 0) or 0),
+        y=int(_value("y", 0) or 0),
+        button=str(_value("button", "left") or "left"),
+        text=str(_value("text", "") or ""),
+        keys=list(keys_value or []),
+        scroll_x=int(_value("scrollX", raw.get("scroll_x", 0)) or 0),
+        scroll_y=int(_value("scrollY", raw.get("scroll_y", 0)) or 0),
         raw=raw,
     )
 
