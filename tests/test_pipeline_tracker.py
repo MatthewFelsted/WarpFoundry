@@ -285,3 +285,77 @@ def test_get_context_for_phase_includes_scientist_report_for_implementation(tmp_
 
     assert "## Current SCIENTIST_REPORT.md" in implementation_ctx
     assert "science report content" in implementation_ctx
+
+
+def test_get_recovered_backlog_context_collects_cross_run_sources(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    tracker = LogTracker(repo)
+    tracker.initialize()
+    tracker.write("WISHLIST.md", "- [ ] Keep unresolved wishlist work in scope\n")
+
+    owner_dir = repo / ".codex_manager" / "owner"
+    owner_dir.mkdir(parents=True, exist_ok=True)
+    (owner_dir / "TODO_WISHLIST.md").write_text(
+        "- [ ] Keep archive ideas alive\n",
+        encoding="utf-8",
+    )
+    (owner_dir / "GENERAL_REQUEST_HISTORY.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "request": "Preserve experiment findings for future runs.",
+                        "status": "considered",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "request": "Already shipped request.",
+                        "status": "implemented",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    tracker.path_for("HISTORY.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "phase_result",
+                "level": "warn",
+                "summary": "Implementation failed to finish all tasks.",
+                "context": {"success": False, "phase": "implementation", "cycle": 3},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    archive_dir = repo / ".codex_manager" / "output_history" / "20260217T010101Z"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / "RUN_SUMMARY.md").write_text(
+        "- [ ] Revisit archived trial notes\n",
+        encoding="utf-8",
+    )
+
+    recovered = tracker.get_recovered_backlog_context(max_items=12)
+
+    assert "## Recovered Pending Backlog (Cross-Run)" in recovered
+    assert "[logs/WISHLIST.md] Keep unresolved wishlist work in scope" in recovered
+    assert "[owner/TODO_WISHLIST.md] Keep archive ideas alive" in recovered
+    assert "owner/GENERAL_REQUEST_HISTORY.jsonl:considered" in recovered
+    assert "Follow up failed phase 'implementation'" in recovered
+    assert "output_history/20260217T010101Z/RUN_SUMMARY.md" in recovered
+
+
+def test_get_context_for_self_improvement_phase_includes_recovered_backlog(tmp_path: Path) -> None:
+    tracker = LogTracker(tmp_path / "repo")
+    tracker.initialize()
+    tracker.write("WISHLIST.md", "- [ ] Recover pending items before restart\n")
+
+    context = tracker.get_context_for_phase("apply_upgrades_and_restart")
+
+    assert "## Recovered Pending Backlog (Cross-Run)" in context
+    assert "Recover pending items before restart" in context

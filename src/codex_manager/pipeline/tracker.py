@@ -172,6 +172,20 @@ _TEMPLATES: dict[str, str] = {
 _NORMALIZATION_MARKER = ".encoding_normalized_v1"
 _DEFAULT_MARKDOWN_ROTATE_BYTES = 2_000_000
 _DEFAULT_MARKDOWN_MAX_ARCHIVES = 12
+_RECOVERY_CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[(?P<status>[ xX])\]\s+(?P<body>.+?)\s*$")
+_RECOVERY_TODO_RE = re.compile(
+    r"^\s*(?:[-*]\s+)?(?:TODO|FIXME|TBD)\s*[:\-]\s*(?P<body>.+)$",
+    re.IGNORECASE,
+)
+_RECOVERY_DONE_STATUSES = {
+    "done",
+    "completed",
+    "complete",
+    "implemented",
+    "resolved",
+    "closed",
+    "shipped",
+}
 
 
 class LogTracker:
@@ -486,6 +500,237 @@ class LogTracker:
         next_num = max(numbers, default=0) + 1
         return f"{prefix}-{next_num:03d}"
 
+    @staticmethod
+    def _clip_recovery_text(value: str, *, limit: int = 240) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 3)].rstrip() + "..."
+
+    def _collect_markdown_recovery_items(
+        self,
+        path: Path,
+        *,
+        source: str,
+        max_items: int,
+    ) -> list[str]:
+        if max_items <= 0 or not path.is_file():
+            return []
+        text = self._read_text_utf8_resilient(path)
+        items: list[str] = []
+        for line in text.splitlines():
+            checkbox_match = _RECOVERY_CHECKBOX_RE.match(line)
+            if checkbox_match:
+                status = str(checkbox_match.group("status") or "").strip().lower()
+                if status == "x":
+                    continue
+                body = self._clip_recovery_text(str(checkbox_match.group("body") or ""))
+                if body:
+                    items.append(f"[{source}] {body}")
+                    if len(items) >= max_items:
+                        break
+                continue
+
+            todo_match = _RECOVERY_TODO_RE.match(line)
+            if todo_match:
+                body = self._clip_recovery_text(str(todo_match.group("body") or ""))
+                if body:
+                    items.append(f"[{source}] {body}")
+                    if len(items) >= max_items:
+                        break
+        return items
+
+    def _collect_general_request_history_items(self, *, max_items: int) -> list[str]:
+        if max_items <= 0:
+            return []
+        path = self.repo_path / ".codex_manager" / "owner" / "GENERAL_REQUEST_HISTORY.jsonl"
+        if not path.is_file():
+            return []
+        text = self._read_text_utf8_resilient(path)
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return []
+        items: list[str] = []
+        for raw in reversed(lines[-600:]):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status") or "").strip().lower()
+            if status in _RECOVERY_DONE_STATUSES:
+                continue
+            request = self._clip_recovery_text(str(payload.get("request") or ""))
+            if not request:
+                continue
+            status_label = status or "pending"
+            items.append(f"[owner/GENERAL_REQUEST_HISTORY.jsonl:{status_label}] {request}")
+            if len(items) >= max_items:
+                break
+        return items
+
+    def _collect_history_recovery_items(self, *, max_items: int) -> list[str]:
+        if max_items <= 0:
+            return []
+        path = self.path_for("HISTORY.jsonl")
+        if not path.is_file():
+            return []
+        text = self._read_text_utf8_resilient(path)
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return []
+        items: list[str] = []
+        for raw in reversed(lines[-800:]):
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            event = str(payload.get("event") or "").strip().lower()
+            level = str(payload.get("level") or "").strip().lower()
+            summary = self._clip_recovery_text(str(payload.get("summary") or ""), limit=180)
+            context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+            if event == "phase_result":
+                if bool(context.get("success", True)):
+                    continue
+                phase = str(context.get("phase") or "").strip() or "unknown"
+                cycle = str(context.get("cycle") or "?")
+                detail = summary or "phase reported failure"
+                items.append(
+                    f"[logs/HISTORY.jsonl] Follow up failed phase '{phase}' (cycle {cycle}): {detail}"
+                )
+            elif event == "self_restart_requested":
+                detail = summary or "restart checkpoint requested"
+                items.append(f"[logs/HISTORY.jsonl] Restart handoff recorded: {detail}")
+            elif level in {"warn", "error"}:
+                if summary:
+                    items.append(f"[logs/HISTORY.jsonl:{level}] {summary}")
+            if len(items) >= max_items:
+                break
+        return items
+
+    def _collect_output_history_recovery_items(self, *, max_items: int) -> list[str]:
+        if max_items <= 0:
+            return []
+        output_history_root = self.repo_path / ".codex_manager" / "output_history"
+        if not output_history_root.is_dir():
+            return []
+
+        run_dirs = sorted(
+            (path for path in output_history_root.iterdir() if path.is_dir()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if not run_dirs:
+            return []
+
+        items: list[str] = []
+        filename_keywords = (
+            "todo",
+            "wishlist",
+            "plan",
+            "progress",
+            "research",
+            "experiment",
+            "scientist",
+            "summary",
+            "notes",
+        )
+        for run_dir in run_dirs[:3]:
+            for file_path in sorted(run_dir.glob("*.md")):
+                name = file_path.name.lower()
+                if not any(keyword in name for keyword in filename_keywords):
+                    continue
+                source = f"output_history/{run_dir.name}/{file_path.name}"
+                remaining = max_items - len(items)
+                if remaining <= 0:
+                    return items
+                hits = self._collect_markdown_recovery_items(
+                    file_path,
+                    source=source,
+                    max_items=remaining,
+                )
+                if hits:
+                    items.extend(hits)
+                if len(items) >= max_items:
+                    return items
+        return items
+
+    def get_recovered_backlog_context(self, *, max_items: int = 24) -> str:
+        """Return deduplicated pending items recovered from cross-run artifacts."""
+        budget = max(1, int(max_items))
+        recovered: list[str] = []
+        seen: set[str] = set()
+
+        def add_items(items: list[str]) -> bool:
+            for item in items:
+                normalized = re.sub(r"\s+", " ", item).strip().lower()
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                recovered.append(item)
+                if len(recovered) >= budget:
+                    return False
+            return True
+
+        markdown_sources: list[tuple[Path, str]] = [
+            (self.path_for("WISHLIST.md"), "logs/WISHLIST.md"),
+            (self.path_for("PROGRESS.md"), "logs/PROGRESS.md"),
+            (self.path_for("ERRORS.md"), "logs/ERRORS.md"),
+            (self.path_for("RESEARCH.md"), "logs/RESEARCH.md"),
+            (self.path_for("EXPERIMENTS.md"), "logs/EXPERIMENTS.md"),
+            (self.path_for("SCIENTIST_REPORT.md"), "logs/SCIENTIST_REPORT.md"),
+            (
+                self.repo_path / ".codex_manager" / "owner" / "TODO_WISHLIST.md",
+                "owner/TODO_WISHLIST.md",
+            ),
+            (
+                self.repo_path / ".codex_manager" / "owner" / "FEATURE_DREAMS.md",
+                "owner/FEATURE_DREAMS.md",
+            ),
+            (
+                self.repo_path / "docs" / "REQUESTED_FEATURES_TODO.md",
+                "docs/REQUESTED_FEATURES_TODO.md",
+            ),
+        ]
+
+        for path, source in markdown_sources:
+            remaining = budget - len(recovered)
+            if remaining <= 0:
+                break
+            items = self._collect_markdown_recovery_items(
+                path,
+                source=source,
+                max_items=remaining,
+            )
+            if not add_items(items):
+                break
+
+        if len(recovered) < budget:
+            add_items(
+                self._collect_general_request_history_items(max_items=budget - len(recovered))
+            )
+        if len(recovered) < budget:
+            add_items(self._collect_history_recovery_items(max_items=budget - len(recovered)))
+        if len(recovered) < budget:
+            add_items(self._collect_output_history_recovery_items(max_items=budget - len(recovered)))
+
+        if not recovered:
+            return ""
+
+        lines = [
+            "## Recovered Pending Backlog (Cross-Run)",
+            "",
+            "Carry forward unresolved items from logs, owner docs, requests, and archives:",
+        ]
+        for item in recovered[:budget]:
+            lines.append(f"- {item}")
+        return "\n".join(lines)
+
     def get_context_for_phase(
         self,
         phase: str,
@@ -543,6 +788,17 @@ class LogTracker:
             if errors:
                 parts.append(f"## Current ERRORS.md\n\n{errors[:2000]}")
 
+        if phase_enum == PipelinePhase.IMPLEMENTATION:
+            experiments = self.read("EXPERIMENTS.md")
+            if experiments:
+                parts.append(f"## Current EXPERIMENTS.md\n\n{experiments[:2500]}")
+            research = self.read("RESEARCH.md")
+            if research:
+                parts.append(f"## Current RESEARCH.md\n\n{research[:2500]}")
+            progress = self.read("PROGRESS.md")
+            if progress:
+                parts.append(f"## Recent PROGRESS.md\n\n{progress[-2200:]}")
+
         if phase_enum in (
             PipelinePhase.PRIORITIZATION,
             PipelinePhase.IMPLEMENTATION,
@@ -559,6 +815,12 @@ class LogTracker:
                 if content:
                     parts.append(f"## Current {fname}\n\n{content[:2000]}")
 
+        if phase_enum == PipelinePhase.APPLY_UPGRADES_AND_RESTART:
+            for fname in ("WISHLIST.md", "EXPERIMENTS.md", "RESEARCH.md", "SCIENTIST_REPORT.md"):
+                content = self.read(fname)
+                if content:
+                    parts.append(f"## Current {fname}\n\n{content[:2200]}")
+
         if phase_enum == PipelinePhase.TESTING:
             # Testing needs to know what was implemented
             progress = self.read("PROGRESS.md")
@@ -570,6 +832,20 @@ class LogTracker:
             text = self._read_text_utf8_resilient(protocol)
             if text:
                 parts.append(f"## Agent Protocol\n\n{text[:2200]}")
+
+        if phase_enum in (
+            PipelinePhase.PRIORITIZATION,
+            PipelinePhase.IMPLEMENTATION,
+            PipelinePhase.DEBUGGING,
+            PipelinePhase.DEEP_RESEARCH,
+            PipelinePhase.PROGRESS_REVIEW,
+            PipelinePhase.APPLY_UPGRADES_AND_RESTART,
+        ):
+            recovered = self.get_recovered_backlog_context(
+                max_items=24 if phase_enum == PipelinePhase.APPLY_UPGRADES_AND_RESTART else 16
+            )
+            if recovered:
+                parts.append(recovered)
 
         return "\n\n---\n\n".join(parts)
 

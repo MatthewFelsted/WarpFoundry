@@ -11,6 +11,7 @@ from typing import ClassVar
 
 import codex_manager.pipeline.orchestrator as orchestrator_module
 import codex_manager.preflight as preflight_module
+import codex_manager.research.deep_research as deep_research_module
 from codex_manager.brain.manager import BrainDecision
 from codex_manager.git_tools import diff_numstat
 from codex_manager.pipeline.orchestrator import PipelineOrchestrator
@@ -934,6 +935,126 @@ def test_pipeline_prompt_logging_debug_opt_in_shows_raw_prompt(monkeypatch, tmp_
     debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     payload = json.loads(debug_lines[-1])
     assert secret in payload["prompt_preview"]
+
+
+def test_pipeline_missing_validation_command_warning_logs_once(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    captured_logs: list[str] = []
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=2,
+        stop_on_convergence=False,
+        test_cmd="",
+        smoke_test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Implement one change.",
+            )
+        ],
+    )
+
+    PipelineOrchestrator(
+        repo_path=repo,
+        config=cfg,
+        log_callback=lambda _level, message: captured_logs.append(message),
+    ).run()
+
+    joined = "\n".join(captured_logs)
+    expected = "No validation command is configured."
+    assert joined.count(expected) == 1
+    assert "no matching command is configured; tests will be skipped." not in joined
+
+
+def test_native_deep_research_logs_provider_prompt_previews(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    def _fake_run_native_deep_research(*, repo_path, topic, project_context, settings):
+        return deep_research_module.DeepResearchRunResult(
+            ok=True,
+            topic=topic,
+            providers=[
+                deep_research_module.DeepResearchProviderResult(
+                    provider="openai",
+                    ok=True,
+                    summary="Use atomic writes for state persistence.",
+                    sources=["https://docs.python.org/3/library/pathlib.html"],
+                    input_tokens=21,
+                    output_tokens=34,
+                    estimated_cost_usd=0.0012,
+                )
+            ],
+            merged_summary="Atomic state writes and explicit fail-fast guards are recommended.",
+            merged_sources=["https://docs.python.org/3/library/pathlib.html"],
+            total_input_tokens=21,
+            total_output_tokens=34,
+            total_estimated_cost_usd=0.0012,
+            governance_warnings=[],
+            filtered_source_count=0,
+            provider_prompt_previews={
+                "openai": (
+                    "You are running deep technical research for a software project.\n"
+                    f"Topic: {topic}\n\n"
+                    "Project context:\n"
+                    f"{project_context}"
+                )
+            },
+        )
+
+    monkeypatch.setattr(
+        orchestrator_module, "run_native_deep_research", _fake_run_native_deep_research
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        deep_research_enabled=True,
+        deep_research_native_enabled=True,
+        deep_research_providers="openai",
+        test_cmd="",
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    result = orch._execute_native_deep_research(
+        topic="Repository hardening gaps after WISH-001, WISH-002, and WISH-008",
+        cycle=1,
+        iteration=1,
+        phase_context="## Context\nWISH-008 done; verify remaining auth/redaction gaps.",
+    )
+
+    assert result.success is True
+    assert result.phase == "deep_research"
+    assert result.agent_used == "deep_research:openai"
+
+    debug_path = repo / ".codex_manager" / "logs" / "PIPELINE_DEBUG.jsonl"
+    assert debug_path.exists()
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert debug_lines
+    payload = json.loads(debug_lines[-1])
+    assert payload["phase"] == "deep_research"
+    assert payload["runner"] == "deep_research:openai"
+
+    native_payload = payload["native_deep_research"]
+    assert native_payload["provider_prompt_previews"]["openai"].startswith("[metadata-only] ")
+    assert native_payload["provider_prompt_metadata"]["openai"]["length_chars"] > 0
+    assert native_payload["project_context_preview"].startswith("[metadata-only] ")
+    assert native_payload["result"]["ok"] is True
+    assert payload["prompt_length"] == payload["prompt_metadata"]["length_chars"]
+    assert payload["prompt_sha256"] == payload["prompt_metadata"]["sha256"]
 
 
 def test_pipeline_phase_marks_failed_tests_as_failure(monkeypatch, tmp_path: Path):
@@ -2155,6 +2276,77 @@ def test_self_improvement_phase_requests_restart_and_writes_checkpoint(
     assert payload["resume_cycle"] == 1
     assert payload["resume_phase_index"] == 2
     assert payload["config"]["self_improvement_enabled"] is True
+
+
+def test_self_improvement_phase_recovers_backlog_into_progress_and_vector_memory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    owner_dir = repo / ".codex_manager" / "owner"
+    owner_dir.mkdir(parents=True, exist_ok=True)
+    (owner_dir / "TODO_WISHLIST.md").write_text(
+        "- [ ] Carry forward unfinished archive task\n",
+        encoding="utf-8",
+    )
+    archive_dir = repo / ".codex_manager" / "output_history" / "20260217T020202Z"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / "RUN_SUMMARY.md").write_text(
+        "- [ ] Validate archived experiment outcome\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=2,
+        test_cmd="",
+        self_improvement_enabled=True,
+        vector_memory_enabled=True,
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Run ideation.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.APPLY_UPGRADES_AND_RESTART,
+                iterations=1,
+                custom_prompt="Prepare restart checkpoint.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.TESTING,
+                iterations=1,
+                custom_prompt="Run tests.",
+            ),
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "self_restart_requested"
+    progress = (repo / ".codex_manager" / "logs" / "PROGRESS.md").read_text(encoding="utf-8")
+    assert "Recovered Backlog Snapshot" in progress
+    assert "Carry forward unfinished archive task" in progress
+
+    vector_events = repo / ".codex_manager" / "memory" / "vector_events.jsonl"
+    assert vector_events.exists()
+    rows = [
+        json.loads(line)
+        for line in vector_events.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(
+        isinstance(row.get("metadata"), dict)
+        and row["metadata"].get("category") == "recovered_backlog"
+        for row in rows
+    )
 
 
 def test_resume_cycle_and_phase_index_starts_from_checkpoint_position(

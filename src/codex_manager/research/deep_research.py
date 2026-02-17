@@ -87,6 +87,7 @@ class DeepResearchRunResult:
     filtered_source_count: int = 0
     budget_blocked: bool = False
     quota_blocked: bool = False
+    provider_prompt_previews: dict[str, str] = field(default_factory=dict)
     error: str = ""
 
 
@@ -432,20 +433,10 @@ def _call_openai_native(
     api_key = str(first_env_secret(("OPENAI_API_KEY", "CODEX_API_KEY")) or "").strip()
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY (or CODEX_API_KEY) is not configured.")
+    prompt_text = _openai_native_prompt_text(topic=topic, guidance=guidance)
     payload = {
         "model": model,
-        "input": (
-            "You are running deep technical research for a software project.\n"
-            "Focus on verifiable, implementation-relevant findings and include source links.\n\n"
-            f"Topic: {topic}\n\n"
-            "Project context:\n"
-            f"{guidance}\n\n"
-            "Output format:\n"
-            "- Executive summary\n"
-            "- Concrete implementation recommendations\n"
-            "- Risks/caveats\n"
-            "- Sources list with URLs"
-        ),
+        "input": prompt_text,
         "max_output_tokens": max_output_tokens,
         "tools": [{"type": "web_search_preview"}],
     }
@@ -501,24 +492,12 @@ def _call_google_native(
     api_key = str(first_env_secret(("GOOGLE_API_KEY", "GEMINI_API_KEY")) or "").strip()
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not configured.")
+    prompt_text = _google_native_prompt_text(topic=topic, guidance=guidance)
     payload = {
         "contents": [
             {
                 "parts": [
-                    {
-                        "text": (
-                            "Run deep technical research for this software project. "
-                            "Focus on implementation-grade findings with citations.\n\n"
-                            f"Topic: {topic}\n\n"
-                            "Project context:\n"
-                            f"{guidance}\n\n"
-                            "Return:\n"
-                            "1) Executive summary\n"
-                            "2) Concrete implementation recommendations\n"
-                            "3) Caveats and risk notes\n"
-                            "4) Sources with URLs"
-                        )
-                    }
+                    {"text": prompt_text}
                 ]
             }
         ],
@@ -593,6 +572,8 @@ def run_native_deep_research(
             error="Deep research topic is empty.",
         )
 
+    provider_prompt_previews: dict[str, str] = {}
+
     # Serialize quota/budget checks per repository so concurrent requests
     # cannot both pass stale counters before usage is persisted.
     with _usage_lock(repo):
@@ -623,6 +604,7 @@ def run_native_deep_research(
                 filtered_source_count=0,
                 quota_blocked=quota_blocked,
                 budget_blocked=budget_blocked,
+                provider_prompt_previews=provider_prompt_previews,
                 error=f"Native deep research blocked: {reason}.",
             )
 
@@ -638,6 +620,10 @@ def run_native_deep_research(
         for provider in provider_list:
             try:
                 if provider == "openai":
+                    provider_prompt_previews["openai"] = _openai_native_prompt_text(
+                        topic=clean_topic,
+                        guidance=guidance,
+                    )
                     payload = _retry_call(
                         lambda: _call_openai_native(
                             topic=clean_topic,
@@ -663,6 +649,10 @@ def run_native_deep_research(
                     continue
 
                 if provider == "google":
+                    provider_prompt_previews["google"] = _google_native_prompt_text(
+                        topic=clean_topic,
+                        guidance=guidance,
+                    )
                     payload = _retry_call(
                         lambda: _call_google_native(
                             topic=clean_topic,
@@ -729,6 +719,7 @@ def run_native_deep_research(
                 total_estimated_cost_usd=total_cost,
                 governance_warnings=governance_warnings,
                 filtered_source_count=filtered_count,
+                provider_prompt_previews=provider_prompt_previews,
             )
 
         errors = "; ".join(
@@ -745,5 +736,36 @@ def run_native_deep_research(
             total_estimated_cost_usd=total_cost,
             governance_warnings=[],
             filtered_source_count=0,
+            provider_prompt_previews=provider_prompt_previews,
             error=errors or "Native deep research failed for all providers.",
         )
+
+
+def _openai_native_prompt_text(*, topic: str, guidance: str) -> str:
+    return (
+        "You are running deep technical research for a software project.\n"
+        "Focus on verifiable, implementation-relevant findings and include source links.\n\n"
+        f"Topic: {topic}\n\n"
+        "Project context:\n"
+        f"{guidance}\n\n"
+        "Output format:\n"
+        "- Executive summary\n"
+        "- Concrete implementation recommendations\n"
+        "- Risks/caveats\n"
+        "- Sources list with URLs"
+    )
+
+
+def _google_native_prompt_text(*, topic: str, guidance: str) -> str:
+    return (
+        "Run deep technical research for this software project. "
+        "Focus on implementation-grade findings with citations.\n\n"
+        f"Topic: {topic}\n\n"
+        "Project context:\n"
+        f"{guidance}\n\n"
+        "Return:\n"
+        "1) Executive summary\n"
+        "2) Concrete implementation recommendations\n"
+        "3) Caveats and risk notes\n"
+        "4) Sources with URLs"
+    )

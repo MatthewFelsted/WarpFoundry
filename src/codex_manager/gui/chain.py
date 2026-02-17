@@ -796,7 +796,13 @@ class ChainExecutor:
         hits = vm.search(
             query,
             top_k=int(getattr(self.config, "vector_memory_top_k", 8) or 8),
-            categories=["chain_step", "pipeline_phase", "deep_research", "scientist_report"],
+            categories=[
+                "chain_step",
+                "pipeline_phase",
+                "deep_research",
+                "scientist_report",
+                "recovered_backlog",
+            ],
         )
         if not hits:
             return ""

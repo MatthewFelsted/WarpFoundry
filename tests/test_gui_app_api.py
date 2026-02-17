@@ -2368,6 +2368,128 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
     assert pipeline_only["runs"][0]["scope"] == "pipeline"
 
 
+def test_pipeline_run_comparison_skips_trivial_runs_for_best_badges(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "hist_trivial_start",
+            "timestamp": "2026-02-17T17:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {
+                "mode": "apply",
+                "max_cycles": 1,
+                "unlimited": False,
+                "phase_order": ["ideation"],
+            },
+        },
+        {
+            "id": "hist_trivial_phase",
+            "timestamp": "2026-02-17T17:00:20+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "warn",
+            "summary": "Phase skipped due to network outage.",
+            "context": {
+                "test_outcome": "skipped",
+                "files_changed": 0,
+                "net_lines_changed": 0,
+                "total_tokens": 0,
+            },
+        },
+        {
+            "id": "hist_trivial_finish",
+            "timestamp": "2026-02-17T17:00:33+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "warn",
+            "summary": "Pipeline finished with stop_reason='user_stopped'.",
+            "context": {
+                "stop_reason": "user_stopped",
+                "elapsed_seconds": 33.0,
+                "total_tokens": 0,
+            },
+        },
+        {
+            "id": "hist_meaningful_start",
+            "timestamp": "2026-02-17T18:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {
+                "mode": "apply",
+                "max_cycles": 1,
+                "unlimited": False,
+                "phase_order": ["implementation"],
+            },
+        },
+        {
+            "id": "hist_meaningful_phase",
+            "timestamp": "2026-02-17T18:01:20+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Implementation finished.",
+            "context": {
+                "test_outcome": "passed",
+                "files_changed": 2,
+                "net_lines_changed": 14,
+                "input_tokens": 120,
+                "output_tokens": 30,
+                "commit_sha": "abc1234",
+                "changed_files": [{"path": "src/main.py", "insertions": 10, "deletions": 2}],
+            },
+        },
+        {
+            "id": "hist_meaningful_finish",
+            "timestamp": "2026-02-17T18:02:30+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {
+                "stop_reason": "max_cycles_reached",
+                "elapsed_seconds": 150.0,
+                "total_tokens": 150,
+            },
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/run-comparison",
+        query_string={"repo_path": str(repo), "scope": "pipeline", "limit": "10"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is True
+    assert len(data["runs"]) == 2
+
+    runs_by_stop = {str(run.get("stop_reason") or ""): run for run in data["runs"]}
+    trivial = runs_by_stop["user_stopped"]
+    meaningful = runs_by_stop["max_cycles_reached"]
+
+    assert trivial["badges"] == []
+    assert data["best_by"]["overall_run_id"] == meaningful["run_id"]
+    assert data["best_by"]["fastest_run_id"] == meaningful["run_id"]
+    assert data["best_by"]["strongest_tests_run_id"] == meaningful["run_id"]
+
+
 def test_pipeline_promote_last_dry_run_preview_requires_repo_hint(client, monkeypatch):
     monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
 
@@ -3096,7 +3218,7 @@ def test_index_includes_repo_ideas_generator_controls(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
-    assert "Repository Idea Generator (Free)" in html
+    assert "Repository Idea Generator" in html
     assert 'id="owner-ideas-model"' in html
     assert 'id="owner-ideas-context"' in html
     assert 'onclick="generateOwnerIdeasFromRepo()"' in html

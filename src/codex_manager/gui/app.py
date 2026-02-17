@@ -1110,6 +1110,32 @@ def _run_overall_score(run: dict[str, object]) -> float:
     return round(test_score + commit_bonus - duration_penalty - token_penalty, 3)
 
 
+def _run_has_executed_tests(run: dict[str, object]) -> bool:
+    """Return True when the run contains passed/failed/errored test outcomes."""
+    tests_obj = run.get("tests")
+    tests = tests_obj if isinstance(tests_obj, dict) else {}
+    return (
+        _safe_int(tests.get("passed"), 0)
+        + _safe_int(tests.get("failed"), 0)
+        + _safe_int(tests.get("error"), 0)
+    ) > 0
+
+
+def _run_has_meaningful_activity(run: dict[str, object]) -> bool:
+    """Ignore trivial runs (for example immediate stop with all tests skipped)."""
+    if _run_has_executed_tests(run):
+        return True
+    if _safe_int(run.get("token_usage"), 0) > 0:
+        return True
+    if _safe_int(run.get("commit_count"), 0) > 0:
+        return True
+    diff_obj = run.get("diff_summary")
+    diff = diff_obj if isinstance(diff_obj, dict) else {}
+    if _safe_int(diff.get("files_changed_total"), 0) > 0:
+        return True
+    return _safe_int(diff.get("changed_paths_count"), 0) > 0
+
+
 def _new_run_aggregate(
     *,
     scope: str,
@@ -1403,40 +1429,57 @@ def _pipeline_run_comparison(
             message="No completed runs were found in history yet.",
         )
 
-    best_overall = max(runs, key=lambda run: _safe_float(run.get("overall_score"), -999999.0))
+    meaningful_candidates = [run for run in runs if _run_has_meaningful_activity(run)]
+    best_overall = (
+        max(
+            meaningful_candidates,
+            key=lambda run: _safe_float(run.get("overall_score"), -999999.0),
+        )
+        if meaningful_candidates
+        else None
+    )
 
-    duration_candidates = [run for run in runs if _safe_float(run.get("duration_seconds"), 0.0) > 0]
+    duration_candidates = [
+        run
+        for run in meaningful_candidates
+        if _safe_float(run.get("duration_seconds"), 0.0) > 0
+    ]
     best_fastest = (
         min(duration_candidates, key=lambda run: _safe_float(run.get("duration_seconds"), 0.0))
         if duration_candidates
         else None
     )
 
-    token_candidates = [run for run in runs if _safe_int(run.get("token_usage"), 0) > 0]
+    token_candidates = [run for run in meaningful_candidates if _safe_int(run.get("token_usage"), 0) > 0]
     best_lowest_tokens = (
         min(token_candidates, key=lambda run: _safe_int(run.get("token_usage"), 0))
         if token_candidates
         else None
     )
 
-    best_tests = max(
-        runs,
-        key=lambda run: (
-            _run_test_score(run.get("tests") if isinstance(run.get("tests"), dict) else {}),
-            -_safe_float(run.get("duration_seconds"), 0.0),
-            -_safe_int(run.get("token_usage"), 0),
-        ),
+    test_candidates = [run for run in meaningful_candidates if _run_has_executed_tests(run)]
+    best_tests = (
+        max(
+            test_candidates,
+            key=lambda run: (
+                _run_test_score(run.get("tests") if isinstance(run.get("tests"), dict) else {}),
+                -_safe_float(run.get("duration_seconds"), 0.0),
+                -_safe_int(run.get("token_usage"), 0),
+            ),
+        )
+        if test_candidates
+        else None
     )
 
     for run in runs:
         badges: list[str] = []
-        if run.get("run_id") == best_overall.get("run_id"):
+        if best_overall is not None and run.get("run_id") == best_overall.get("run_id"):
             badges.append("best_overall")
         if best_fastest is not None and run.get("run_id") == best_fastest.get("run_id"):
             badges.append("fastest")
         if best_lowest_tokens is not None and run.get("run_id") == best_lowest_tokens.get("run_id"):
             badges.append("lowest_tokens")
-        if run.get("run_id") == best_tests.get("run_id"):
+        if best_tests is not None and run.get("run_id") == best_tests.get("run_id"):
             badges.append("strongest_tests")
         run["badges"] = badges
 
@@ -1448,12 +1491,12 @@ def _pipeline_run_comparison(
         "limit": limit,
         "runs": runs,
         "best_by": {
-            "overall_run_id": str(best_overall.get("run_id") or ""),
+            "overall_run_id": str(best_overall.get("run_id") or "") if best_overall else "",
             "fastest_run_id": str(best_fastest.get("run_id") or "") if best_fastest else "",
             "lowest_token_run_id": (
                 str(best_lowest_tokens.get("run_id") or "") if best_lowest_tokens else ""
             ),
-            "strongest_tests_run_id": str(best_tests.get("run_id") or ""),
+            "strongest_tests_run_id": str(best_tests.get("run_id") or "") if best_tests else "",
         },
         "message": "",
     }

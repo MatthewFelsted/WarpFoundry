@@ -106,6 +106,52 @@ def test_run_native_deep_research_serializes_quota_checks(monkeypatch, tmp_path:
     assert len(blocked) == 1
 
 
+def test_run_native_deep_research_returns_provider_prompt_previews(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+
+    def _fake_openai_native(*, topic, guidance, model, max_output_tokens, timeout_seconds):
+        return {
+            "summary": "OpenAI findings with source https://docs.python.org/3/library/json.html",
+            "input_tokens": 12,
+            "output_tokens": 21,
+        }
+
+    def _fake_google_native(*, topic, guidance, model, max_output_tokens, timeout_seconds):
+        return {
+            "summary": "Google findings with source https://developer.mozilla.org/en-US/docs/Web/HTTP",
+            "input_tokens": 8,
+            "output_tokens": 13,
+        }
+
+    monkeypatch.setattr(deep_research_module, "_call_openai_native", _fake_openai_native)
+    monkeypatch.setattr(deep_research_module, "_call_google_native", _fake_google_native)
+
+    settings = deep_research_module.DeepResearchSettings(
+        providers="both",
+        retry_attempts=1,
+        daily_quota=5,
+        max_provider_tokens=1000,
+        timeout_seconds=30,
+    )
+
+    result = deep_research_module.run_native_deep_research(
+        repo_path=repo,
+        topic="repo hardening",
+        project_context="WISH-001 and WISH-008 are complete.",
+        settings=settings,
+    )
+
+    assert result.ok is True
+    assert set(result.provider_prompt_previews.keys()) == {"openai", "google"}
+    assert "Topic: repo hardening" in result.provider_prompt_previews["openai"]
+    assert "Project context:" in result.provider_prompt_previews["openai"]
+    assert "Topic: repo hardening" in result.provider_prompt_previews["google"]
+    assert "Project context:" in result.provider_prompt_previews["google"]
+
+
 def test_call_openai_native_uses_non_placeholder_fallback_key(monkeypatch) -> None:
     captured: dict[str, str] = {}
 

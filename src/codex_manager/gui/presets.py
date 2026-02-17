@@ -90,14 +90,20 @@ _FALLBACK_PRESETS: dict[str, dict] = {
         "icon": "\U0001f528",
         "description": "Build new features and implement improvements",
         "prompt": (
-            "Review any TODOs, FIXMEs, or incomplete features in the codebase. "
-            "Implement the most critical missing functionality. Write clean, "
-            "well-documented code that follows the project's existing patterns."
+            "Review TODOs, FIXMEs, incomplete features, and unresolved work across "
+            "current logs, owner wishlists/plans, progress/history archives, research "
+            "findings, and scientist outputs. Reuse vector-memory context to recover "
+            "unimplemented ideas from prior runs so no useful pipeline output is lost. "
+            "Implement the highest-impact missing functionality and preserve new findings "
+            "for future runs. Write clean, well-documented code that follows existing "
+            "project patterns."
         ),
         "ai_prompt": (
             "As an expert developer, examine this repository for incomplete or missing "
-            "features. Determine what would add the most value, then implement it with "
-            "production-quality code including error handling and documentation."
+            "features while recovering unresolved tasks from logs/history, owner request "
+            "artifacts, research notes, experiments, and vector memory. Prioritize the "
+            "highest-value missing capability, implement it with production-quality code, "
+            "and persist actionable findings for future self-improvement cycles."
         ),
         "on_failure": "skip",
     },

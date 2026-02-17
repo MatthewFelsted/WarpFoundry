@@ -487,13 +487,24 @@ presets:
     icon: "\U0001f528"
     description: "Build new features and implement improvements"
     prompt: |
-      Review any TODOs, FIXMEs, or incomplete features in the codebase.
-      Implement the most critical missing functionality. Write clean,
-      well-documented code that follows the project's existing patterns.
+      Review TODOs, FIXMEs, incomplete features, and unresolved work across:
+      - current logs and checklists
+      - owner wishlists/plans/requests
+      - progress and history archives
+      - research findings and scientist outputs
+      - vector-memory retrieval for prior run context
+
+      Recover unimplemented ideas from prior runs so no useful pipeline output is lost.
+      Implement the highest-impact missing functionality, then preserve newly discovered
+      findings/tasks in project logs for future self-improvement cycles.
+
+      Write clean, well-documented code that follows the project's existing patterns.
     ai_prompt: |
       As an expert developer, examine this repository for incomplete or missing
-      features. Determine what would add the most value, then implement it with
-      production-quality code including error handling and documentation.
+      features while recovering unresolved tasks from logs/history, owner artifacts,
+      research notes, experiments, and vector memory. Determine what adds the most
+      value, implement it with production-quality code, and preserve actionable
+      findings for future cycles.
     on_failure: "skip"
 
   testing:

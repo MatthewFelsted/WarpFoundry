@@ -192,6 +192,8 @@ class PipelineOrchestrator:
         self._brain_logbook: BrainLogbook | None = None
         self._history_logbook: HistoryLogbook | None = None
         self._pr_aware_state: dict[str, Any] = {}
+        self._recovered_backlog_hashes: set[str] = set()
+        self._missing_test_policy_warning_keys: set[str] = set()
         self._resume_cycle = max(1, int(resume_cycle))
         self._resume_phase_index = max(0, int(resume_phase_index))
 
@@ -219,6 +221,8 @@ class PipelineOrchestrator:
             pr_aware={},
         )
         self._pr_aware_state = {}
+        self._recovered_backlog_hashes = set()
+        self._missing_test_policy_warning_keys = set()
         self._next_log_event_id = 0
         self._log_queue_drops = 0
         self._stop_event.clear()
@@ -248,6 +252,8 @@ class PipelineOrchestrator:
             pr_aware={},
         )
         self._pr_aware_state = {}
+        self._recovered_backlog_hashes = set()
+        self._missing_test_policy_warning_keys = set()
         self._next_log_event_id = 0
         self._log_queue_drops = 0
         self._stop_event.clear()
@@ -452,7 +458,14 @@ class PipelineOrchestrator:
 
     def _build_native_deep_research_context(self, *, phase_context: str) -> str:
         """Build compact repository context passed to native research providers."""
-        parts: list[str] = []
+        parts: list[str] = [
+            "## Repository Scope",
+            "",
+            f"- Repository root: {self.repo_path}",
+            "- Use this repository as the single source of truth.",
+            "- Treat WISH-* references as entries in WISHLIST.md for this repository.",
+            "",
+        ]
         wishlist = self.tracker.read("WISHLIST.md").strip()
         if wishlist:
             excerpt = wishlist[:3000]
@@ -500,6 +513,91 @@ class PipelineOrchestrator:
             topic=topic,
             project_context=context,
             settings=settings,
+        )
+        provider_prompt_previews: dict[str, str] = {}
+        provider_prompt_metadata: dict[str, dict[str, int | str]] = {}
+        prompt_bundle_parts: list[str] = []
+        for provider_name, provider_prompt in sorted(
+            (native.provider_prompt_previews or {}).items()
+        ):
+            clean_provider = str(provider_name or "").strip().lower()
+            if not clean_provider:
+                continue
+            prompt_text = str(provider_prompt or "")
+            provider_prompt_previews[clean_provider] = format_prompt_preview(prompt_text)
+            provider_prompt_metadata[clean_provider] = prompt_metadata(prompt_text)
+            prompt_bundle_parts.append(f"## Provider: {clean_provider}\n{prompt_text}")
+
+        prompt_bundle = "\n\n".join(prompt_bundle_parts).strip()
+        if not prompt_bundle:
+            prompt_bundle = (
+                "Native deep research prompt previews unavailable from provider call.\n\n"
+                f"Topic: {topic}\n\n"
+                "Project context:\n"
+                f"{context}"
+            )
+        native_prompt_meta = prompt_metadata(prompt_bundle)
+        provider_results_payload: list[dict[str, Any]] = []
+        for item in native.providers:
+            provider_results_payload.append(
+                {
+                    "provider": item.provider,
+                    "ok": bool(item.ok),
+                    "input_tokens": int(item.input_tokens),
+                    "output_tokens": int(item.output_tokens),
+                    "estimated_cost_usd": float(item.estimated_cost_usd),
+                    "sources_count": len(item.sources),
+                    "sources_preview": list(item.sources[:20]),
+                    "error": _clip_text(item.error, 4000),
+                    "summary_excerpt": _clip_text(item.summary, 1200),
+                }
+            )
+        self._append_pipeline_debug_event(
+            {
+                "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "cycle": cycle,
+                "phase": PipelinePhase.DEEP_RESEARCH.value,
+                "iteration": iteration,
+                "mode": self.config.mode,
+                "runner": f"deep_research:{self.config.deep_research_providers}",
+                "native_deep_research": {
+                    "topic": topic,
+                    "topic_metadata": prompt_metadata(topic),
+                    "project_context_preview": format_prompt_preview(context),
+                    "project_context_metadata": prompt_metadata(context),
+                    "provider_prompt_previews": provider_prompt_previews,
+                    "provider_prompt_metadata": provider_prompt_metadata,
+                    "settings": {
+                        "providers": settings.providers,
+                        "retry_attempts": settings.retry_attempts,
+                        "daily_quota": settings.daily_quota,
+                        "max_provider_tokens": settings.max_provider_tokens,
+                        "daily_budget_usd": settings.daily_budget_usd,
+                        "timeout_seconds": settings.timeout_seconds,
+                        "openai_model": settings.openai_model,
+                        "google_model": settings.google_model,
+                    },
+                    "result": {
+                        "ok": bool(native.ok),
+                        "quota_blocked": bool(native.quota_blocked),
+                        "budget_blocked": bool(native.budget_blocked),
+                        "governance_warnings": list(native.governance_warnings[:20]),
+                        "filtered_source_count": int(native.filtered_source_count),
+                        "merged_sources_count": len(native.merged_sources),
+                        "merged_sources_preview": list(native.merged_sources[:30]),
+                        "total_input_tokens": int(native.total_input_tokens),
+                        "total_output_tokens": int(native.total_output_tokens),
+                        "total_estimated_cost_usd": float(native.total_estimated_cost_usd),
+                        "error": _clip_text(native.error, 4000),
+                        "providers": provider_results_payload,
+                    },
+                },
+                "prompt_length": native_prompt_meta["length_chars"],
+                "prompt_sha256": native_prompt_meta["sha256"],
+                "prompt_redaction_hits": native_prompt_meta["redaction_hits"],
+                "prompt_preview": format_prompt_preview(prompt_bundle),
+                "prompt_metadata": native_prompt_meta,
+            }
         )
         if native.ok:
             provider_summaries = [
@@ -616,9 +714,20 @@ class PipelineOrchestrator:
             PipelinePhase.SKEPTIC,
             PipelinePhase.ANALYZE,
         ):
-            categories = ["scientist_trial", "scientist_report", "pipeline_phase", "deep_research"]
+            categories = [
+                "scientist_trial",
+                "scientist_report",
+                "pipeline_phase",
+                "deep_research",
+                "recovered_backlog",
+            ]
         elif phase == PipelinePhase.DEEP_RESEARCH:
-            categories = ["deep_research", "pipeline_phase", "scientist_report"]
+            categories = [
+                "deep_research",
+                "pipeline_phase",
+                "scientist_report",
+                "recovered_backlog",
+            ]
             source_prefix = "pipeline:"
         hits = self.vector_memory.search(
             query,
@@ -725,6 +834,51 @@ class PipelineOrchestrator:
             metadata={
                 "cycle": int(self.state.current_cycle or 0),
                 "phase": str(self.state.current_phase or ""),
+            },
+        )
+
+    @staticmethod
+    def _count_markdown_bullets(text: str) -> int:
+        return sum(1 for line in str(text or "").splitlines() if line.startswith("- "))
+
+    @staticmethod
+    def _extract_recovered_backlog_section(context: str) -> str:
+        marker = "## Recovered Pending Backlog (Cross-Run)"
+        idx = str(context or "").find(marker)
+        if idx < 0:
+            return ""
+        return str(context or "")[idx:].strip()
+
+    def _record_recovered_backlog_memory(
+        self,
+        *,
+        phase: PipelinePhase,
+        cycle: int,
+        context: str,
+    ) -> None:
+        if not self.vector_memory.enabled:
+            return
+        section = self._extract_recovered_backlog_section(context)
+        if not section:
+            return
+        compact = re.sub(r"\s+", " ", section).strip()
+        if not compact:
+            return
+        if len(compact) > 3900:
+            compact = compact[:3897].rstrip() + "..."
+        signature = hashlib.sha1(compact.encode("utf-8")).hexdigest()
+        if signature in self._recovered_backlog_hashes:
+            return
+        self._recovered_backlog_hashes.add(signature)
+        self.vector_memory.add_note(
+            compact,
+            category="recovered_backlog",
+            source=f"pipeline:{phase.value}",
+            metadata={
+                "phase": phase.value,
+                "cycle": int(cycle),
+                "memory_kind": "recovered_backlog",
+                "item_count": self._count_markdown_bullets(section),
             },
         )
 
@@ -2907,6 +3061,26 @@ class PipelineOrchestrator:
                         "warn",
                         f"Vector memory unavailable: {self.vector_memory.reason}",
                     )
+            startup_recovered = self.tracker.get_recovered_backlog_context(max_items=20)
+            startup_recovered_count = self._count_markdown_bullets(startup_recovered)
+            if startup_recovered:
+                self._record_recovered_backlog_memory(
+                    phase=PipelinePhase.PROGRESS_REVIEW,
+                    cycle=max(1, int(self._resume_cycle)),
+                    context=startup_recovered,
+                )
+                self._record_history_note(
+                    "recovered_backlog_loaded",
+                    (
+                        "Recovered pending cross-run backlog items from logs/history/"
+                        "owner docs at startup."
+                    ),
+                    level="info",
+                    context={
+                        "items_recovered": startup_recovered_count,
+                        "resume_cycle": self._resume_cycle,
+                    },
+                )
             self._run_retention_cleanup(reason="startup")
         except Exception as exc:
             self._log("error", f"Failed to initialize pipeline logs: {exc}")
@@ -3039,10 +3213,55 @@ class PipelineOrchestrator:
                             next_phase_index = 0
 
                         has_remaining_work = bool(config.unlimited) or next_cycle <= config.max_cycles
+                        recovered_backlog = self.tracker.get_recovered_backlog_context(max_items=24)
+                        recovered_backlog_count = self._count_markdown_bullets(recovered_backlog)
+                        recovered_preview_lines: list[str] = []
+                        if recovered_backlog:
+                            recovered_preview_lines = [
+                                line
+                                for line in recovered_backlog.splitlines()
+                                if line.startswith("- ")
+                            ][:12]
+                            self._record_recovered_backlog_memory(
+                                phase=phase,
+                                cycle=cycle_num,
+                                context=recovered_backlog,
+                            )
+                            self._record_history_note(
+                                "recovered_backlog_snapshot",
+                                (
+                                    "Captured cross-run backlog snapshot during self-improvement "
+                                    "checkpoint."
+                                ),
+                                level="info",
+                                context={
+                                    "cycle": cycle_num,
+                                    "phase": phase.value,
+                                    "items_recovered": recovered_backlog_count,
+                                },
+                            )
+                            progress_lines = [
+                                "\n## Recovered Backlog Snapshot",
+                                "",
+                                f"- Captured: {dt.datetime.now(dt.timezone.utc).isoformat()}",
+                                f"- Items recovered: {recovered_backlog_count}",
+                                "- Sources: logs, owner docs, request history, run archives.",
+                            ]
+                            if recovered_preview_lines:
+                                progress_lines.extend(
+                                    [
+                                        "",
+                                        "### Top Carry-Forward Items",
+                                        "",
+                                        *recovered_preview_lines,
+                                    ]
+                                )
+                            self.tracker.append("PROGRESS.md", "\n".join(progress_lines) + "\n")
 
                         summary = (
                             "Self-improvement checkpoint evaluated. "
-                            f"next_cycle={next_cycle}, next_phase_index={next_phase_index}."
+                            f"next_cycle={next_cycle}, next_phase_index={next_phase_index}, "
+                            f"recovered_backlog_items={recovered_backlog_count}."
                         )
                         self._log("info", summary)
                         restart_result = PhaseResult(
@@ -3091,6 +3310,7 @@ class PipelineOrchestrator:
                                 "commit_sha": None,
                                 "terminate_repeats": False,
                                 "error_message": "",
+                                "recovered_backlog_items": recovered_backlog_count,
                             },
                         )
 
@@ -3123,6 +3343,7 @@ class PipelineOrchestrator:
                                     "resume_cycle": self.state.resume_cycle,
                                     "resume_phase_index": self.state.resume_phase_index,
                                     "auto_restart": bool(config.self_improvement_auto_restart),
+                                    "recovered_backlog_items": recovered_backlog_count,
                                 },
                             )
                             self._log(
@@ -3287,14 +3508,12 @@ class PipelineOrchestrator:
                         smoke_test_cmd=smoke_test_cmd,
                         timeout_seconds=config.timeout_per_phase,
                     )
-                    if phase_test_policy in {"smoke", "full"} and phase_evaluator.skip_tests:
-                        self._log(
-                            "warn",
-                            (
-                                f"  Phase '{phase.value}' requested {phase_test_policy} tests, "
-                                "but no matching command is configured; tests will be skipped."
-                            ),
-                        )
+                    self._log_missing_test_policy_warning(
+                        phase=phase,
+                        phase_test_policy=phase_test_policy,
+                        full_test_cmd=full_test_cmd,
+                        smoke_test_cmd=smoke_test_cmd,
+                    )
 
                     self._log(
                         "info",
@@ -3336,6 +3555,11 @@ class PipelineOrchestrator:
                         # or regular agent-driven phase prompt.
                         context = self.tracker.get_context_for_phase(
                             phase.value, ledger=self.ledger
+                        )
+                        self._record_recovered_backlog_memory(
+                            phase=phase,
+                            cycle=cycle_num,
+                            context=context,
                         )
                         full_prompt = ""
                         if phase == PipelinePhase.DEEP_RESEARCH and config.deep_research_native_enabled:
@@ -4118,6 +4342,50 @@ class PipelineOrchestrator:
             timeout=timeout_seconds,
             skip_tests=(selected_cmd is None),
         )
+
+    def _log_missing_test_policy_warning(
+        self,
+        *,
+        phase: PipelinePhase,
+        phase_test_policy: str,
+        full_test_cmd: list[str] | None,
+        smoke_test_cmd: list[str] | None,
+    ) -> None:
+        """Log actionable missing test-command warnings only once per run."""
+        policy = self._normalized_test_policy(phase_test_policy)
+        if policy not in {"smoke", "full"}:
+            return
+
+        has_full_cmd = full_test_cmd is not None
+        has_smoke_cmd = smoke_test_cmd is not None
+
+        if not has_full_cmd and not has_smoke_cmd:
+            key = "global:no_validation_commands"
+            if key in self._missing_test_policy_warning_keys:
+                return
+            self._missing_test_policy_warning_keys.add(key)
+            self._log(
+                "warn",
+                (
+                    "No validation command is configured. Phases requesting smoke/full tests "
+                    "will skip validation. Configure 'Validation Command' (and optional "
+                    "'Smoke Test Command') in Pipeline settings."
+                ),
+            )
+            return
+
+        if policy == "full" and not has_full_cmd:
+            key = f"{phase.value}:full:missing_validation_command"
+            if key in self._missing_test_policy_warning_keys:
+                return
+            self._missing_test_policy_warning_keys.add(key)
+            self._log(
+                "warn",
+                (
+                    f"  Phase '{phase.value}' requested full tests, but Validation Command "
+                    "is empty; tests will be skipped for this phase."
+                ),
+            )
 
     def _execute_phase(
         self,
