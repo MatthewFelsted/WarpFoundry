@@ -78,10 +78,20 @@ from codex_manager.pipeline.phases import (
 from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.preflight import (
     agent_preflight_issues as shared_agent_preflight_issues,
+)
+from codex_manager.preflight import (
     binary_exists as shared_binary_exists,
+)
+from codex_manager.preflight import (
     env_secret_issue as shared_env_secret_issue,
+)
+from codex_manager.preflight import (
     has_claude_auth as shared_has_claude_auth,
+)
+from codex_manager.preflight import (
     has_codex_auth as shared_has_codex_auth,
+)
+from codex_manager.preflight import (
     image_provider_auth_issue as shared_image_provider_auth_issue,
 )
 from codex_manager.preflight import (
@@ -199,8 +209,10 @@ class PipelineOrchestrator:
             self._log("error", "Pipeline is already running")
             return
 
+        run_id = f"pipe_{uuid.uuid4().hex[:12]}"
         self.state = PipelineState(
             running=True,
+            run_id=run_id,
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             resume_cycle=self._resume_cycle,
             resume_phase_index=self._resume_phase_index,
@@ -226,8 +238,10 @@ class PipelineOrchestrator:
 
     def run(self) -> PipelineState:
         """Run the pipeline synchronously (for CLI usage)."""
+        run_id = f"pipe_{uuid.uuid4().hex[:12]}"
         self.state = PipelineState(
             running=True,
+            run_id=run_id,
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
             resume_cycle=self._resume_cycle,
             resume_phase_index=self._resume_phase_index,
@@ -744,6 +758,7 @@ class PipelineOrchestrator:
             except Exception as exc:
                 self._log("warn", f"PR-aware final sync failed: {exc}")
         history_context = {
+            "run_id": self.state.run_id,
             "stop_reason": self.state.stop_reason,
             "total_cycles_completed": self.state.total_cycles_completed,
             "total_phases_completed": self.state.total_phases_completed,
@@ -762,6 +777,270 @@ class PipelineOrchestrator:
             f"Pipeline finished with stop_reason='{self.state.stop_reason}'.",
             level=history_level,
             context=history_context,
+        )
+        self._send_run_completion_webhooks()
+
+    @staticmethod
+    def _completion_webhook_kind(url: str) -> str:
+        parsed = urlparse(url)
+        host = str(parsed.hostname or "").strip().lower()
+        path = str(parsed.path or "").strip().lower()
+        if host.endswith("slack.com") and "/services/" in path:
+            return "slack"
+        if host.endswith("discord.com") and "/api/webhooks/" in path:
+            return "discord"
+        if host.endswith("discordapp.com") and "/api/webhooks/" in path:
+            return "discord"
+        return "generic"
+
+    @staticmethod
+    def _completion_webhook_url_valid(url: str) -> bool:
+        parsed = urlparse(url)
+        scheme = str(parsed.scheme or "").strip().lower()
+        host = str(parsed.netloc or "").strip()
+        return bool(host) and scheme in {"http", "https"}
+
+    @staticmethod
+    def _completion_outcome_counts(results: list[PhaseResult]) -> dict[str, int]:
+        counts = {
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "error": 0,
+            "unknown": 0,
+        }
+        for item in results:
+            key = str(item.test_outcome or "").strip().lower()
+            if key not in counts:
+                key = "unknown"
+            counts[key] += 1
+        return counts
+
+    @staticmethod
+    def _completion_status(state: PipelineState) -> str:
+        stop_reason = str(state.stop_reason or "").strip().lower()
+        hard_failure_reasons = {
+            "preflight_failed",
+            "phase_failed_abort",
+            "pr_aware_setup_failed",
+            "branch_creation_failed",
+            "budget_exhausted",
+            "user_stopped",
+            "max_time_reached",
+        }
+        if stop_reason.startswith("error:"):
+            return "failure"
+        if stop_reason in hard_failure_reasons:
+            return "failure"
+        if int(state.failures or 0) > 0:
+            return "failure"
+        if int(state.total_phases_completed or 0) <= 0:
+            return "failure"
+        return "success"
+
+    def _completion_artifact_links(self) -> dict[str, str]:
+        logs_dir = (self.repo_path / ".codex_manager" / "logs").resolve()
+        outputs_dir = (self.repo_path / ".codex_manager" / "outputs").resolve()
+        links: dict[str, str] = {
+            "logs_dir": str(logs_dir),
+            "outputs_dir": str(outputs_dir),
+            "history_markdown": str((logs_dir / "HISTORY.md").resolve()),
+            "history_jsonl": str((logs_dir / "HISTORY.jsonl").resolve()),
+            "scientist_report": str((logs_dir / "SCIENTIST_REPORT.md").resolve()),
+        }
+        restart_checkpoint = str(self.state.restart_checkpoint_path or "").strip()
+        if restart_checkpoint:
+            links["restart_checkpoint"] = str(Path(restart_checkpoint).resolve())
+        return links
+
+    def _run_completion_payload(self) -> dict[str, Any]:
+        tests = self._completion_outcome_counts(self.state.results)
+        input_tokens = sum(max(0, int(item.input_tokens or 0)) for item in self.state.results)
+        output_tokens = sum(max(0, int(item.output_tokens or 0)) for item in self.state.results)
+        total_tokens = max(0, int(self.state.total_tokens or 0))
+        if total_tokens <= 0:
+            total_tokens = input_tokens + output_tokens
+        run_id = str(self.state.run_id or "").strip()
+        if not run_id:
+            run_id = f"pipe_{uuid.uuid4().hex[:12]}"
+            self.state.run_id = run_id
+        status = self._completion_status(self.state)
+        top_results = [
+            {
+                "cycle": int(item.cycle or 0),
+                "phase": str(item.phase or ""),
+                "iteration": int(item.iteration or 0),
+                "success": bool(item.success),
+                "test_outcome": str(item.test_outcome or ""),
+                "files_changed": int(item.files_changed or 0),
+                "net_lines_changed": int(item.net_lines_changed or 0),
+                "commit_sha": str(item.commit_sha or ""),
+            }
+            for item in self.state.results[-20:]
+        ]
+        return {
+            "event": "warpfoundry.pipeline.run.completed",
+            "scope": "pipeline",
+            "status": status,
+            "success": status == "success",
+            "repo_path": str(self.repo_path),
+            "run_id": run_id,
+            "mode": str(self.config.mode or ""),
+            "stop_reason": str(self.state.stop_reason or ""),
+            "started_at": str(self.state.started_at or ""),
+            "finished_at": str(self.state.finished_at or ""),
+            "elapsed_seconds": round(float(self.state.elapsed_seconds or 0.0), 1),
+            "cycles_completed": int(self.state.total_cycles_completed or 0),
+            "phases_completed": int(self.state.total_phases_completed or 0),
+            "successes": int(self.state.successes or 0),
+            "failures": int(self.state.failures or 0),
+            "tests": tests,
+            "tokens": {
+                "input": input_tokens,
+                "output": output_tokens,
+                "total": total_tokens,
+            },
+            "artifact_links": self._completion_artifact_links(),
+            "phase_results": top_results,
+        }
+
+    @staticmethod
+    def _slack_completion_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        tests = payload.get("tests") if isinstance(payload.get("tests"), dict) else {}
+        tokens = payload.get("tokens") if isinstance(payload.get("tokens"), dict) else {}
+        artifacts = (
+            payload.get("artifact_links") if isinstance(payload.get("artifact_links"), dict) else {}
+        )
+        lines = [
+            f"*WarpFoundry Pipeline {str(payload.get('status', 'unknown')).upper()}*",
+            f"Repo: `{payload.get('repo_path', '')}`",
+            f"Run ID: `{payload.get('run_id', '')}`",
+            f"Stop reason: `{payload.get('stop_reason', '')}`",
+            (
+                "Tests: "
+                f"passed={tests.get('passed', 0)}, "
+                f"failed={tests.get('failed', 0)}, "
+                f"error={tests.get('error', 0)}, "
+                f"skipped={tests.get('skipped', 0)}, "
+                f"unknown={tests.get('unknown', 0)}"
+            ),
+            f"Tokens: {int(tokens.get('total', 0) or 0):,}",
+            (
+                "Artifacts: "
+                f"HISTORY={artifacts.get('history_jsonl', '')}, "
+                f"outputs={artifacts.get('outputs_dir', '')}"
+            ),
+        ]
+        return {"text": "\n".join(lines)}
+
+    @staticmethod
+    def _discord_completion_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        tests = payload.get("tests") if isinstance(payload.get("tests"), dict) else {}
+        tokens = payload.get("tokens") if isinstance(payload.get("tokens"), dict) else {}
+        artifacts = (
+            payload.get("artifact_links") if isinstance(payload.get("artifact_links"), dict) else {}
+        )
+        lines = [
+            f"**WarpFoundry Pipeline {str(payload.get('status', 'unknown')).upper()}**",
+            f"Repo: `{payload.get('repo_path', '')}`",
+            f"Run ID: `{payload.get('run_id', '')}`",
+            f"Stop reason: `{payload.get('stop_reason', '')}`",
+            (
+                "Tests: "
+                f"passed={tests.get('passed', 0)}, "
+                f"failed={tests.get('failed', 0)}, "
+                f"error={tests.get('error', 0)}, "
+                f"skipped={tests.get('skipped', 0)}, "
+                f"unknown={tests.get('unknown', 0)}"
+            ),
+            f"Tokens: {int(tokens.get('total', 0) or 0):,}",
+            (
+                "Artifacts: "
+                f"HISTORY={artifacts.get('history_jsonl', '')}, "
+                f"outputs={artifacts.get('outputs_dir', '')}"
+            ),
+        ]
+        content = "\n".join(lines)
+        if len(content) > 1900:
+            content = content[:1897].rstrip() + "..."
+        return {"content": content}
+
+    @staticmethod
+    def _post_completion_webhook_json(
+        *,
+        url: str,
+        payload: dict[str, Any],
+        timeout_seconds: int,
+    ) -> str:
+        data = json.dumps(payload).encode("utf-8")
+        request_obj = Request(
+            url,
+            data=data,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "WarpFoundry/1.0",
+            },
+        )
+        try:
+            with urlopen(request_obj, timeout=timeout_seconds) as response:
+                _ = response.read()
+        except HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            detail = body.strip()
+            if detail:
+                detail = re.sub(r"\s+", " ", detail)[:280]
+                return f"HTTP {exc.code}: {detail}"
+            return f"HTTP {exc.code}"
+        except URLError as exc:
+            reason = str(getattr(exc, "reason", exc) or "").strip()
+            return f"network error: {reason or exc}"
+        except Exception as exc:  # pragma: no cover - defensive
+            return f"request failed: {exc}"
+        return ""
+
+    def _send_run_completion_webhooks(self) -> None:
+        raw_urls = list(getattr(self.config, "run_completion_webhooks", []) or [])
+        urls = [str(item or "").strip() for item in raw_urls if str(item or "").strip()]
+        if not urls:
+            return
+
+        timeout_seconds = max(
+            2,
+            min(60, int(getattr(self.config, "run_completion_webhook_timeout_seconds", 10) or 10)),
+        )
+        payload = self._run_completion_payload()
+        delivered = 0
+
+        for url in urls:
+            if not self._completion_webhook_url_valid(url):
+                self._log("warn", f"Skipping invalid run-completion webhook URL: {url}")
+                continue
+            kind = self._completion_webhook_kind(url)
+            body: dict[str, Any]
+            if kind == "slack":
+                body = self._slack_completion_payload(payload)
+            elif kind == "discord":
+                body = self._discord_completion_payload(payload)
+            else:
+                body = payload
+            error = self._post_completion_webhook_json(
+                url=url,
+                payload=body,
+                timeout_seconds=timeout_seconds,
+            )
+            if error:
+                self._log("warn", f"Run completion webhook delivery failed ({kind}): {error}")
+                continue
+            delivered += 1
+
+        self._log(
+            "info",
+            f"Run completion webhooks delivered: {delivered}/{len(urls)}",
         )
 
     @staticmethod
@@ -2378,6 +2657,15 @@ class PipelineOrchestrator:
             issues.append(
                 "self_improvement_auto_restart requires self_improvement_enabled to be true."
             )
+        for raw_url in list(getattr(config, "run_completion_webhooks", []) or []):
+            url = str(raw_url or "").strip()
+            if not url:
+                continue
+            if not self._completion_webhook_url_valid(url):
+                issues.append(
+                    "Invalid run-completion webhook URL (must be http(s) with host): "
+                    f"{url}"
+                )
 
         if config.pr_aware_enabled:
             if config.mode != "apply":
@@ -2483,6 +2771,7 @@ class PipelineOrchestrator:
             "run_started",
             f"Pipeline run started in {config.mode} mode.",
             context={
+                "run_id": self.state.run_id,
                 "repo": str(repo),
                 "mode": config.mode,
                 "max_cycles": config.max_cycles,

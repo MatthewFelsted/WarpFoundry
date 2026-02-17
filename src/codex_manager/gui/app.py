@@ -9634,6 +9634,8 @@ def api_pipeline_start():
         artifact_retention_max_files=gui_config.artifact_retention_max_files,
         artifact_retention_max_bytes=gui_config.artifact_retention_max_bytes,
         artifact_retention_max_output_runs=gui_config.artifact_retention_max_output_runs,
+        run_completion_webhooks=gui_config.run_completion_webhooks,
+        run_completion_webhook_timeout_seconds=gui_config.run_completion_webhook_timeout_seconds,
         max_total_tokens=gui_config.max_total_tokens,
         strict_token_budget=gui_config.strict_token_budget,
         max_time_minutes=gui_config.max_time_minutes,

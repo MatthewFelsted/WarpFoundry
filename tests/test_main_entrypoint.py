@@ -121,6 +121,28 @@ def test_pipeline_parser_accepts_resume_flags() -> None:
     assert args.resume_state is True
 
 
+def test_pipeline_parser_accepts_webhook_options() -> None:
+    parser = main_module._build_parser()
+    args = parser.parse_args(
+        [
+            "pipeline",
+            "--repo",
+            "C:/repo",
+            "--webhook-url",
+            "https://hooks.slack.com/services/T000/B000/XXX",
+            "--webhook-url",
+            "https://example.com/webhooks/run-complete",
+            "--webhook-timeout",
+            "18",
+        ]
+    )
+    assert args.webhook_url == [
+        "https://hooks.slack.com/services/T000/B000/XXX",
+        "https://example.com/webhooks/run-complete",
+    ]
+    assert args.webhook_timeout == 18
+
+
 def test_github_actions_parser_accepts_repeated_branches() -> None:
     parser = main_module._build_parser()
     args = parser.parse_args(
@@ -566,6 +588,8 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
         timeout=120,
         max_tokens=5000,
         max_time=60,
+        webhook_url=["https://example.com/webhooks/pipeline"],
+        webhook_timeout=14,
         local_only=True,
         skip_preflight=False,
     )
@@ -579,6 +603,10 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
     assert StubPipeline.last_instance.config.science_enabled is True
     assert StubPipeline.last_instance.config.codex_binary == "codex-custom"
     assert StubPipeline.last_instance.config.claude_binary == "claude-custom"
+    assert StubPipeline.last_instance.config.run_completion_webhooks == [
+        "https://example.com/webhooks/pipeline"
+    ]
+    assert StubPipeline.last_instance.config.run_completion_webhook_timeout_seconds == 14
     assert "WarpFoundry - Pipeline Summary" in captured.out
 
 

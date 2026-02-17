@@ -284,6 +284,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum time in minutes (default: 240).",
     )
     pipe_p.add_argument(
+        "--webhook-url",
+        action="append",
+        default=None,
+        help=(
+            "Run-completion webhook URL (Slack/Discord/generic HTTP). "
+            "Repeat for multiple destinations."
+        ),
+    )
+    pipe_p.add_argument(
+        "--webhook-timeout",
+        type=int,
+        default=None,
+        help="Webhook request timeout in seconds (default: 10).",
+    )
+    pipe_p.add_argument(
         "--local-only",
         action="store_true",
         help="Force all AI calls through local Ollama (no cloud APIs).",
@@ -973,6 +988,8 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     repo_raw = str(getattr(args, "repo", "") or "").strip()
     resume_checkpoint_raw = str(getattr(args, "resume_checkpoint", "") or "").strip()
     resume_state = bool(getattr(args, "resume_state", False))
+    webhook_urls_arg = getattr(args, "webhook_url", None)
+    webhook_timeout_arg = getattr(args, "webhook_timeout", None)
     if resume_checkpoint_raw and resume_state:
         print("Error: --resume-checkpoint and --resume-state cannot be used together.", file=sys.stderr)
         return 1
@@ -1042,9 +1059,24 @@ def _run_pipeline(args: argparse.Namespace) -> int:
             timeout_per_phase=args.timeout,
             max_total_tokens=args.max_tokens,
             max_time_minutes=args.max_time,
+            run_completion_webhooks=[
+                str(url).strip() for url in list(webhook_urls_arg or []) if str(url).strip()
+            ],
+            run_completion_webhook_timeout_seconds=(
+                int(webhook_timeout_arg)
+                if webhook_timeout_arg is not None
+                else 10
+            ),
         )
         if args.test_cmd:
             config.test_cmd = args.test_cmd
+
+    if webhook_urls_arg is not None:
+        config.run_completion_webhooks = [
+            str(url).strip() for url in list(webhook_urls_arg or []) if str(url).strip()
+        ]
+    if webhook_timeout_arg is not None:
+        config.run_completion_webhook_timeout_seconds = max(2, min(60, int(webhook_timeout_arg)))
 
     if not getattr(args, "skip_preflight", False) and not _print_cli_preflight_guard(
         repo=repo,

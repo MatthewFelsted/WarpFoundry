@@ -66,8 +66,13 @@ warpfoundry pipeline --repo <path> --resume-state
 | `--timeout` | `600` |
 | `--max-tokens` | `5000000` |
 | `--max-time` | `240` minutes |
+| `--webhook-url` | unset (repeatable) |
+| `--webhook-timeout` | `10` seconds |
 | `--local-only` | false |
 | `--skip-preflight` | false |
+
+`--webhook-url` supports Slack incoming webhooks, Discord webhooks, and generic HTTP endpoints.
+Run-completion payloads include repo path, run id, stop reason, test rollup, token totals, and artifact links.
 
 ## Subcommand: `github-actions`
 
@@ -184,6 +189,7 @@ warpfoundry github-actions --repo /repo --branch main --branch develop
 warpfoundry doctor --repo /repo --agents codex,claude_code
 warpfoundry pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
 warpfoundry pipeline --repo /repo --agent claude_code --claude-bin /usr/local/bin/claude
+warpfoundry pipeline --repo /repo --webhook-url https://hooks.slack.com/services/T000/B000/XXX --webhook-url https://example.com/webhooks/run-complete
 warpfoundry optimize-prompts --dry-run
 warpfoundry list-recipes --recipe autopilot_default
 warpfoundry visual-test --url http://localhost:5088 --provider anthropic

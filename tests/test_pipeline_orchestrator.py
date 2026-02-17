@@ -353,6 +353,20 @@ class _FailingChangedEvaluator:
         )
 
 
+class _StubUrlopenResponse:
+    def __init__(self, body: bytes = b"ok"):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
 def test_default_phase_order_inherits_global_agent():
     cfg = PipelineConfig(agent="claude_code")
     phases = cfg.get_phase_order()
@@ -1364,6 +1378,108 @@ def test_pipeline_writes_history_log_entries(monkeypatch, tmp_path: Path):
     assert "run_started" in events
     assert "phase_result" in events
     assert "run_finished" in events
+
+
+def test_pipeline_run_completion_webhooks_emit_payloads(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    captured_requests: list[dict[str, object]] = []
+
+    def _fake_urlopen(request_obj, timeout=0):
+        payload = {}
+        if request_obj.data:
+            payload = json.loads(request_obj.data.decode("utf-8"))
+        captured_requests.append(
+            {
+                "url": request_obj.full_url,
+                "method": request_obj.get_method(),
+                "timeout": timeout,
+                "payload": payload,
+            }
+        )
+        return _StubUrlopenResponse()
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        run_completion_webhooks=[
+            "https://hooks.slack.com/services/T000/B000/XXX",
+            "https://discord.com/api/webhooks/123/token",
+            "https://example.com/webhooks/run-complete",
+        ],
+        run_completion_webhook_timeout_seconds=7,
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Run ideation.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.stop_reason == "max_cycles_reached"
+    assert state.run_id
+    assert len(captured_requests) == 3
+    assert all(item["method"] == "POST" for item in captured_requests)
+    assert all(int(item["timeout"]) == 7 for item in captured_requests)
+
+    by_url = {str(item["url"]): item for item in captured_requests}
+
+    generic = by_url["https://example.com/webhooks/run-complete"]["payload"]
+    assert generic["event"] == "warpfoundry.pipeline.run.completed"
+    assert generic["repo_path"] == str(repo.resolve())
+    assert generic["run_id"] == state.run_id
+    assert generic["stop_reason"] == "max_cycles_reached"
+    assert generic["status"] == "success"
+    assert generic["tests"]["skipped"] == 1
+    assert "history_jsonl" in generic["artifact_links"]
+    assert "outputs_dir" in generic["artifact_links"]
+
+    slack = by_url["https://hooks.slack.com/services/T000/B000/XXX"]["payload"]
+    assert "text" in slack
+    assert state.run_id in slack["text"]
+    assert "Stop reason" in slack["text"]
+
+    discord = by_url["https://discord.com/api/webhooks/123/token"]["payload"]
+    assert "content" in discord
+    assert state.run_id in discord["content"]
+    assert "Artifacts:" in discord["content"]
+
+
+def test_preflight_rejects_invalid_run_completion_webhook_url(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    monkeypatch.setattr(PipelineOrchestrator, "_binary_exists", staticmethod(lambda _binary: True))
+    monkeypatch.setattr(PipelineOrchestrator, "_has_codex_auth", staticmethod(lambda: True))
+    monkeypatch.setattr(PipelineOrchestrator, "_has_claude_auth", staticmethod(lambda: True))
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        run_completion_webhooks=["not-a-url"],
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="noop",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    issues = orch._preflight_issues(cfg, repo.resolve())
+
+    assert any("Invalid run-completion webhook URL" in issue for issue in issues)
 
 
 def test_brain_logbook_init_failure_does_not_abort_pipeline(monkeypatch, tmp_path: Path):

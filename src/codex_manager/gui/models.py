@@ -265,6 +265,8 @@ class PipelineGUIConfig(BaseModel):
     artifact_retention_max_files: int = 5000
     artifact_retention_max_bytes: int = 2_000_000_000
     artifact_retention_max_output_runs: int = 30
+    run_completion_webhooks: list[str] = Field(default_factory=list)
+    run_completion_webhook_timeout_seconds: int = 10
 
     # Git settings
     auto_commit: bool = True
@@ -326,6 +328,19 @@ class PipelineGUIConfig(BaseModel):
         )
         self.artifact_retention_max_output_runs = max(
             1, int(self.artifact_retention_max_output_runs or 30)
+        )
+        unique_webhooks: list[str] = []
+        seen_webhooks: set[str] = set()
+        for raw_url in self.run_completion_webhooks or []:
+            url = str(raw_url or "").strip()
+            if not url or url in seen_webhooks:
+                continue
+            seen_webhooks.add(url)
+            unique_webhooks.append(url)
+        self.run_completion_webhooks = unique_webhooks
+        self.run_completion_webhook_timeout_seconds = min(
+            60,
+            max(2, int(self.run_completion_webhook_timeout_seconds or 10)),
         )
         self.pr_feature_branch = str(self.pr_feature_branch or "").strip()
         self.pr_remote = str(self.pr_remote or "").strip()

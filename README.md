@@ -173,6 +173,7 @@ warpfoundry --repo /path/to/repo --goal "Improve tests and docs" --mode dry-run 
 warpfoundry strategic --repo /path/to/repo --focus reliability --focus ux
 warpfoundry pipeline --repo /path/to/repo --mode dry-run --cycles 1
 warpfoundry pipeline --repo /path/to/repo --resume-state
+warpfoundry pipeline --repo /path/to/repo --webhook-url https://hooks.slack.com/services/T000/B000/XXX
 warpfoundry github-actions --repo /path/to/repo --branch main
 warpfoundry list-recipes
 warpfoundry visual-test --url http://localhost:5088

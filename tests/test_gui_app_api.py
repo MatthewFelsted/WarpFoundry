@@ -912,6 +912,11 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
         deep_research_dedupe=True,
         self_improvement_enabled=True,
         self_improvement_auto_restart=True,
+        run_completion_webhooks=[
+            "https://hooks.slack.com/services/T000/B000/XXX",
+            "https://example.com/webhooks/run-complete",
+        ],
+        run_completion_webhook_timeout_seconds=16,
         pr_aware_enabled=True,
         mode="apply",
         pr_feature_branch="feature/pr-aware-api",
@@ -945,6 +950,11 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
     assert config.deep_research_dedupe is True
     assert config.self_improvement_enabled is True
     assert config.self_improvement_auto_restart is True
+    assert config.run_completion_webhooks == [
+        "https://hooks.slack.com/services/T000/B000/XXX",
+        "https://example.com/webhooks/run-complete",
+    ]
+    assert config.run_completion_webhook_timeout_seconds == 16
     assert config.pr_aware_enabled is True
     assert config.pr_feature_branch == "feature/pr-aware-api"
     assert config.pr_remote == "origin"
