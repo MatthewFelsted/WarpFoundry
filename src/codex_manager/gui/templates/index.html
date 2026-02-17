@@ -718,6 +718,30 @@ body.mode-medium .easy-only{display:none}
 .git-remote-add-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .git-remote-add-row label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text2)}
 
+#git-signing-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2230;display:flex;align-items:center;justify-content:center;padding:24px}
+#git-signing-overlay.hidden{display:none}
+.git-signing-card{max-width:860px;width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.git-signing-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.git-signing-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:12px}
+.git-signing-card .status{font-size:12px;color:var(--text2);margin-top:8px;min-height:1.2em}
+.git-signing-card .status[data-tone="ok"]{color:var(--success)}
+.git-signing-card .status[data-tone="warn"]{color:var(--warning)}
+.git-signing-card .status[data-tone="error"]{color:var(--danger)}
+.git-signing-card .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+.git-signing-meta{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,360px);gap:12px;margin-bottom:12px}
+.git-signing-card-block{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);padding:10px}
+.git-signing-form-grid{display:grid;grid-template-columns:minmax(180px,220px) minmax(0,1fr);gap:8px 12px;align-items:end}
+.git-signing-form-grid .form-row{margin-bottom:0}
+.git-signing-options{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}
+.git-signing-options label{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text2)}
+.git-signing-checks{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--bg);display:grid;gap:8px}
+.git-signing-check{border:1px solid var(--border);border-radius:var(--radius);padding:8px;background:rgba(18,25,35,.55)}
+.git-signing-check-title{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--text)}
+.git-signing-check-detail{font-size:12px;color:var(--text2);line-height:1.45;margin-top:4px}
+.git-signing-badge{font-size:10px;border-radius:999px;padding:2px 7px;border:1px solid var(--border)}
+.git-signing-badge.ok{color:var(--success);border-color:rgba(71,192,123,.45);background:rgba(71,192,123,.12)}
+.git-signing-badge.fail{color:var(--danger);border-color:rgba(232,106,106,.45);background:rgba(232,106,106,.12)}
+
 /* GitHub auth modal */
 #github-auth-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
 #github-auth-overlay.hidden{display:none}
@@ -1016,6 +1040,7 @@ body.mode-medium .easy-only{display:none}
 #new-project-overlay,
 #clone-repo-overlay,
 #git-remote-overlay,
+#git-signing-overlay,
 #git-commit-overlay,
 #api-keys-overlay,
 #github-auth-overlay,
@@ -1036,6 +1061,7 @@ body.mode-medium .easy-only{display:none}
 .new-project-card,
 .clone-repo-card,
 .git-remote-card,
+.git-signing-card,
 .git-commit-card,
 .api-keys-card,
 .github-auth-card,
@@ -1095,6 +1121,8 @@ body.mode-medium .easy-only{display:none}
   .science-grid{grid-template-columns:1fr}
   .git-commit-meta{grid-template-columns:1fr}
   .git-remote-meta{grid-template-columns:1fr}
+  .git-signing-meta{grid-template-columns:1fr}
+  .git-signing-form-grid{grid-template-columns:1fr}
   .git-remote-add-grid{grid-template-columns:1fr}
   .workspace-repo-toolbar{align-items:stretch}
   .first-run-wizard-steps{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -1115,7 +1143,7 @@ body.mode-medium .easy-only{display:none}
   .workspace-repo-actions{flex-direction:column;align-items:stretch}
   .workspace-repo-actions select{min-width:0;max-width:none;width:100%}
   #toast-stack{right:12px;bottom:12px}
-  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal,.first-run-wizard-card,.api-keys-card,.about-card{max-height:88vh}
+  .docs-modal,.browse-modal,.permissions-help-modal,.run-plan-modal,.readonly-warning-modal,.science-dashboard-modal,.first-run-wizard-card,.api-keys-card,.about-card,.git-signing-card{max-height:88vh}
   .science-cards{grid-template-columns:1fr}
   .science-bar-row{grid-template-columns:72px 1fr 38px}
   .first-run-wizard-steps{grid-template-columns:1fr}
@@ -1180,6 +1208,7 @@ body.mode-medium .easy-only{display:none}
       <button class="btn btn-success" id="git-sync-push-btn" type="button" onclick="gitSyncPush()">Push</button>
       <button class="btn" id="git-sync-commit-panel-btn" type="button" onclick="showGitCommitModal()">Commit</button>
       <button class="btn" id="git-sync-remotes-btn" type="button" onclick="showGitRemoteModal()">Remotes</button>
+      <button class="btn" id="git-sync-signing-btn" type="button" onclick="showGitSigningModal()">Signing</button>
       <button
         class="btn"
         id="git-sync-open-pr-btn"
@@ -2802,6 +2831,76 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- Git Signing Management modal -->
+<div id="git-signing-overlay" class="hidden" onclick="if(event.target===this)hideGitSigningModal()">
+  <div class="git-signing-card" role="dialog" aria-modal="true" aria-labelledby="git-signing-title">
+    <h2 id="git-signing-title">Git Signing Setup</h2>
+    <p class="subtitle">Configure commit/tag signing with GPG or SSH, validate key readiness, and enforce push guardrails.</p>
+
+    <div class="git-signing-meta">
+      <div class="git-signing-card-block">
+        <h3>Repository</h3>
+        <div class="field-help" id="git-signing-repo-path">No repo selected</div>
+      </div>
+      <div class="git-signing-card-block">
+        <h3>Validation Summary</h3>
+        <div class="field-help" id="git-signing-summary">No signing settings loaded.</div>
+      </div>
+    </div>
+
+    <div class="git-signing-form-grid">
+      <div class="form-row">
+        <label for="git-signing-mode">Signing Mode</label>
+        <select id="git-signing-mode" onchange="_syncGitSigningControls()">
+          <option value="gpg">GPG (OpenPGP)</option>
+          <option value="ssh">SSH</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="git-signing-key">Signing Key ID / Value / Path</label>
+        <input
+          id="git-signing-key"
+          type="text"
+          placeholder="GPG key id/email, ssh-ed25519 ..., or path to key file"
+          oninput="_syncGitSigningControls()"
+        >
+      </div>
+    </div>
+
+    <div class="git-signing-options">
+      <label for="git-signing-clear-key" title="Unset user.signingkey in this repository.">
+        <input id="git-signing-clear-key" type="checkbox" onchange="_syncGitSigningControls()">
+        clear signing key
+      </label>
+      <label for="git-signing-commit-sign" title="Maps to git config commit.gpgsign.">
+        <input id="git-signing-commit-sign" type="checkbox" onchange="_syncGitSigningControls()">
+        sign commits
+      </label>
+      <label for="git-signing-tag-sign" title="Maps to git config tag.gpgSign.">
+        <input id="git-signing-tag-sign" type="checkbox" onchange="_syncGitSigningControls()">
+        sign tags
+      </label>
+      <label for="git-signing-require-push-guard" title="Block push when signing is enabled but validation fails.">
+        <input id="git-signing-require-push-guard" type="checkbox" onchange="_syncGitSigningControls()">
+        block push when invalid
+      </label>
+    </div>
+
+    <div class="git-signing-checks" id="git-signing-checks">
+      <div class="state-card">Select a repository path to load signing checks.</div>
+    </div>
+
+    <div class="status" id="git-signing-status" data-tone="muted"></div>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideGitSigningModal()">Close</button>
+      <button class="btn" id="git-signing-refresh-btn" type="button" onclick="refreshGitSigningSettingsNow()">Reload</button>
+      <button class="btn" id="git-signing-validate-btn" type="button" onclick="validateGitSigningSettings()">Validate</button>
+      <button class="btn btn-primary" id="git-signing-save-btn" type="button" onclick="saveGitSigningSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- API Keys modal -->
 <div id="api-keys-overlay" class="hidden" onclick="if(event.target===this)hideApiKeysModal()">
   <div class="api-keys-card" role="dialog" aria-modal="true" aria-labelledby="api-keys-title">
@@ -3120,6 +3219,7 @@ let gitSyncState = null;
 let gitSyncBranchState = null;
 let gitRemoteState = null;
 let gitCommitWorkflowState = null;
+let gitSigningState = null;
 let gitSyncBusyAction = '';
 let gitSyncPullRequestUrl = '';
 let gitSyncGithubRepoUrl = '';
@@ -3172,6 +3272,7 @@ const _modalOverlayIds = [
   'new-project-overlay',
   'clone-repo-overlay',
   'git-remote-overlay',
+  'git-signing-overlay',
   'git-commit-overlay',
   'api-keys-overlay',
   'github-auth-overlay',
@@ -5586,6 +5687,18 @@ async function _workspaceRunGitQuickAction(actionKey, repoPath, payload = {}) {
     const message = String(response.error || 'Unknown error');
     _setWorkspaceStatus(action.failure + message, 'error');
     toast(action.failure + message, 'error');
+    if (actionKey === 'push' && response && response.error_type === 'signing_misconfigured') {
+      const signingSettings = _gitSigningSettingsFromResponse(response.signing);
+      if (signingSettings) {
+        gitSigningState = signingSettings;
+      }
+      const issues = Array.isArray(signingSettings && signingSettings.issues) ? signingSettings.issues : [];
+      if (issues.length) {
+        toast('Signing issue: ' + String(issues[0]), 'info');
+      } else {
+        toast('Open Git Sync -> Signing to resolve signing validation issues.', 'info');
+      }
+    }
     const recovery = Array.isArray(response.recovery_steps) ? response.recovery_steps : [];
     if (recovery.length) {
       toast('Recovery: ' + recovery.join(' | '), 'info');
@@ -5862,6 +5975,7 @@ function _syncGitSyncButtonState() {
     'git-sync-stash-pull-btn',
     'git-sync-commit-panel-btn',
     'git-sync-remotes-btn',
+    'git-sync-signing-btn',
     'git-sync-refresh-btn',
   ].forEach(id => {
     const btn = document.getElementById(id);
@@ -5891,6 +6005,7 @@ function _syncGitSyncButtonState() {
   const allowDirty = document.getElementById('git-sync-allow-dirty-switch');
   if (allowDirty) allowDirty.disabled = disabled;
   _syncGitRemoteControls();
+  _syncGitSigningControls();
   _syncGitCommitControls();
   _syncWorkspaceControls();
 }
@@ -6039,12 +6154,16 @@ async function refreshGitSyncStatus(opts = {}) {
     gitSyncBranchState = null;
     gitRemoteState = null;
     gitCommitWorkflowState = null;
+    gitSigningState = null;
     _setGitSyncPullRequestUrl('');
     _clearGitSyncBranchOptions();
     _clearGitSyncWidgetDetails();
     _setGitSyncIndicator('No repo selected', 'muted', 'Select a repository path to view sync status');
     if (_isGitRemoteModalOpen()) {
       _clearGitRemoteView('Set a repository path first.');
+    }
+    if (_isGitSigningModalOpen()) {
+      _clearGitSigningView('Set a repository path first.');
     }
     if (_isGitCommitModalOpen()) {
       _clearGitCommitWorkflowView('Set a repository path first.');
@@ -6085,6 +6204,9 @@ async function refreshGitSyncStatus(opts = {}) {
   });
   if (_isGitRemoteModalOpen()) {
     await refreshGitRemotes({ repoPath, silent: true, force: !!opts.force });
+  }
+  if (_isGitSigningModalOpen()) {
+    await refreshGitSigningSettings({ repoPath, silent: true, force: !!opts.force });
   }
   if (_isGitCommitModalOpen()) {
     await refreshGitCommitWorkflow({ repoPath, silent: true, force: !!opts.force });
@@ -6204,6 +6326,24 @@ async function _runGitSyncAction(actionKey) {
     const message = String(response.error || 'Unknown error');
     _setGitSyncIndicator(message, 'error', message);
     toast(action.failurePrefix + message, 'error');
+    if (actionKey === 'push' && response && response.error_type === 'signing_misconfigured') {
+      const signingSettings = _gitSigningSettingsFromResponse(response.signing);
+      if (signingSettings) {
+        gitSigningState = signingSettings;
+        if (_isGitSigningModalOpen()) {
+          _applyGitSigningPayload(signingSettings, {
+            statusText: 'Push blocked by signing guard.',
+            statusTone: 'error',
+          });
+        }
+        const issues = Array.isArray(signingSettings.issues) ? signingSettings.issues : [];
+        if (issues.length) {
+          toast('Signing issue: ' + String(issues[0]), 'info');
+        } else {
+          toast('Open Git Sync -> Signing to resolve signing validation issues.', 'info');
+        }
+      }
+    }
     if (actionKey === 'push' && response && typeof response.auth_troubleshooting === 'object') {
       _setGithubAuthTroubleshooting(response.auth_troubleshooting);
       const summary = String(response.auth_troubleshooting.summary || '').trim();
@@ -6864,6 +7004,285 @@ async function gitRemoteClearDefault() {
       failurePrefix: 'Clear default failed: ',
     }
   );
+}
+
+function _isGitSigningModalOpen() {
+  const overlay = document.getElementById('git-signing-overlay');
+  return !!(overlay && !overlay.classList.contains('hidden'));
+}
+
+function _setGitSigningRepoPathLabel(path) {
+  const el = document.getElementById('git-signing-repo-path');
+  if (!el) return;
+  const repoPath = String(path || '').trim();
+  el.textContent = repoPath || 'No repo selected';
+  el.title = repoPath || 'No repository selected';
+}
+
+function _setGitSigningSummary(text) {
+  const el = document.getElementById('git-signing-summary');
+  if (!el) return;
+  el.textContent = String(text || '');
+}
+
+function _setGitSigningStatus(text, tone = 'muted') {
+  const el = document.getElementById('git-signing-status');
+  if (!el) return;
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
+  el.textContent = String(text || '');
+}
+
+function _renderGitSigningChecks(payload) {
+  const el = document.getElementById('git-signing-checks');
+  if (!el) return;
+  const checks = Array.isArray(payload && payload.checks) ? payload.checks : [];
+  if (!checks.length) {
+    el.innerHTML = '<div class="state-card">No signing checks available.</div>';
+    return;
+  }
+  el.innerHTML = checks.map(check => {
+    const ok = !!(check && check.ok);
+    const label = String(check && check.label || check && check.key || 'check').trim();
+    const detail = String(check && check.detail || '').trim();
+    return ''
+      + '<div class="git-signing-check">'
+      + '<div class="git-signing-check-title">'
+      + '<span class="git-signing-badge ' + (ok ? 'ok' : 'fail') + '">' + (ok ? 'OK' : 'FIX') + '</span>'
+      + '<span>' + esc(label) + '</span>'
+      + '</div>'
+      + '<div class="git-signing-check-detail">' + esc(detail || (ok ? 'Check passed.' : 'Check failed.')) + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function _syncGitSigningControls() {
+  const hasRepo = !!_activeRepoPathForGitSync();
+  const busy = !!gitSyncBusyAction;
+  const disabled = busy || !hasRepo;
+  const modeEl = document.getElementById('git-signing-mode');
+  const keyEl = document.getElementById('git-signing-key');
+  const clearKeyEl = document.getElementById('git-signing-clear-key');
+  const commitEl = document.getElementById('git-signing-commit-sign');
+  const tagEl = document.getElementById('git-signing-tag-sign');
+  const guardEl = document.getElementById('git-signing-require-push-guard');
+  const refreshBtn = document.getElementById('git-signing-refresh-btn');
+  const validateBtn = document.getElementById('git-signing-validate-btn');
+  const saveBtn = document.getElementById('git-signing-save-btn');
+
+  const signingEnabled = !!((commitEl && commitEl.checked) || (tagEl && tagEl.checked));
+  if (modeEl) modeEl.disabled = disabled;
+  if (clearKeyEl) clearKeyEl.disabled = disabled;
+  if (keyEl) keyEl.disabled = disabled || !!(clearKeyEl && clearKeyEl.checked);
+  if (commitEl) commitEl.disabled = disabled;
+  if (tagEl) tagEl.disabled = disabled;
+  if (guardEl) {
+    if (!signingEnabled) guardEl.checked = false;
+    guardEl.disabled = disabled || !signingEnabled;
+  }
+  if (refreshBtn) refreshBtn.disabled = disabled;
+  if (validateBtn) validateBtn.disabled = disabled;
+  if (saveBtn) saveBtn.disabled = disabled;
+}
+
+function _gitSigningSettingsFromResponse(response) {
+  if (!response || typeof response !== 'object') return null;
+  if (response.settings && typeof response.settings === 'object') return response.settings;
+  return response;
+}
+
+function _gitSigningDraftPayload() {
+  const modeEl = document.getElementById('git-signing-mode');
+  const keyEl = document.getElementById('git-signing-key');
+  const clearKeyEl = document.getElementById('git-signing-clear-key');
+  const commitEl = document.getElementById('git-signing-commit-sign');
+  const tagEl = document.getElementById('git-signing-tag-sign');
+  const guardEl = document.getElementById('git-signing-require-push-guard');
+  return {
+    mode: String(modeEl ? modeEl.value : 'gpg').trim() || 'gpg',
+    signing_key: String(keyEl ? keyEl.value : '').trim(),
+    clear_signing_key: !!(clearKeyEl && clearKeyEl.checked),
+    commit_sign: !!(commitEl && commitEl.checked),
+    tag_sign: !!(tagEl && tagEl.checked),
+    require_push_guard: !!(guardEl && guardEl.checked),
+  };
+}
+
+function _applyGitSigningPayload(payload, opts = {}) {
+  if (!payload || typeof payload !== 'object') return;
+  gitSigningState = payload;
+  _setGitSigningRepoPathLabel(payload.repo_path || _activeRepoPathForGitSync());
+
+  const modeEl = document.getElementById('git-signing-mode');
+  const keyEl = document.getElementById('git-signing-key');
+  const clearKeyEl = document.getElementById('git-signing-clear-key');
+  const commitEl = document.getElementById('git-signing-commit-sign');
+  const tagEl = document.getElementById('git-signing-tag-sign');
+  const guardEl = document.getElementById('git-signing-require-push-guard');
+
+  if (modeEl) modeEl.value = String(payload.mode || 'gpg').trim() === 'ssh' ? 'ssh' : 'gpg';
+  if (keyEl) keyEl.value = String(payload.signing_key || '');
+  if (clearKeyEl) clearKeyEl.checked = false;
+  if (commitEl) commitEl.checked = !!payload.commit_sign;
+  if (tagEl) tagEl.checked = !!payload.tag_sign;
+  if (guardEl) guardEl.checked = !!payload.require_push_guard;
+
+  const enabled = !!payload.enabled;
+  const valid = !!payload.valid;
+  const modeLabel = String(payload.mode || 'gpg').toUpperCase();
+  const issueCount = Array.isArray(payload.issues) ? payload.issues.length : 0;
+  if (!enabled) {
+    _setGitSigningSummary('Signing is currently disabled for commits and tags.');
+  } else if (valid) {
+    _setGitSigningSummary('Signing enabled (' + modeLabel + ') and validation passed.');
+  } else {
+    _setGitSigningSummary(
+      'Signing enabled (' + modeLabel + ') but validation found ' + issueCount + ' issue(s).'
+    );
+  }
+
+  _renderGitSigningChecks(payload);
+  if (opts.statusText) {
+    _setGitSigningStatus(opts.statusText, opts.statusTone || 'muted');
+  }
+  if (payload.sync) {
+    gitSyncState = payload.sync;
+    _renderGitSyncState(payload.sync);
+  }
+  _syncGitSigningControls();
+}
+
+function _clearGitSigningView(message = 'No repository selected.') {
+  gitSigningState = null;
+  _setGitSigningRepoPathLabel('');
+  _setGitSigningSummary('No signing settings loaded.');
+  _renderGitSigningChecks({ checks: [] });
+  _setGitSigningStatus(message, 'muted');
+  _syncGitSigningControls();
+}
+
+async function showGitSigningModal() {
+  _openOverlay('git-signing-overlay', '#git-signing-mode');
+  const repoPath = _activeRepoPathForGitSync();
+  _setGitSigningRepoPathLabel(repoPath);
+  if (!repoPath) {
+    _clearGitSigningView('Set a repository path first.');
+    return;
+  }
+  await refreshGitSigningSettings({ repoPath, silent: true, force: true });
+}
+
+function hideGitSigningModal() {
+  _closeOverlay('git-signing-overlay');
+}
+
+async function refreshGitSigningSettings(opts = {}) {
+  const repoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (!repoPath) {
+    _clearGitSigningView('Set a repository path first.');
+    return;
+  }
+  _setGitSigningRepoPathLabel(repoPath);
+  if (gitSyncBusyAction && !opts.force) {
+    _syncGitSigningControls();
+    return;
+  }
+
+  if (!opts.silent) _setGitSigningStatus('Loading signing settings...', 'muted');
+  const response = await api('/api/git/signing?repo_path=' + encodeURIComponent(repoPath));
+  const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
+  if (repoPath !== currentRepoPath) return;
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitSigningStatus(message, 'error');
+    if (!opts.silent) toast('Could not load signing settings: ' + message, 'error');
+    _syncGitSigningControls();
+    return;
+  }
+
+  const settings = _gitSigningSettingsFromResponse(response);
+  _applyGitSigningPayload(
+    settings,
+    opts.silent
+      ? {}
+      : {
+          statusText: String(settings && settings.message || 'Signing settings loaded.'),
+          statusTone: 'ok',
+        }
+  );
+}
+
+async function refreshGitSigningSettingsNow() {
+  await refreshGitSigningSettings({ silent: false, force: true });
+}
+
+async function validateGitSigningSettings() {
+  if (gitSyncBusyAction) return;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    _clearGitSigningView('Set a repository path first.');
+    return;
+  }
+
+  gitSyncBusyAction = 'git_signing_validate';
+  _syncGitSyncButtonState();
+  _setGitSigningStatus('Validating signing settings...', 'muted');
+  const response = await postJson(
+    '/api/git/signing/validate',
+    Object.assign({ repo_path: repoPath }, _gitSigningDraftPayload())
+  );
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitSigningStatus(message, 'error');
+    toast('Signing validation failed: ' + message, 'error');
+    return;
+  }
+
+  const settings = _gitSigningSettingsFromResponse(response);
+  _applyGitSigningPayload(settings, {
+    statusText: String(response.message || 'Signing validation complete.'),
+    statusTone: settings && settings.valid ? 'ok' : 'warn',
+  });
+  toast(String(response.message || 'Signing validation complete.'), settings && settings.valid ? 'success' : 'info');
+}
+
+async function saveGitSigningSettings() {
+  if (gitSyncBusyAction) return;
+  const repoPath = _activeRepoPathForGitSync();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    _clearGitSigningView('Set a repository path first.');
+    return;
+  }
+
+  gitSyncBusyAction = 'git_signing_save';
+  _syncGitSyncButtonState();
+  _setGitSigningStatus('Saving signing settings...', 'muted');
+  const response = await postJson(
+    '/api/git/signing',
+    Object.assign({ repo_path: repoPath }, _gitSigningDraftPayload())
+  );
+  gitSyncBusyAction = '';
+  _syncGitSyncButtonState();
+
+  if (response.error) {
+    const message = String(response.error || 'Unknown error');
+    _setGitSigningStatus(message, 'error');
+    toast('Could not save signing settings: ' + message, 'error');
+    return;
+  }
+
+  const settings = _gitSigningSettingsFromResponse(response);
+  _applyGitSigningPayload(settings, {
+    statusText: String(response.message || 'Signing settings saved.'),
+    statusTone: settings && settings.valid ? 'ok' : 'warn',
+  });
+  toast(String(response.message || 'Signing settings saved.'), settings && settings.valid ? 'success' : 'info');
 }
 
 function _isGitCommitModalOpen() {
@@ -10547,6 +10966,23 @@ function resetGitRemoteForm() {
   hideGitRemoteModal();
 }
 
+function resetGitSigningForm() {
+  const modeEl = document.getElementById('git-signing-mode');
+  const keyEl = document.getElementById('git-signing-key');
+  const clearKeyEl = document.getElementById('git-signing-clear-key');
+  const commitEl = document.getElementById('git-signing-commit-sign');
+  const tagEl = document.getElementById('git-signing-tag-sign');
+  const guardEl = document.getElementById('git-signing-require-push-guard');
+  if (modeEl) modeEl.value = 'gpg';
+  if (keyEl) keyEl.value = '';
+  if (clearKeyEl) clearKeyEl.checked = false;
+  if (commitEl) commitEl.checked = false;
+  if (tagEl) tagEl.checked = false;
+  if (guardEl) guardEl.checked = false;
+  _clearGitSigningView('No repository selected.');
+  hideGitSigningModal();
+}
+
 function resetTodoWishlistForm() {
   const repo = _activeRepoPath();
   document.getElementById('todo-wishlist-repo').value = repo;
@@ -10638,6 +11074,7 @@ async function clearEverything() {
   resetNewProjectForm();
   resetCloneRepoForm();
   resetGitRemoteForm();
+  resetGitSigningForm();
   resetTodoWishlistForm();
   resetFeatureDreamsForm();
   resetGeneralRequestForm();

@@ -2908,10 +2908,19 @@ def test_index_includes_git_branch_switcher_controls(client):
     assert "/api/workspace/repos/activate" in html
     assert 'id="git-sync-remotes-btn"' in html
     assert 'onclick="showGitRemoteModal()"' in html
+    assert 'id="git-sync-signing-btn"' in html
+    assert 'onclick="showGitSigningModal()"' in html
     assert 'id="git-remote-overlay"' in html
     assert 'id="git-remote-body"' in html
     assert 'id="git-remote-name-input"' in html
     assert 'id="git-remote-url-input"' in html
+    assert 'id="git-signing-overlay"' in html
+    assert 'id="git-signing-mode"' in html
+    assert 'id="git-signing-key"' in html
+    assert "async function showGitSigningModal()" in html
+    assert "async function refreshGitSigningSettingsNow()" in html
+    assert "async function validateGitSigningSettings()" in html
+    assert "async function saveGitSigningSettings()" in html
     assert "async function showGitRemoteModal()" in html
     assert "async function refreshGitRemotesNow()" in html
     assert "async function gitRemoteAdd()" in html
@@ -2923,6 +2932,9 @@ def test_index_includes_git_branch_switcher_controls(client):
     assert "/api/git/sync/remotes/remove" in html
     assert "/api/git/sync/remotes/default" in html
     assert "/api/git/sync/remotes/validate" in html
+    assert "/api/git/signing?repo_path=" in html
+    assert "/api/git/signing/validate" in html
+    assert "/api/git/signing" in html
     assert 'id="git-sync-commit-panel-btn"' in html
     assert 'onclick="showGitCommitModal()"' in html
     assert 'id="git-commit-overlay"' in html
@@ -3845,6 +3857,94 @@ def test_git_sync_remote_add_rejects_invalid_url_scheme(client, tmp_path: Path):
     assert "HTTPS or SSH" in data["error"]
 
 
+def test_git_signing_settings_endpoint_returns_defaults(client, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-signing-defaults")
+
+    resp = client.get("/api/git/signing", query_string={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["repo_path"] == str(local)
+    assert data["mode"] in {"gpg", "ssh"}
+    assert data["commit_sign"] is False
+    assert data["tag_sign"] is False
+    assert data["enabled"] is False
+    assert data["valid"] is True
+    assert isinstance(data["checks"], list)
+    assert isinstance(data["validation"], dict)
+
+
+def test_git_signing_save_persists_repo_config_and_returns_settings(
+    client, monkeypatch, tmp_path: Path
+):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-signing-save")
+
+    def _fake_validation(_repo: Path, settings: dict[str, object]) -> dict[str, object]:
+        return {
+            "mode": str(settings.get("mode") or "gpg"),
+            "valid": True,
+            "issues": [],
+            "checks": [
+                {
+                    "key": "stub",
+                    "label": "Stub validation",
+                    "ok": True,
+                    "detail": "Validation stubbed for deterministic tests.",
+                }
+            ],
+            "message": "Signing configuration looks valid.",
+            "checked_at_epoch_ms": 1,
+        }
+
+    monkeypatch.setattr(gui_app_module, "_git_signing_validation", _fake_validation)
+
+    key_value = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey test@example.com"
+    resp = client.post(
+        "/api/git/signing",
+        json={
+            "repo_path": str(local),
+            "mode": "ssh",
+            "signing_key": key_value,
+            "commit_sign": True,
+            "tag_sign": True,
+            "require_push_guard": True,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "saved"
+    settings = data["settings"]
+    assert settings["mode"] == "ssh"
+    assert settings["commit_sign"] is True
+    assert settings["tag_sign"] is True
+    assert settings["enabled"] is True
+    assert settings["require_push_guard"] is True
+    assert settings["valid"] is True
+    assert settings["signing_key"] == key_value
+
+    gpg_format = _run_git("config", "--get", "gpg.format", cwd=local).stdout.strip()
+    commit_sign = _run_git("config", "--get", "commit.gpgsign", cwd=local).stdout.strip().lower()
+    tag_sign = _run_git("config", "--get", "tag.gpgSign", cwd=local).stdout.strip().lower()
+    signing_key = _run_git("config", "--get", "user.signingkey", cwd=local).stdout.strip()
+    push_guard = _run_git(
+        "config",
+        "--get",
+        "warpfoundry.signing.requirePushGuard",
+        cwd=local,
+    ).stdout.strip().lower()
+
+    assert gpg_format == "ssh"
+    assert commit_sign == "true"
+    assert tag_sign == "true"
+    assert signing_key == key_value
+    assert push_guard == "true"
+
+
 def test_git_commit_workflow_lists_changes_and_last_commit(client, tmp_path: Path):
     remote = _make_remote_repo(tmp_path)
     local = _clone_tracking_repo(tmp_path, remote, clone_name="local-commit-workflow")
@@ -4066,6 +4166,54 @@ def test_git_sync_push_with_set_upstream_for_new_branch(client, tmp_path: Path):
 
     upstream = _run_git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}", cwd=local).stdout
     assert upstream.strip() == "origin/feature/sync-push-upstream"
+
+
+def test_git_sync_push_blocks_when_signing_is_misconfigured(client, monkeypatch, tmp_path: Path):
+    remote = _make_remote_repo(tmp_path)
+    local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-push-signing-blocked")
+
+    (local / "SIGNED_BLOCKED_PUSH.md").write_text("signing guard should block push\n", encoding="utf-8")
+    _run_git("add", "SIGNED_BLOCKED_PUSH.md", cwd=local)
+    _run_git("commit", "-m", "commit before blocked push", cwd=local)
+
+    monkeypatch.setattr(
+        gui_app_module,
+        "_git_signing_payload",
+        lambda _repo: {
+            "repo_path": str(local),
+            "mode": "gpg",
+            "commit_sign": True,
+            "tag_sign": True,
+            "enabled": True,
+            "require_push_guard": True,
+            "valid": False,
+            "issues": ["No GPG secret key is available for signing."],
+            "checks": [],
+            "validation": {
+                "mode": "gpg",
+                "valid": False,
+                "issues": ["No GPG secret key is available for signing."],
+                "checks": [],
+                "message": "Signing configuration has issues.",
+            },
+            "message": "Signing configuration has issues.",
+        },
+    )
+
+    resp = client.post("/api/git/sync/push", json={"repo_path": str(local)})
+    data = resp.get_json()
+
+    assert resp.status_code == 412
+    assert data
+    assert data["error_type"] == "signing_misconfigured"
+    assert "Push blocked" in data["error"]
+    assert isinstance(data["recovery_steps"], list)
+    assert any("Signing" in step for step in data["recovery_steps"])
+    assert isinstance(data["signing"], dict)
+    assert data["signing"]["valid"] is False
+
+    verifier = _clone_tracking_repo(tmp_path, remote, clone_name="verify-signing-blocked-push")
+    assert (verifier / "SIGNED_BLOCKED_PUSH.md").is_file() is False
 
 
 def test_git_sync_push_returns_pull_request_url_for_github_remote(client, monkeypatch, tmp_path: Path):

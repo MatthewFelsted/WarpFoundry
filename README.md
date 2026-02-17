@@ -97,6 +97,7 @@ These are based on the current codebase and CLI parser, not marketing copy:
 - Strategic shortcut (`warpfoundry strategic --repo <path>`)
 - Autonomous pipeline (`warpfoundry pipeline --repo <path>`)
 - GitHub Actions workflow generation for pipeline CI (`warpfoundry github-actions --repo <path>`)
+- Git Sync signing setup (GPG/SSH) with validation and push guardrails in GUI
 - Setup diagnostics with actionable next steps (`warpfoundry doctor --repo <path>`)
 - Prompt tools (`list-prompts`, `optimize-prompts`, `list-recipes`)
 - Optional visual UI testing via CUA (`warpfoundry visual-test --url <url>`)

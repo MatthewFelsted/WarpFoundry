@@ -196,6 +196,8 @@ _GITHUB_REPO_METADATA_ERROR_CACHE_TTL_SECONDS = 60
 _GIT_REMOTE_QUERY_TIMEOUT_SECONDS = 20
 _GIT_CLONE_TIMEOUT_SECONDS = 180
 _GIT_SYNC_TIMEOUT_SECONDS = 30
+_GIT_SIGNING_CHECK_TIMEOUT_SECONDS = 20
+_GIT_SIGNING_PUSH_GUARD_KEY = "warpfoundry.signing.requirePushGuard"
 _DEFAULT_BRANCH_SENTINEL = "__remote_default__"
 _OWNER_CONTEXT_MAX_FILES = 6
 _OWNER_CONTEXT_MAX_FILE_CHARS = 6000
@@ -5899,6 +5901,324 @@ def _git_push_error_status_and_label(error_type: str) -> tuple[int, str]:
     return 502, "unexpected"
 
 
+def _git_config_get_value(repo: Path, key: str) -> str:
+    """Return repo-local git config value, or empty string when unset/missing."""
+    result = _run_git_sync_command(repo, "config", "--get", key)
+    if result.returncode != 0:
+        return ""
+    return str(result.stdout or "").strip()
+
+
+def _git_config_set_value(repo: Path, key: str, value: str) -> None:
+    """Set repo-local git config key/value, raising on failure."""
+    result = _run_git_sync_command(repo, "config", "--local", key, value)
+    if result.returncode == 0:
+        return
+    detail = _extract_git_process_error(result, f"git config --local {key} failed")
+    raise RuntimeError(detail)
+
+
+def _git_config_set_bool(repo: Path, key: str, value: bool) -> None:
+    """Set repo-local git boolean config in canonical true/false string form."""
+    _git_config_set_value(repo, key, "true" if value else "false")
+
+
+def _git_config_unset_value(repo: Path, key: str) -> None:
+    """Unset repo-local git config key when present; ignore missing-key cases."""
+    result = _run_git_sync_command(repo, "config", "--unset", key)
+    if result.returncode == 0:
+        return
+    detail = _extract_git_process_error(result, f"git config --unset {key} failed")
+    if "no such section or key" in detail.lower():
+        return
+    raise RuntimeError(detail)
+
+
+def _git_config_truthy(value: object) -> bool:
+    """Return git-style boolean interpretation for config values."""
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_git_signing_mode(value: object) -> str:
+    """Normalize input/config signing mode to 'gpg' or 'ssh'."""
+    raw = str(value or "").strip().lower()
+    if raw == "ssh":
+        return "ssh"
+    # Git stores GPG format as openpgp/x509/ssh. We currently expose openpgp as "gpg".
+    return "gpg"
+
+
+def _resolve_signing_key_path(repo: Path, signing_key: str) -> Path:
+    """Resolve a signing-key path relative to repo when not absolute."""
+    key_path = Path(signing_key).expanduser()
+    if key_path.is_absolute():
+        return key_path
+    return (repo / key_path).resolve()
+
+
+def _looks_like_inline_ssh_key(signing_key: str) -> bool:
+    """Return True when value looks like an inline SSH public key string."""
+    raw = str(signing_key or "").strip()
+    if not raw:
+        return False
+    parts = [part for part in raw.split() if part]
+    if len(parts) < 2:
+        return False
+    return parts[0].startswith("ssh-")
+
+
+def _git_signing_settings(repo: Path) -> dict[str, object]:
+    """Return Git signing settings for the selected repository."""
+    gpg_format = str(_git_config_get_value(repo, "gpg.format") or "openpgp").strip().lower()
+    mode = _normalize_git_signing_mode(gpg_format)
+    commit_sign = _git_config_truthy(_git_config_get_value(repo, "commit.gpgsign"))
+    tag_sign = _git_config_truthy(_git_config_get_value(repo, "tag.gpgSign"))
+    enabled = bool(commit_sign or tag_sign)
+    signing_key = _git_config_get_value(repo, "user.signingkey")
+    require_push_guard_raw = _git_config_get_value(repo, _GIT_SIGNING_PUSH_GUARD_KEY)
+    if require_push_guard_raw:
+        require_push_guard = _git_config_truthy(require_push_guard_raw)
+    else:
+        require_push_guard = enabled
+
+    return {
+        "repo_path": str(repo),
+        "mode": mode,
+        "gpg_format": gpg_format or "openpgp",
+        "commit_sign": commit_sign,
+        "tag_sign": tag_sign,
+        "enabled": enabled,
+        "signing_key": signing_key,
+        "has_signing_key": bool(signing_key),
+        "require_push_guard": require_push_guard,
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
+def _git_signing_validation(repo: Path, settings: dict[str, object]) -> dict[str, object]:
+    """Validate configured git signing settings (GPG/SSH) for this repository."""
+    checks: list[dict[str, object]] = []
+    issues: list[str] = []
+
+    mode = _normalize_git_signing_mode(settings.get("mode"))
+    enabled = bool(settings.get("enabled"))
+    signing_key = str(settings.get("signing_key") or "").strip()
+
+    checks.append(
+        {
+            "key": "signing_enabled",
+            "label": "Signing enabled",
+            "ok": enabled,
+            "detail": (
+                "Commit/tag signing is enabled for this repository."
+                if enabled
+                else "Commit/tag signing is disabled."
+            ),
+        }
+    )
+    if not enabled:
+        return {
+            "mode": mode,
+            "valid": True,
+            "issues": [],
+            "checks": checks,
+            "message": "Commit and tag signing are currently disabled.",
+            "checked_at_epoch_ms": int(time.time() * 1000),
+        }
+
+    checks.append(
+        {
+            "key": "mode_supported",
+            "label": "Signing mode",
+            "ok": mode in {"gpg", "ssh"},
+            "detail": f"Configured signing mode: {mode}",
+        }
+    )
+    if mode not in {"gpg", "ssh"}:
+        issues.append(f"Unsupported signing mode '{mode}'. Use gpg or ssh.")
+
+    if mode == "gpg":
+        gpg_bin = shutil.which("gpg")
+        has_gpg = bool(gpg_bin)
+        checks.append(
+            {
+                "key": "gpg_binary",
+                "label": "GPG binary",
+                "ok": has_gpg,
+                "detail": (
+                    f"gpg binary detected at {gpg_bin}"
+                    if has_gpg
+                    else "gpg is not installed or not on PATH."
+                ),
+            }
+        )
+        if not has_gpg:
+            issues.append("gpg binary is not available on PATH.")
+        else:
+            list_args = ["gpg", "--list-secret-keys", "--with-colons"]
+            if signing_key:
+                list_args.append(signing_key)
+            try:
+                probe = subprocess.run(
+                    list_args,
+                    capture_output=True,
+                    text=True,
+                    timeout=_GIT_SIGNING_CHECK_TIMEOUT_SECONDS,
+                    check=False,
+                )
+                has_secret = any(
+                    line.startswith("sec:")
+                    for line in str(probe.stdout or "").splitlines()
+                )
+                checks.append(
+                    {
+                        "key": "gpg_secret_key",
+                        "label": "GPG secret key",
+                        "ok": bool(probe.returncode == 0 and has_secret),
+                        "detail": (
+                            "Matching GPG secret key is available."
+                            if probe.returncode == 0 and has_secret
+                            else (
+                                f"Could not find a matching GPG secret key for '{signing_key}'."
+                                if signing_key
+                                else "No default GPG secret key is available."
+                            )
+                        ),
+                    }
+                )
+                if probe.returncode != 0 or not has_secret:
+                    issues.append(
+                        (
+                            f"GPG key '{signing_key}' is not available."
+                            if signing_key
+                            else "No GPG secret key is available for signing."
+                        )
+                    )
+            except subprocess.TimeoutExpired:
+                checks.append(
+                    {
+                        "key": "gpg_secret_key",
+                        "label": "GPG secret key",
+                        "ok": False,
+                        "detail": "Timed out while checking GPG secret keys.",
+                    }
+                )
+                issues.append("Timed out while validating GPG signing keys.")
+
+    if mode == "ssh":
+        ssh_keygen_bin = shutil.which("ssh-keygen")
+        has_ssh_keygen = bool(ssh_keygen_bin)
+        checks.append(
+            {
+                "key": "ssh_keygen_binary",
+                "label": "ssh-keygen binary",
+                "ok": has_ssh_keygen,
+                "detail": (
+                    f"ssh-keygen detected at {ssh_keygen_bin}"
+                    if has_ssh_keygen
+                    else "ssh-keygen is not installed or not on PATH."
+                ),
+            }
+        )
+        if not has_ssh_keygen:
+            issues.append("ssh-keygen binary is not available on PATH.")
+
+        if not signing_key:
+            checks.append(
+                {
+                    "key": "ssh_signing_key",
+                    "label": "SSH signing key",
+                    "ok": False,
+                    "detail": "user.signingkey is not configured.",
+                }
+            )
+            issues.append("user.signingkey is required for SSH commit/tag signing.")
+        elif _looks_like_inline_ssh_key(signing_key):
+            checks.append(
+                {
+                    "key": "ssh_signing_key",
+                    "label": "SSH signing key",
+                    "ok": True,
+                    "detail": "Inline SSH public key is configured.",
+                }
+            )
+        else:
+            key_path = _resolve_signing_key_path(repo, signing_key)
+            path_exists = key_path.is_file()
+            checks.append(
+                {
+                    "key": "ssh_signing_key_path",
+                    "label": "SSH signing key path",
+                    "ok": path_exists,
+                    "detail": (
+                        f"Signing key path exists: {key_path}"
+                        if path_exists
+                        else f"Signing key path not found: {key_path}"
+                    ),
+                }
+            )
+            if not path_exists:
+                issues.append(f"SSH signing key path does not exist: {key_path}")
+            else:
+                key_looks_valid = False
+                with suppress(OSError):
+                    preview = _read_text_utf8_resilient(key_path)[:200].strip()
+                    if preview.startswith("ssh-") or "BEGIN OPENSSH PRIVATE KEY" in preview:
+                        key_looks_valid = True
+                checks.append(
+                    {
+                        "key": "ssh_signing_key_format",
+                        "label": "SSH key format",
+                        "ok": key_looks_valid,
+                        "detail": (
+                            "Signing key file looks like an SSH key."
+                            if key_looks_valid
+                            else "Signing key file does not look like an SSH key."
+                        ),
+                    }
+                )
+                if not key_looks_valid:
+                    issues.append(
+                        f"Signing key file is not recognized as an SSH key: {key_path}"
+                    )
+
+    valid = not issues
+    return {
+        "mode": mode,
+        "valid": valid,
+        "issues": issues,
+        "checks": checks,
+        "message": (
+            "Signing configuration looks valid."
+            if valid
+            else "Signing configuration has issues."
+        ),
+        "checked_at_epoch_ms": int(time.time() * 1000),
+    }
+
+
+def _git_signing_payload(
+    repo: Path,
+    *,
+    settings: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Return git signing settings and validation for setup/push guardrails."""
+    settings_payload = dict(settings) if isinstance(settings, dict) else _git_signing_settings(repo)
+    validation = _git_signing_validation(repo, settings_payload)
+    payload = dict(settings_payload)
+    payload.update(
+        {
+            "valid": bool(validation.get("valid")),
+            "issues": list(validation.get("issues", [])),
+            "checks": list(validation.get("checks", [])),
+            "validation": validation,
+            "message": str(validation.get("message") or ""),
+            "checked_at_epoch_ms": int(time.time() * 1000),
+        }
+    )
+    return payload
+
+
 def _git_remote_url(repo: Path, remote: str) -> str:
     """Return the configured URL for a git remote, or empty string when unknown."""
     result = _run_git_sync_command(repo, "remote", "get-url", remote)
@@ -7369,6 +7689,142 @@ def api_git_sync_remote_default():
         return jsonify({"error": str(exc)}), 500
 
 
+@app.route("/api/git/signing")
+def api_git_signing_settings():
+    """Return git signing settings + validation for the selected repository."""
+    repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        return jsonify(_git_signing_payload(repo))
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git signing check timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not read git signing settings: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/signing", methods=["POST"])
+def api_git_signing_save():
+    """Persist git signing settings (gpg/ssh, key, commit/tag signing, push guard)."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    mode = _normalize_git_signing_mode(data.get("mode") or "gpg")
+    if mode not in {"gpg", "ssh"}:
+        return jsonify({"error": "mode must be either 'gpg' or 'ssh'."}), 400
+
+    commit_sign = _safe_bool(data.get("commit_sign"), default=True)
+    tag_sign = _safe_bool(data.get("tag_sign"), default=True)
+    if "require_push_guard" in data:
+        require_push_guard = _safe_bool(data.get("require_push_guard"), default=True)
+    else:
+        require_push_guard = bool(commit_sign or tag_sign)
+
+    signing_key_raw = str(data.get("signing_key") or "").strip()
+    clear_signing_key = _safe_bool(data.get("clear_signing_key"), default=False)
+    if "\x00" in signing_key_raw:
+        return jsonify({"error": "signing_key may not include NUL bytes."}), 400
+    if "\n" in signing_key_raw or "\r" in signing_key_raw:
+        return jsonify({"error": "signing_key must be a single line."}), 400
+
+    try:
+        existing_key = _git_config_get_value(repo, "user.signingkey")
+        target_signing_key = ""
+        if clear_signing_key:
+            target_signing_key = ""
+        elif signing_key_raw:
+            target_signing_key = signing_key_raw
+        else:
+            target_signing_key = existing_key
+
+        # gpg.format accepts openpgp|x509|ssh. We expose openpgp as "gpg" in the UI.
+        _git_config_set_value(repo, "gpg.format", "ssh" if mode == "ssh" else "openpgp")
+        _git_config_set_bool(repo, "commit.gpgsign", commit_sign)
+        _git_config_set_bool(repo, "tag.gpgSign", tag_sign)
+        _git_config_set_bool(repo, _GIT_SIGNING_PUSH_GUARD_KEY, require_push_guard)
+        if target_signing_key:
+            _git_config_set_value(repo, "user.signingkey", target_signing_key)
+        else:
+            _git_config_unset_value(repo, "user.signingkey")
+
+        payload = _git_signing_payload(repo)
+        if bool(payload.get("enabled")) and bool(payload.get("valid")):
+            message = "Git signing settings saved and validated."
+        elif bool(payload.get("enabled")):
+            message = "Git signing settings saved, but validation found issues."
+        else:
+            message = "Git signing settings saved (commit/tag signing disabled)."
+
+        return jsonify(
+            {
+                "status": "saved",
+                "repo_path": str(repo),
+                "message": message,
+                "settings": payload,
+                "sync": _git_sync_status_payload(repo),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git signing update timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not update git signing settings: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/git/signing/validate", methods=["POST"])
+def api_git_signing_validate():
+    """Validate git signing settings from saved config or optional draft fields."""
+    data = request.get_json(silent=True) or {}
+    repo, error, status = _resolve_git_sync_repo(data.get("repo_path"))
+    if repo is None:
+        return jsonify({"error": error}), status
+
+    try:
+        settings = _git_signing_settings(repo)
+
+        if "mode" in data:
+            settings["mode"] = _normalize_git_signing_mode(data.get("mode"))
+        if "signing_key" in data:
+            settings["signing_key"] = str(data.get("signing_key") or "").strip()
+            settings["has_signing_key"] = bool(settings["signing_key"])
+        if _safe_bool(data.get("clear_signing_key"), default=False):
+            settings["signing_key"] = ""
+            settings["has_signing_key"] = False
+        if "commit_sign" in data:
+            settings["commit_sign"] = _safe_bool(data.get("commit_sign"), default=False)
+        if "tag_sign" in data:
+            settings["tag_sign"] = _safe_bool(data.get("tag_sign"), default=False)
+        settings["enabled"] = bool(settings.get("commit_sign") or settings.get("tag_sign"))
+        if "require_push_guard" in data:
+            settings["require_push_guard"] = _safe_bool(
+                data.get("require_push_guard"),
+                default=bool(settings["enabled"]),
+            )
+
+        payload = _git_signing_payload(repo, settings=settings)
+        return jsonify(
+            {
+                "status": "validated",
+                "repo_path": str(repo),
+                "message": str(payload.get("message") or "Validation complete."),
+                "settings": payload,
+                "sync": _git_sync_status_payload(repo),
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Git signing validation timed out."}), 504
+    except RuntimeError as exc:
+        return jsonify({"error": f"Could not validate git signing settings: {exc}"}), 502
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/git/sync/checkout", methods=["POST"])
 def api_git_sync_checkout():
     """Checkout a selected local branch or create tracking from a remote branch."""
@@ -7922,6 +8378,37 @@ def api_git_sync_push():
         remote = _normalize_git_sync_remote_name(requested_remote or fallback_remote)
         if not _valid_git_sync_remote_name(remote):
             return jsonify({"error": f"Invalid remote name: {remote}"}), 400
+
+        signing = _git_signing_payload(repo)
+        signing_enabled = bool(signing.get("enabled"))
+        require_push_guard = bool(signing.get("require_push_guard"))
+        signing_valid = bool(signing.get("valid"))
+        if signing_enabled and require_push_guard and not signing_valid:
+            issues = [str(item).strip() for item in signing.get("issues", []) if str(item).strip()]
+            recovery_steps = [
+                "Open Git Sync -> Signing and resolve the reported validation issues.",
+                "Save settings, run Validate, then retry push.",
+            ]
+            for issue in issues[:3]:
+                recovery_steps.insert(1, f"Fix: {issue}")
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "Push blocked: commit/tag signing is enabled but the signing setup is invalid."
+                        ),
+                        "error_type": "signing_misconfigured",
+                        "repo_path": str(repo),
+                        "remote": remote,
+                        "branch": branch,
+                        "set_upstream": set_upstream,
+                        "signing": signing,
+                        "recovery_steps": recovery_steps,
+                        "sync": status_before,
+                    }
+                ),
+                412,
+            )
 
         push_args: list[str] = ["push"]
         if set_upstream:
