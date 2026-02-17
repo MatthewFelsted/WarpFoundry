@@ -240,3 +240,36 @@ def test_add_is_thread_safe_under_concurrent_writes(monkeypatch, tmp_path: Path)
 
     reloaded = KnowledgeLedger(ledger.repo_path)
     assert reloaded.stats().total_entries == workers
+
+
+def test_update_status_is_thread_safe_under_concurrent_writes(tmp_path: Path) -> None:
+    ledger = KnowledgeLedger(_make_repo(tmp_path))
+    entry = ledger.add(
+        category="todo",
+        title="Concurrency update",
+        detail="status race test",
+        source="test",
+    )
+
+    workers = 10
+    barrier = threading.Barrier(workers)
+    statuses = ["in_progress", "open", "deferred", "resolved", "wontfix"]
+
+    def update_status(worker: int) -> None:
+        barrier.wait(timeout=5)
+        status = statuses[worker % len(statuses)]
+        ledger.update_status(entry.id, status, note=f"worker-{worker}")
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(update_status, range(workers)))
+
+    lines = [
+        line
+        for line in ledger.entries_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(lines) >= workers + 1
+
+    latest = KnowledgeLedger(ledger.repo_path).get_entry(entry.id)
+    assert latest is not None
+    assert latest.status in set(statuses)

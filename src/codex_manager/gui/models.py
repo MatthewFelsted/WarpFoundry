@@ -82,6 +82,13 @@ class ChainConfig(BaseModel):
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_step: int = 0
     parallel_execution: bool = False  # run independent steps concurrently
+    debug_logging_enabled: bool = False
+    debug_log_path: str = ""
+    artifact_retention_enabled: bool = True
+    artifact_retention_max_age_days: int = 30
+    artifact_retention_max_files: int = 5000
+    artifact_retention_max_bytes: int = 2_000_000_000
+    artifact_retention_max_output_runs: int = 30
 
     # Brain (thinking layer)
     brain_enabled: bool = False
@@ -111,6 +118,16 @@ class ChainConfig(BaseModel):
         if not self.image_model.strip():
             self.image_model = _default_image_model(self.image_provider)
         self.vector_memory_top_k = min(30, max(1, int(self.vector_memory_top_k or 8)))
+        self.artifact_retention_max_age_days = max(
+            1, int(self.artifact_retention_max_age_days or 30)
+        )
+        self.artifact_retention_max_files = max(1, int(self.artifact_retention_max_files or 5000))
+        self.artifact_retention_max_bytes = max(
+            1, int(self.artifact_retention_max_bytes or 2_000_000_000)
+        )
+        self.artifact_retention_max_output_runs = max(
+            1, int(self.artifact_retention_max_output_runs or 30)
+        )
         return self
 
 
@@ -243,6 +260,11 @@ class PipelineGUIConfig(BaseModel):
     git_preflight_auto_pull: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_phase: int = 0
+    artifact_retention_enabled: bool = True
+    artifact_retention_max_age_days: int = 30
+    artifact_retention_max_files: int = 5000
+    artifact_retention_max_bytes: int = 2_000_000_000
+    artifact_retention_max_output_runs: int = 30
 
     # Git settings
     auto_commit: bool = True
@@ -294,6 +316,16 @@ class PipelineGUIConfig(BaseModel):
         self.deep_research_google_model = (
             str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
             or "gemini-3-pro-preview"
+        )
+        self.artifact_retention_max_age_days = max(
+            1, int(self.artifact_retention_max_age_days or 30)
+        )
+        self.artifact_retention_max_files = max(1, int(self.artifact_retention_max_files or 5000))
+        self.artifact_retention_max_bytes = max(
+            1, int(self.artifact_retention_max_bytes or 2_000_000_000)
+        )
+        self.artifact_retention_max_output_runs = max(
+            1, int(self.artifact_retention_max_output_runs or 30)
         )
         self.pr_feature_branch = str(self.pr_feature_branch or "").strip()
         self.pr_remote = str(self.pr_remote or "").strip()

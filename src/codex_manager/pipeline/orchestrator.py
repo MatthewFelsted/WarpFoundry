@@ -42,6 +42,7 @@ from codex_manager.agent_signals import (
     contains_terminate_step_signal,
     terminate_step_instruction,
 )
+from codex_manager.artifact_retention import RetentionPolicy, cleanup_runtime_artifacts
 from codex_manager.brain.logbook import BrainLogbook
 from codex_manager.brain.manager import BrainConfig, BrainManager
 from codex_manager.codex_cli import CodexRunner
@@ -60,12 +61,12 @@ from codex_manager.git_tools import (
 )
 from codex_manager.history_log import HistoryLogbook
 from codex_manager.ledger import KnowledgeLedger
-from codex_manager.memory.vector_store import ProjectVectorMemory
 from codex_manager.managed_artifacts import (
     capture_artifact_snapshot,
     merge_eval_result_with_artifact_delta,
     summarize_artifact_delta,
 )
+from codex_manager.memory.vector_store import ProjectVectorMemory
 from codex_manager.pipeline.phases import (
     PHASE_LOG_FILES,
     PhaseConfig,
@@ -108,6 +109,8 @@ _PIPELINE_MANAGED_ARTIFACT_GLOBS: tuple[str, ...] = (
     ".codex_manager/logs/RESEARCH.md",
     ".codex_manager/logs/SCIENTIST_REPORT.md",
 )
+_PIPELINE_LOG_QUEUE_MAX = 10_000
+_PIPELINE_LOG_DROP_WARN_INTERVAL = 100
 
 
 def _clip_text(value: str, limit: int) -> str:
@@ -142,6 +145,7 @@ class PipelineOrchestrator:
         *,
         resume_cycle: int = 1,
         resume_phase_index: int = 0,
+        log_queue_maxsize: int = _PIPELINE_LOG_QUEUE_MAX,
     ) -> None:
         self.repo_path = Path(repo_path).resolve()
         self.config = config or PipelineConfig()
@@ -161,7 +165,10 @@ class PipelineOrchestrator:
         self._pause_event = threading.Event()
         self._pause_event.set()  # not paused initially
         self._thread: threading.Thread | None = None
-        self.log_queue: queue.Queue[dict] = queue.Queue()
+        self._log_queue_maxsize = max(100, int(log_queue_maxsize))
+        self.log_queue: queue.Queue[dict] = queue.Queue(maxsize=self._log_queue_maxsize)
+        self._next_log_event_id = 0
+        self._log_queue_drops = 0
         self._log_callback = log_callback
         self._science_experiment_by_hypothesis: dict[str, str] = {}
         self._science_trials_payloads: list[dict[str, Any]] = []
@@ -195,6 +202,8 @@ class PipelineOrchestrator:
             pr_aware={},
         )
         self._pr_aware_state = {}
+        self._next_log_event_id = 0
+        self._log_queue_drops = 0
         self._stop_event.clear()
         self._pause_event.set()
 
@@ -220,6 +229,8 @@ class PipelineOrchestrator:
             pr_aware={},
         )
         self._pr_aware_state = {}
+        self._next_log_event_id = 0
+        self._log_queue_drops = 0
         self._stop_event.clear()
         self._pause_event.set()
         self._log("info", f"Pipeline started ({self.config.mode} mode)")
@@ -255,12 +266,28 @@ class PipelineOrchestrator:
 
     def _log(self, level: str, message: str) -> None:
         log_epoch_ms = int(time.time() * 1000)
+        self._next_log_event_id += 1
         entry = {
+            "id": self._next_log_event_id,
             "time": dt.datetime.now().strftime("%H:%M:%S"),
             "level": level,
             "message": message,
         }
-        self.log_queue.put(entry)
+        try:
+            self.log_queue.put_nowait(entry)
+        except queue.Full:
+            with suppress(queue.Empty):
+                self.log_queue.get_nowait()
+            self.log_queue.put_nowait(entry)
+            self._log_queue_drops += 1
+            if self._log_queue_drops == 1 or (
+                self._log_queue_drops % _PIPELINE_LOG_DROP_WARN_INTERVAL == 0
+            ):
+                logger.warning(
+                    "Pipeline log queue overflow: dropped %s oldest log event(s) (maxsize=%s).",
+                    self._log_queue_drops,
+                    self._log_queue_maxsize,
+                )
         if self._log_callback:
             self._log_callback(level, message)
         getattr(logger, level if level != "warn" else "warning", logger.info)(
@@ -269,6 +296,29 @@ class PipelineOrchestrator:
         self.state.last_log_epoch_ms = log_epoch_ms
         self.state.last_log_level = level
         self.state.last_log_message = message[:500]
+
+    def get_log_events_since(
+        self,
+        after_id: int,
+        *,
+        limit: int = 500,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return non-destructive log replay entries newer than ``after_id``.
+
+        Returns ``(events, replay_gap_detected)`` where replay_gap_detected is
+        true when the in-memory queue already dropped entries newer than the
+        caller's cursor.
+        """
+        with self.log_queue.mutex:
+            snapshot = list(self.log_queue.queue)
+        if not snapshot:
+            return [], False
+        oldest_id = int(snapshot[0].get("id", 0) or 0)
+        replay_gap = bool(after_id > 0 and oldest_id > after_id + 1)
+        events = [entry for entry in snapshot if int(entry.get("id", 0) or 0) > after_id]
+        if limit > 0 and len(events) > limit:
+            events = events[-limit:]
+        return events, replay_gap
 
     def _log_execution_mode_warnings(self) -> None:
         """Log prominent warnings when execution is in a constrained safety mode."""
@@ -707,6 +757,46 @@ class PipelineOrchestrator:
             f"Pipeline finished with stop_reason='{self.state.stop_reason}'.",
             level=history_level,
             context=history_context,
+        )
+
+    @staticmethod
+    def _retention_policy(config: PipelineConfig) -> RetentionPolicy:
+        """Build runtime-artifact retention policy from pipeline configuration."""
+        return RetentionPolicy(
+            enabled=bool(getattr(config, "artifact_retention_enabled", True)),
+            max_age_days=max(1, int(getattr(config, "artifact_retention_max_age_days", 30))),
+            max_files=max(1, int(getattr(config, "artifact_retention_max_files", 5000))),
+            max_bytes=max(1, int(getattr(config, "artifact_retention_max_bytes", 2_000_000_000))),
+            max_output_history_runs=max(
+                1, int(getattr(config, "artifact_retention_max_output_runs", 30))
+            ),
+        )
+
+    def _run_retention_cleanup(self, *, reason: str) -> None:
+        """Apply retention cleanup for managed runtime artifacts."""
+        try:
+            cleanup = cleanup_runtime_artifacts(
+                self.repo_path,
+                policy=self._retention_policy(self.config),
+            )
+        except Exception as exc:
+            self._log("warn", f"Retention cleanup skipped ({reason}): {exc}")
+            return
+        removed_total = (
+            int(cleanup.get("removed_files", 0))
+            + int(cleanup.get("removed_dirs", 0))
+            + int(cleanup.get("removed_runs", 0))
+        )
+        if removed_total <= 0:
+            return
+        self._log(
+            "info",
+            (
+                f"Retention cleanup ({reason}): removed "
+                f"{cleanup['removed_files']} files, {cleanup['removed_dirs']} dirs, "
+                f"{cleanup['removed_runs']} archived runs; "
+                f"freed {int(cleanup.get('freed_bytes', 0))} bytes."
+            ),
         )
 
     @staticmethod
@@ -2516,6 +2606,7 @@ class PipelineOrchestrator:
                         "warn",
                         f"Vector memory unavailable: {self.vector_memory.reason}",
                     )
+            self._run_retention_cleanup(reason="startup")
         except Exception as exc:
             self._log("error", f"Failed to initialize pipeline logs: {exc}")
             self.ledger.add(
@@ -3508,6 +3599,7 @@ class PipelineOrchestrator:
                 self.state.total_cycles_completed = cycle_num
                 self.state.resume_cycle = cycle_num + 1
                 self.state.resume_phase_index = 0
+                self._run_retention_cleanup(reason=f"cycle-{cycle_num}")
                 if config.mode == "apply" and config.pr_aware_enabled:
                     self._pr_aware_maybe_sync(
                         repo=repo,

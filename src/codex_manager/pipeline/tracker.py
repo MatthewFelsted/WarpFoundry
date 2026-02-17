@@ -17,9 +17,13 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
+
+from codex_manager.file_io import append_text, atomic_write_text, read_text_utf8_resilient
+from codex_manager.logbook_utils import rotate_if_needed
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +169,10 @@ _TEMPLATES: dict[str, str] = {
     "RESEARCH.md": _RESEARCH_TEMPLATE,
 }
 
+_NORMALIZATION_MARKER = ".encoding_normalized_v1"
+_DEFAULT_MARKDOWN_ROTATE_BYTES = 2_000_000
+_DEFAULT_MARKDOWN_MAX_ARCHIVES = 12
+
 
 class LogTracker:
     """Manages structured markdown log files for the pipeline.
@@ -176,23 +184,51 @@ class LogTracker:
         created in a ``.codex_manager/logs/`` subdirectory.
     """
 
-    def __init__(self, repo_path: str | Path) -> None:
+    def __init__(
+        self,
+        repo_path: str | Path,
+        *,
+        markdown_rotate_bytes: int | None = None,
+        markdown_max_archives: int = _DEFAULT_MARKDOWN_MAX_ARCHIVES,
+    ) -> None:
         self.repo_path = Path(repo_path).resolve()
         self.logs_dir = self.repo_path / ".codex_manager" / "logs"
+        rotate_env = os.getenv("CODEX_MANAGER_LOG_ROTATE_BYTES", "").strip()
+        default_rotate = _DEFAULT_MARKDOWN_ROTATE_BYTES
+        if rotate_env:
+            try:
+                default_rotate = max(0, int(rotate_env))
+            except ValueError:
+                logger.warning(
+                    "Invalid CODEX_MANAGER_LOG_ROTATE_BYTES=%r; using %s",
+                    rotate_env,
+                    _DEFAULT_MARKDOWN_ROTATE_BYTES,
+                )
+        self.markdown_rotate_bytes = (
+            max(0, int(markdown_rotate_bytes))
+            if markdown_rotate_bytes is not None
+            else default_rotate
+        )
+        self.markdown_max_archives = max(1, int(markdown_max_archives))
+        self._tracker_archive_dir = self.logs_dir / "archive" / "tracker"
+        self._encoding_events_seen: set[tuple[str, str]] = set()
 
     def initialize(self) -> None:
         """Create log directory and initialize any missing log files."""
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self._tracker_archive_dir.mkdir(parents=True, exist_ok=True)
         for filename, template in _TEMPLATES.items():
             path = self.logs_dir / filename
             if not path.exists():
-                path.write_text(template, encoding="utf-8")
+                atomic_write_text(path, template)
                 logger.info("Created %s", path)
         protocol = self.repo_path / ".codex_manager" / "AGENT_PROTOCOL.md"
         if not protocol.exists():
             protocol.parent.mkdir(parents=True, exist_ok=True)
-            protocol.write_text(_AGENT_PROTOCOL_TEMPLATE, encoding="utf-8")
+            atomic_write_text(protocol, _AGENT_PROTOCOL_TEMPLATE)
             logger.info("Created %s", protocol)
+        self._normalize_markdown_logs_once()
+        self._migrate_legacy_error_log()
 
     # -- Scientist evidence artifacts ---------------------------------
 
@@ -241,17 +277,17 @@ class LogTracker:
         for name, template in templates.items():
             path = root / name
             if not path.exists():
-                path.write_text(template, encoding="utf-8")
+                atomic_write_text(path, template)
                 logger.info("Created %s", path)
 
         report_path = self.logs_dir / "SCIENTIST_REPORT.md"
         if not report_path.exists():
-            report_path.write_text(
+            atomic_write_text(
+                report_path,
                 (
                     "# Scientist Mode Report\n\n"
                     "> Auto-generated science dashboard. Run Scientist Mode to populate.\n"
                 ),
-                encoding="utf-8",
             )
             logger.info("Created %s", report_path)
 
@@ -263,18 +299,17 @@ class LogTracker:
         """Write content to a Scientist evidence file."""
         path = self.science_path_for(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
         return path
 
     def append_science(self, relative_path: str, content: str) -> Path:
         """Append content to a Scientist evidence file."""
         path = self.science_path_for(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = self._read_text_utf8_resilient(path)
-        path.write_text(
-            existing + ("\n" if existing and not existing.endswith("\n") else "") + content,
-            encoding="utf-8",
-        )
+        prefix = ""
+        if path.exists() and path.stat().st_size > 0 and not content.startswith("\n"):
+            prefix = "\n"
+        append_text(path, prefix + content)
         return path
 
     def append_science_jsonl(self, relative_path: str, payload: dict[str, Any]) -> Path:
@@ -282,8 +317,7 @@ class LogTracker:
         line = json.dumps(payload, ensure_ascii=False)
         path = self.science_path_for(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        append_text(path, line + "\n")
         return path
 
     def save_science_artifact(
@@ -310,33 +344,96 @@ class LogTracker:
         If a fallback decoder succeeds, the file is rewritten as UTF-8 so
         future reads are stable.
         """
-        if not path.exists():
-            return ""
-        try:
-            return path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raw = path.read_bytes()
-            for encoding in ("utf-8-sig", "cp1252", "latin-1"):
-                try:
-                    text = raw.decode(encoding)
-                except UnicodeDecodeError:
-                    continue
-                logger.warning(
-                    "Recovered non-UTF8 log file %s using %s (%s); rewriting as UTF-8",
-                    path,
-                    encoding,
-                    exc,
-                )
-                path.write_text(text, encoding="utf-8")
-                return text
+        result = read_text_utf8_resilient(path, normalize_to_utf8=True)
+        if result.used_fallback:
+            self._record_encoding_recovery(path=path, decoder=result.decoder)
+        return result.text
 
-            text = raw.decode("utf-8", errors="replace")
-            logger.warning(
-                "Recovered undecodable log file %s using replacement decode; rewriting as UTF-8",
-                path,
+    def _record_encoding_recovery(self, *, path: Path, decoder: str) -> None:
+        key = (str(path), decoder)
+        if key in self._encoding_events_seen:
+            return
+        self._encoding_events_seen.add(key)
+        logger.warning(
+            "Recovered non-UTF8 log file %s using %s; rewritten as UTF-8",
+            path,
+            decoder,
+        )
+        if path.name.upper() == "ERRORS.MD":
+            return
+        errors_path = self.path_for("ERRORS.md")
+        note = (
+            "\n### [encoding-recovery]\n"
+            f"- **Time**: {dt.datetime.now(dt.timezone.utc).isoformat()}\n"
+            f"- **File**: `{path}`\n"
+            f"- **Decoder**: `{decoder}`\n"
+            "- **Action**: Rewrote file as UTF-8 to avoid runtime decode failures.\n"
+        )
+        try:
+            prefix = "\n" if errors_path.exists() and errors_path.stat().st_size > 0 else ""
+            append_text(errors_path, prefix + note)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Could not record encoding recovery note: %s", exc)
+
+    def _normalization_marker(self) -> Path:
+        return self.logs_dir / _NORMALIZATION_MARKER
+
+    def _normalize_markdown_logs_once(self) -> None:
+        marker = self._normalization_marker()
+        if marker.exists():
+            return
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        for path in sorted(self.logs_dir.glob("*.md")):
+            result = read_text_utf8_resilient(path, normalize_to_utf8=True)
+            if result.used_fallback:
+                self._record_encoding_recovery(path=path, decoder=result.decoder)
+        atomic_write_text(
+            marker,
+            f"normalized_at={dt.datetime.now(dt.timezone.utc).isoformat()}\n",
+        )
+
+    def _migrate_legacy_error_log(self) -> None:
+        legacy_path = self.repo_path / ".codex_manager" / "ERRORS.md"
+        if not legacy_path.exists() or not legacy_path.is_file():
+            return
+        result = read_text_utf8_resilient(legacy_path, normalize_to_utf8=True)
+        migrated = result.text.strip()
+        if migrated:
+            block = (
+                "\n## Legacy Runtime Error Log Migration\n\n"
+                f"- **Migrated**: {dt.datetime.now(dt.timezone.utc).isoformat()}\n"
+                f"- **Source**: `{legacy_path}`\n\n"
+                "```text\n"
+                f"{migrated[:12000]}\n"
+                "```\n"
             )
-            path.write_text(text, encoding="utf-8")
-            return text
+            self.append("ERRORS.md", block)
+        archive_dir = self.logs_dir / "archive" / "legacy"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        archived = archive_dir / f"ERRORS-legacy-{stamp}.md"
+        idx = 1
+        while archived.exists():
+            idx += 1
+            archived = archive_dir / f"ERRORS-legacy-{stamp}-{idx}.md"
+        try:
+            legacy_path.replace(archived)
+            logger.info("Migrated legacy runtime error log to %s", archived)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Could not archive legacy runtime error log %s: %s", legacy_path, exc)
+
+    def _rotate_markdown_if_needed(self, filename: str, path: Path) -> None:
+        if self.markdown_rotate_bytes <= 0:
+            return
+        if path.suffix.lower() != ".md":
+            return
+        rotate_if_needed(
+            path=path,
+            max_bytes=self.markdown_rotate_bytes,
+            archive_dir=self._tracker_archive_dir,
+            markdown_header=_TEMPLATES.get(filename, ""),
+            max_archives=self.markdown_max_archives,
+        )
 
     def read(self, filename: str) -> str:
         """Read the contents of a log file."""
@@ -347,14 +444,15 @@ class LogTracker:
         """Overwrite a log file with new content."""
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         path = self.logs_dir / filename
-        path.write_text(content, encoding="utf-8")
+        atomic_write_text(path, content)
 
     def append(self, filename: str, content: str) -> None:
         """Append content to a log file."""
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         path = self.logs_dir / filename
-        existing = self._read_text_utf8_resilient(path)
-        path.write_text(existing + "\n" + content, encoding="utf-8")
+        self._rotate_markdown_if_needed(filename, path)
+        prefix = "\n" if path.exists() and path.stat().st_size > 0 and not content.startswith("\n") else ""
+        append_text(path, prefix + content)
 
     # ── Structured queries ───────────────────────────────────────
 

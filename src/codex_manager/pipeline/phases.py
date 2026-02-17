@@ -229,6 +229,11 @@ class PipelineConfig(BaseModel):
     self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
     timeout_per_phase: int = 0
+    artifact_retention_enabled: bool = True
+    artifact_retention_max_age_days: int = 30
+    artifact_retention_max_files: int = 5000
+    artifact_retention_max_bytes: int = 2_000_000_000
+    artifact_retention_max_output_runs: int = 30
     smoke_test_cmd: str = "python -m pytest -q -m smoke"
     test_cmd: str = "python -m pytest -q"
 
@@ -300,6 +305,16 @@ class PipelineConfig(BaseModel):
         self.deep_research_google_model = (
             str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
             or "gemini-3-pro-preview"
+        )
+        self.artifact_retention_max_age_days = max(
+            1, int(self.artifact_retention_max_age_days or 30)
+        )
+        self.artifact_retention_max_files = max(1, int(self.artifact_retention_max_files or 5000))
+        self.artifact_retention_max_bytes = max(
+            1, int(self.artifact_retention_max_bytes or 2_000_000_000)
+        )
+        self.artifact_retention_max_output_runs = max(
+            1, int(self.artifact_retention_max_output_runs or 30)
         )
         self.pr_feature_branch = str(self.pr_feature_branch or "").strip()
         self.pr_remote = str(self.pr_remote or "").strip()

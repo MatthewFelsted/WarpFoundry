@@ -12,6 +12,7 @@ from codex_manager.brain.manager import BrainDecision
 from codex_manager.git_tools import diff_numstat
 from codex_manager.gui.chain import ChainExecutor
 from codex_manager.gui.models import ChainConfig, TaskStep
+from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.schemas import EvalResult, RunResult, TestOutcome, UsageInfo
 
 
@@ -430,10 +431,16 @@ def test_prepare_output_dir_cleans_existing_entries(tmp_path: Path):
 
 
 def test_agent_debug_log_path_env_controls_logging(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
     log_path = tmp_path / "agent-debug.jsonl"
+    monkeypatch.setenv("CODEX_MANAGER_DEBUG_ENABLED", "1")
     monkeypatch.setenv("CODEX_MANAGER_DEBUG_LOG_PATH", str(log_path))
 
-    chain_module._agent_log(
+    executor = ChainExecutor()
+    config = ChainConfig(repo_path=str(repo), debug_logging_enabled=False)
+    executor._configure_debug_logging(repo, config)
+    executor._write_agent_debug_event(
         location="tests.chain",
         message="debug marker",
         data={"case": "env_path"},
@@ -448,6 +455,57 @@ def test_agent_debug_log_path_env_controls_logging(monkeypatch, tmp_path: Path):
     assert payload["message"] == "debug marker"
     assert payload["hypothesisId"] == "H-test"
     assert payload["data"] == {"case": "env_path"}
+
+
+def test_agent_debug_log_uses_repo_local_default_path(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    monkeypatch.delenv("CODEX_MANAGER_DEBUG_LOG_PATH", raising=False)
+    monkeypatch.delenv("CODEX_MANAGER_DEBUG_ENABLED", raising=False)
+
+    executor = ChainExecutor()
+    config = ChainConfig(repo_path=str(repo), debug_logging_enabled=True)
+    executor._configure_debug_logging(repo, config)
+    executor._write_agent_debug_event("tests.chain", "debug default path")
+
+    default_path = repo / ".codex_manager" / "logs" / "CHAIN_AGENT_DEBUG.jsonl"
+    assert default_path.exists()
+    payload = json.loads(default_path.read_text(encoding="utf-8").splitlines()[0])
+    assert payload["message"] == "debug default path"
+
+
+def test_agent_debug_logging_is_disabled_by_default(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    log_path = tmp_path / "agent-debug.jsonl"
+
+    executor = ChainExecutor()
+    config = ChainConfig(repo_path=str(repo), debug_logging_enabled=False)
+    executor._configure_debug_logging(repo, config)
+    executor._debug_log_path = log_path
+    executor._write_agent_debug_event("tests.chain", "should not log")
+
+    assert not log_path.exists()
+    executor._debug_log("hidden")
+    assert executor.log_queue.empty()
+
+
+def test_chain_runtime_errors_append_to_tracker_error_log(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+
+    executor = ChainExecutor()
+    executor.config = ChainConfig(repo_path=str(repo))
+    tracker = LogTracker(repo)
+    tracker.initialize()
+    executor._log_tracker = tracker
+    executor._append_error_log("12:00:00", "warn", "runtime warning")
+
+    canonical = repo / ".codex_manager" / "logs" / "ERRORS.md"
+    legacy = repo / ".codex_manager" / "ERRORS.md"
+    assert canonical.exists()
+    assert "runtime warning" in canonical.read_text(encoding="utf-8")
+    assert not legacy.exists()
 
 
 def test_step_output_filename_falls_back_for_empty_slug():
@@ -1016,7 +1074,7 @@ def test_chain_stops_early_when_latest_loop_has_no_progress(monkeypatch, tmp_pat
     executor._run_loop()
 
     assert executor.state.stop_reason == "no_progress_detected"
-    assert executor.state.total_loops_completed == 1
+    assert executor.state.total_loops_completed == 2
 
 
 def test_chain_stops_when_brain_follow_up_requires_human_input(monkeypatch, tmp_path: Path):

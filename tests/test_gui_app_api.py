@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import codex_manager.gui.app as gui_app_module
+import codex_manager.gui.chain as chain_module
 import codex_manager.preflight as preflight_module
 from codex_manager.cua.actions import CUASessionResult
 
@@ -129,6 +130,35 @@ def _pipeline_payload(repo_path: Path, **overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _next_sse_payload(response) -> dict[str, object]:
+    """Read the next SSE payload from a streaming Flask test response."""
+    while True:
+        chunk = next(response.response)
+        text = chunk.decode("utf-8") if isinstance(chunk, (bytes, bytearray)) else str(chunk)
+        for frame in text.split("\n\n"):
+            frame = frame.strip()
+            if not frame:
+                continue
+            event_id = None
+            data_text = ""
+            for line in frame.splitlines():
+                if line.startswith("id:"):
+                    try:
+                        event_id = int(line.split(":", 1)[1].strip())
+                    except ValueError:
+                        event_id = None
+                elif line.startswith("data:"):
+                    data_text = line.split(":", 1)[1].strip()
+            if not data_text:
+                continue
+            payload = json.loads(data_text)
+            if event_id is not None:
+                payload["id"] = event_id
+            if payload.get("type") == "heartbeat":
+                continue
+            return payload
 
 
 def test_chain_start_rejects_invalid_permission_value(client, tmp_path: Path):
@@ -1862,6 +1892,17 @@ def test_pipeline_logs_reads_from_repo_path_without_active_executor(
     assert "wishlist entry" in data["content"]
 
 
+def test_pipeline_logs_requires_repo_path_when_executor_missing(client, monkeypatch):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    resp = client.get("/api/pipeline/logs/WISHLIST.md")
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "repo_path is required" in str(data.get("error", "")).lower()
+
+
 def test_pipeline_logs_rejects_invalid_filename_when_executor_missing(client, monkeypatch):
     monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
 
@@ -1871,6 +1912,59 @@ def test_pipeline_logs_rejects_invalid_filename_when_executor_missing(client, mo
     assert resp.status_code == 400
     assert data
     assert "Invalid log file" in data["error"]
+
+
+def test_chain_stream_replays_same_events_to_multiple_clients(client, monkeypatch):
+    executor = chain_module.ChainExecutor()
+    monkeypatch.setattr(gui_app_module, "executor", executor)
+    executor._log("info", "stream-one")
+    executor._log("info", "stream-two")
+
+    resp_a = client.get("/api/stream", query_string={"last_event_id": 0}, buffered=False)
+    resp_b = client.get("/api/stream", query_string={"last_event_id": 0}, buffered=False)
+    try:
+        a_first = _next_sse_payload(resp_a)
+        a_second = _next_sse_payload(resp_a)
+        b_first = _next_sse_payload(resp_b)
+        b_second = _next_sse_payload(resp_b)
+    finally:
+        resp_a.close()
+        resp_b.close()
+
+    assert [a_first["message"], a_second["message"]] == ["stream-one", "stream-two"]
+    assert [b_first["message"], b_second["message"]] == ["stream-one", "stream-two"]
+    assert [a_first["id"], a_second["id"]] == [b_first["id"], b_second["id"]]
+
+
+def test_pipeline_stream_resumes_from_last_event_id(client, monkeypatch):
+    class _PipeExec:
+        def __init__(self) -> None:
+            self.events = [
+                {"id": 1, "time": "00:00:01", "level": "info", "message": "one"},
+                {"id": 2, "time": "00:00:02", "level": "info", "message": "two"},
+                {"id": 3, "time": "00:00:03", "level": "warn", "message": "three"},
+            ]
+
+        def get_log_events_since(self, after_id: int, *, limit: int = 500):
+            items = [event for event in self.events if int(event["id"]) > after_id]
+            if limit > 0 and len(items) > limit:
+                items = items[-limit:]
+            return items, False
+
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _PipeExec())
+
+    response = client.get(
+        "/api/pipeline/stream",
+        headers={"Last-Event-ID": "2"},
+        buffered=False,
+    )
+    try:
+        payload = _next_sse_payload(response)
+    finally:
+        response.close()
+
+    assert payload["id"] == 3
+    assert payload["message"] == "three"
 
 
 def test_pipeline_run_comparison_returns_unavailable_without_repo_hint(client, monkeypatch):
@@ -2839,7 +2933,7 @@ def test_pipeline_status_includes_runtime_reconnect_metadata(client, monkeypatch
                 "total_cycles": 1,
                 "total_phases": 2,
                 "total_results": 2,
-                "results_delta": [] if since_results is not None else [],
+                "results_delta": [],
             }
 
     class _Exec:

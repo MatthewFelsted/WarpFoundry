@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from codex_manager.pipeline.tracker import LogTracker
@@ -143,6 +145,80 @@ def test_read_recovers_non_utf8_log_and_rewrites_utf8(tmp_path: Path) -> None:
 
     tracker.append("PROGRESS.md", "tail")
     assert "tail" in tracker.read("PROGRESS.md")
+
+
+def test_initialize_normalizes_markdown_logs_once_and_records_event(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "PROGRESS.md").write_bytes(b"alpha\x97omega")
+
+    tracker = LogTracker(repo)
+    tracker.initialize()
+
+    progress = tracker.read("PROGRESS.md")
+    assert "alpha" in progress
+    assert "omega" in progress
+    assert "\u2014" in progress
+    assert b"\x97" not in tracker.path_for("PROGRESS.md").read_bytes()
+    assert (logs_dir / ".encoding_normalized_v1").exists()
+    assert "encoding-recovery" in tracker.read("ERRORS.md")
+
+
+def test_append_is_thread_safe_under_concurrent_writes(tmp_path: Path) -> None:
+    tracker = LogTracker(tmp_path / "repo")
+    tracker.initialize()
+
+    workers = 12
+    entries_per_worker = 20
+    start_barrier = threading.Barrier(workers)
+
+    def append_entries(worker: int) -> None:
+        start_barrier.wait(timeout=5)
+        for idx in range(entries_per_worker):
+            tracker.append("PROGRESS.md", f"worker-{worker}-entry-{idx}")
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(append_entries, range(workers)))
+
+    content = tracker.read("PROGRESS.md")
+    for worker in range(workers):
+        for idx in range(entries_per_worker):
+            assert f"worker-{worker}-entry-{idx}" in content
+
+
+def test_append_rotates_markdown_logs_when_threshold_exceeded(tmp_path: Path) -> None:
+    tracker = LogTracker(
+        tmp_path / "repo",
+        markdown_rotate_bytes=220,
+        markdown_max_archives=2,
+    )
+    tracker.initialize()
+
+    for idx in range(40):
+        tracker.append("PROGRESS.md", f"entry-{idx} " + ("x" * 60))
+
+    archive_dir = tracker.path_for("PROGRESS.md").parent / "archive" / "tracker"
+    archives = list(archive_dir.glob("PROGRESS-*"))
+    assert archives
+    assert len(archives) <= 2
+    assert "entry-" in tracker.read("PROGRESS.md")
+
+
+def test_initialize_migrates_legacy_error_log_to_canonical_path(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    legacy = repo / ".codex_manager" / "ERRORS.md"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("legacy warning\n", encoding="utf-8")
+
+    tracker = LogTracker(repo)
+    tracker.initialize()
+
+    assert not legacy.exists()
+    canonical = tracker.read("ERRORS.md")
+    assert "legacy warning" in canonical
+    archived = list((tracker.path_for("ERRORS.md").parent / "archive" / "legacy").glob("ERRORS-*"))
+    assert archived
 
 
 def test_initialize_science_creates_expected_files(tmp_path: Path) -> None:

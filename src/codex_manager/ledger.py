@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from codex_manager.file_io import append_text, read_text_utf8_resilient
+
 logger = logging.getLogger(__name__)
 
 LEDGER_DIR = "ledger"
@@ -97,18 +99,18 @@ class KnowledgeLedger:
         by_id: dict[str, LedgerEntry] = {}
         order: list[str] = []
         if self.entries_path.exists():
-            with open(self.entries_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        e = LedgerEntry.from_dict(json.loads(line))
-                        if e.id not in by_id:
-                            order.append(e.id)
-                        by_id[e.id] = e
-                    except (json.JSONDecodeError, KeyError) as ex:
-                        logger.warning("Skip invalid ledger line: %s", ex)
+            raw = read_text_utf8_resilient(self.entries_path, normalize_to_utf8=True).text
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = LedgerEntry.from_dict(json.loads(line))
+                    if e.id not in by_id:
+                        order.append(e.id)
+                    by_id[e.id] = e
+                except (json.JSONDecodeError, KeyError) as ex:
+                    logger.warning("Skip invalid ledger line: %s", ex)
         with self._lock:
             self._entries = [by_id[oid] for oid in order]
             self._rebuild_index()
@@ -152,16 +154,20 @@ class KnowledgeLedger:
 
         Caller must hold ``self._lock``.
         """
-        with open(self.entries_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+        append_text(
+            self.entries_path,
+            json.dumps(entry.to_dict(), ensure_ascii=False) + "\n",
+        )
         self._entries.append(entry)
         self._rebuild_index()
 
     def _write_entry_update(self, entry: LedgerEntry) -> None:
         """Append a status-update line (append-only). In-memory state updated by id."""
         # Caller must hold ``self._lock``.
-        with open(self.entries_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+        append_text(
+            self.entries_path,
+            json.dumps(entry.to_dict(), ensure_ascii=False) + "\n",
+        )
         for i, e in enumerate(self._entries):
             if e.id == entry.id:
                 self._entries[i] = entry

@@ -1,4 +1,4 @@
-﻿"""Task-chain executor â€” runs a multi-step improvement loop in a background thread."""
+﻿"""Task-chain executor -- runs a multi-step improvement loop in a background thread."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from codex_manager.agent_signals import (
     contains_terminate_step_signal,
     terminate_step_instruction,
 )
+from codex_manager.artifact_retention import RetentionPolicy, cleanup_runtime_artifacts
 from codex_manager.brain.logbook import BrainLogbook
 from codex_manager.brain.manager import BrainConfig, BrainManager
 from codex_manager.claude_code import ClaudeCodeRunner
@@ -49,6 +50,7 @@ from codex_manager.managed_artifacts import (
     summarize_artifact_delta,
 )
 from codex_manager.memory.vector_store import ProjectVectorMemory
+from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.prompt_logging import (
     format_prompt_log_line,
     format_prompt_preview,
@@ -58,7 +60,9 @@ from codex_manager.prompt_logging import (
 logger = logging.getLogger(__name__)
 
 # #region agent log
+_DEBUG_LOG_ENABLED_ENV = "CODEX_MANAGER_DEBUG_ENABLED"
 _DEBUG_LOG_PATH_ENV = "CODEX_MANAGER_DEBUG_LOG_PATH"
+_DEFAULT_DEBUG_FILE_NAME = "CHAIN_AGENT_DEBUG.jsonl"
 _STEP_MEMORY_MAX_ENTRIES = 240
 _STEP_MEMORY_CONTEXT_ITEMS = 6
 _STEP_MEMORY_CONTEXT_CHARS = 2_800
@@ -84,36 +88,9 @@ _CHAIN_MANAGED_ARTIFACT_GLOBS: tuple[str, ...] = (
 )
 
 
-def _resolve_debug_log_path() -> Path | None:
-    raw = os.getenv(_DEBUG_LOG_PATH_ENV, "").strip()
-    if not raw:
-        return None
-    return Path(raw).expanduser()
-
-
-def _agent_log(
-    location: str, message: str, data: dict | None = None, hypothesis_id: str = ""
-) -> None:
-    log_path = _resolve_debug_log_path()
-    if log_path is None:
-        return
-
-    try:
-        payload = {
-            "id": f"log_{int(time.time() * 1000)}",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-        }
-        if data:
-            payload["data"] = data
-        if hypothesis_id:
-            payload["hypothesisId"] = hypothesis_id
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload) + "\n")
-    except Exception:
-        pass
+def _env_flag(value: str | None) -> bool:
+    raw = str(value or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 # #endregion
@@ -122,10 +99,10 @@ def _agent_log(
 class ChainExecutor:
     """Manages the lifecycle of a task-chain execution.
 
-    * ``start(config)`` â€” kicks off a daemon thread that iterates through
+    * ``start(config)`` -- kicks off a daemon thread that iterates through
       the chain's steps in a loop.
-    * ``stop()`` / ``pause()`` / ``resume()`` â€” thread-safe controls.
-    * ``log_queue`` â€” a :class:`queue.Queue` of ``{time, level, message}``
+    * ``stop()`` / ``pause()`` / ``resume()`` -- thread-safe controls.
+    * ``log_queue`` -- a :class:`queue.Queue` of ``{time, level, message}``
       dicts consumed by the SSE endpoint.
     """
 
@@ -141,9 +118,15 @@ class ChainExecutor:
         self.output_dir: Path | None = None
         self._brain_logbook: BrainLogbook | None = None
         self._history_logbook: HistoryLogbook | None = None
+        self._log_tracker: LogTracker | None = None
         self._step_memory_path: Path | None = None
         self._step_memory_entries: list[dict[str, Any]] = []
         self.vector_memory: ProjectVectorMemory | None = None
+        self._debug_enabled = False
+        self._debug_log_path: Path | None = None
+        self._debug_log_failure_reported = False
+        self._error_log_failure_reported = False
+        self._next_log_event_id = 0
 
     # ------------------------------------------------------------------
     # Public controls
@@ -168,7 +151,17 @@ class ChainExecutor:
             return
 
         self.config = config
-        self.output_dir = Path(config.repo_path).resolve() / ".codex_manager" / "outputs"
+        repo = Path(config.repo_path).resolve()
+        self.output_dir = repo / ".codex_manager" / "outputs"
+        self._configure_debug_logging(repo, config)
+        self._error_log_failure_reported = False
+        self._next_log_event_id = 0
+        self._log_tracker = LogTracker(repo)
+        try:
+            self._log_tracker.initialize()
+        except Exception as exc:
+            logger.warning("Could not initialize log tracker for chain runtime errors: %s", exc)
+            self._log_tracker = None
         self.state = ChainState(
             running=True,
             started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -192,6 +185,28 @@ class ChainExecutor:
         self._thread.start()
         self._log("info", f"Chain started: {config.name} ({config.mode} mode)")
         self._log_execution_mode_warnings(config)
+
+    def _configure_debug_logging(self, repo: Path, config: ChainConfig) -> None:
+        """Resolve debug logging controls from config/environment."""
+        config_enabled = bool(getattr(config, "debug_logging_enabled", False))
+        env_enabled = _env_flag(os.getenv(_DEBUG_LOG_ENABLED_ENV))
+        self._debug_enabled = bool(config_enabled or env_enabled)
+        self._debug_log_failure_reported = False
+
+        if not self._debug_enabled:
+            self._debug_log_path = None
+            return
+
+        config_path = str(getattr(config, "debug_log_path", "") or "").strip()
+        env_path = os.getenv(_DEBUG_LOG_PATH_ENV, "").strip()
+        raw_path = config_path or env_path
+        if raw_path:
+            candidate = Path(raw_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = repo / candidate
+            self._debug_log_path = candidate
+            return
+        self._debug_log_path = repo / ".codex_manager" / "logs" / _DEFAULT_DEBUG_FILE_NAME
 
     def _prepare_output_dir(self) -> None:
         """Create a clean per-run output directory under .codex_manager/outputs.
@@ -281,9 +296,46 @@ class ChainExecutor:
     # Logging helper
     # ------------------------------------------------------------------
 
+    def _debug_log(self, message: str) -> None:
+        """Emit a verbose debug line only when debug logging is enabled."""
+        if not self._debug_enabled:
+            return
+        self._log("info", f"[DEBUG] {message}")
+
+    def _write_agent_debug_event(
+        self,
+        location: str,
+        message: str,
+        data: dict[str, Any] | None = None,
+        hypothesis_id: str = "",
+    ) -> None:
+        """Persist one structured debug event when debug logging is enabled."""
+        if not self._debug_enabled or self._debug_log_path is None:
+            return
+        payload: dict[str, Any] = {
+            "id": f"log_{int(time.time() * 1000)}",
+            "timestamp": int(time.time() * 1000),
+            "location": location,
+            "message": message,
+        }
+        if data:
+            payload["data"] = data
+        if hypothesis_id:
+            payload["hypothesisId"] = hypothesis_id
+        try:
+            self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._debug_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            if not self._debug_log_failure_reported:
+                self._debug_log_failure_reported = True
+                logger.warning("Could not write chain debug event log: %s", exc)
+
     def _log(self, level: str, message: str) -> None:
         log_epoch_ms = int(time.time() * 1000)
+        self._next_log_event_id += 1
         entry = {
+            "id": self._next_log_event_id,
             "time": dt.datetime.now().strftime("%H:%M:%S"),
             "level": level,
             "message": message,
@@ -303,25 +355,47 @@ class ChainExecutor:
         if level in ("error", "warn") and self.config:
             self._append_error_log(entry["time"], level, message)
 
+    def get_log_events_since(
+        self,
+        after_id: int,
+        *,
+        limit: int = 500,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Return non-destructive log replay entries newer than ``after_id``.
+
+        Returns ``(events, replay_gap_detected)`` where replay_gap_detected is
+        true when the in-memory queue has already dropped entries newer than
+        the caller's cursor.
+        """
+        with self.log_queue.mutex:
+            snapshot = list(self.log_queue.queue)
+        if not snapshot:
+            return [], False
+        oldest_id = int(snapshot[0].get("id", 0) or 0)
+        replay_gap = bool(after_id > 0 and oldest_id > after_id + 1)
+        events = [entry for entry in snapshot if int(entry.get("id", 0) or 0) > after_id]
+        if limit > 0 and len(events) > limit:
+            events = events[-limit:]
+        return events, replay_gap
+
     def _append_error_log(self, timestamp: str, level: str, message: str) -> None:
-        """Append an error/warning entry to ERRORS.md inside .codex_manager/."""
+        """Append an error/warning entry to the canonical tracker ERRORS.md."""
         try:
-            repo = Path(self.config.repo_path).resolve()
-            log_dir = repo / ".codex_manager"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            errors_file = log_dir / "ERRORS.md"
-            if not errors_file.exists():
-                errors_file.write_text(
-                    "# WarpFoundry â€” Runtime Errors\n\n"
-                    "This file is auto-generated. Each entry is a runtime error or warning.\n\n",
-                    encoding="utf-8",
-                )
-            with open(errors_file, "a", encoding="utf-8") as f:
-                tag = "ERROR" if level == "error" else "WARN"
-                date_str = dt.datetime.now().strftime("%Y-%m-%d")
-                f.write(f"- **[{tag}]** `{date_str} {timestamp}` â€” {message}\n")
-        except Exception:
-            pass  # don't let error logging break the chain
+            if self._log_tracker is None and self.config is not None:
+                self._log_tracker = LogTracker(Path(self.config.repo_path).resolve())
+                self._log_tracker.initialize()
+            if self._log_tracker is None:
+                return
+            tag = "ERROR" if level == "error" else "WARN"
+            date_str = dt.datetime.now().strftime("%Y-%m-%d")
+            self._log_tracker.append(
+                "ERRORS.md",
+                f"- **[{tag}]** `{date_str} {timestamp}` - {message}",
+            )
+        except Exception as exc:
+            if not self._error_log_failure_reported:
+                self._error_log_failure_reported = True
+                logger.warning("Could not append runtime error to ERRORS.md: %s", exc)
 
     def _record_brain_note(
         self,
@@ -388,7 +462,7 @@ class ChainExecutor:
         self.state.elapsed_seconds = time.monotonic() - start_time
         self._log(
             "info",
-            f"Chain finished â€” {self.state.stop_reason} "
+            f"Chain finished -- {self.state.stop_reason} "
             f"({self.state.total_loops_completed} loops, "
             f"{self.state.total_steps_completed} steps)",
         )
@@ -832,15 +906,62 @@ class ChainExecutor:
 
         # Keep most recent output-history archives only.
         try:
+            max_archives = 30
+            if self.config is not None:
+                max_archives = max(
+                    1,
+                    int(getattr(self.config, "artifact_retention_max_output_runs", 30)),
+                )
             archives = sorted(
                 [p for p in archive_root.iterdir() if p.is_dir()],
                 key=lambda p: p.stat().st_mtime,
                 reverse=True,
             )
-            for old in archives[30:]:
+            for old in archives[max_archives:]:
                 shutil.rmtree(old, ignore_errors=True)
         except Exception:
             pass
+
+    @staticmethod
+    def _retention_policy(config: ChainConfig) -> RetentionPolicy:
+        """Build runtime-artifact retention policy from chain configuration."""
+        return RetentionPolicy(
+            enabled=bool(getattr(config, "artifact_retention_enabled", True)),
+            max_age_days=max(1, int(getattr(config, "artifact_retention_max_age_days", 30))),
+            max_files=max(1, int(getattr(config, "artifact_retention_max_files", 5000))),
+            max_bytes=max(1, int(getattr(config, "artifact_retention_max_bytes", 2_000_000_000))),
+            max_output_history_runs=max(
+                1, int(getattr(config, "artifact_retention_max_output_runs", 30))
+            ),
+        )
+
+    def _run_retention_cleanup(self, repo: Path, config: ChainConfig, *, reason: str) -> None:
+        """Apply retention cleanup for managed runtime artifacts."""
+        try:
+            cleanup = cleanup_runtime_artifacts(
+                repo,
+                policy=self._retention_policy(config),
+                active_paths=[self.output_dir] if self.output_dir is not None else [],
+            )
+        except Exception as exc:
+            self._log("warn", f"Retention cleanup skipped ({reason}): {exc}")
+            return
+        removed_total = (
+            int(cleanup.get("removed_files", 0))
+            + int(cleanup.get("removed_dirs", 0))
+            + int(cleanup.get("removed_runs", 0))
+        )
+        if removed_total <= 0:
+            return
+        freed_bytes = int(cleanup.get("freed_bytes", 0))
+        self._log(
+            "info",
+            (
+                f"Retention cleanup ({reason}): removed "
+                f"{cleanup['removed_files']} files, {cleanup['removed_dirs']} dirs, "
+                f"{cleanup['removed_runs']} archived runs; freed {freed_bytes} bytes."
+            ),
+        )
 
     def _log_execution_mode_warnings(self, config: ChainConfig) -> None:
         """Log prominent warnings when execution is in a constrained safety mode."""
@@ -917,7 +1038,7 @@ class ChainExecutor:
             else:
                 self._log("warn", f"Vector memory unavailable: {self.vector_memory.reason}")
         # #region agent log
-        _agent_log(
+        self._write_agent_debug_event(
             "chain.py:_run_loop",
             "run_loop started",
             {
@@ -929,6 +1050,7 @@ class ChainExecutor:
             "H1",
         )
         # #endregion
+        self._run_retention_cleanup(repo, config, reason="startup")
 
         # Build agent runners
         runners: dict[str, AgentRunner] = {
@@ -965,7 +1087,7 @@ class ChainExecutor:
             if binary and not shutil.which(binary):
                 self._log(
                     "error",
-                    f"Agent binary not found: '{binary}' â€” "
+                    f"Agent binary not found: '{binary}' -- "
                     f"install it or update the binary path in settings. "
                     f"Steps using [{agent_key}] will fail.",
                 )
@@ -1474,7 +1596,7 @@ class ChainExecutor:
                                         )
                                 self._log(
                                     "error",
-                                    "Step failed â€” aborting chain (on_failure=abort)",
+                                    "Step failed -- aborting chain (on_failure=abort)",
                                 )
                                 self.state.stop_reason = "step_failed_abort"
                                 loop_aborted = True
@@ -1505,6 +1627,7 @@ class ChainExecutor:
                     break
 
                 self.state.total_loops_completed = loop_num
+                self._run_retention_cleanup(repo, config, reason=f"loop-{loop_num}")
 
                 # Brain progress assessment (between loops)
                 if brain.enabled and loop_num >= 2:
@@ -1526,7 +1649,7 @@ class ChainExecutor:
                         self._log("info", f"Brain assessment: {progress.reasoning[:200]}")
                     if progress.action == "stop":
                         self.state.stop_reason = "brain_converged"
-                        self._log("info", "Brain recommends stopping â€” goal achieved")
+                        self._log("info", "Brain recommends stopping -- goal achieved")
                         break
 
                 # Loop-level stop conditions
@@ -1540,7 +1663,7 @@ class ChainExecutor:
 
         except Exception as exc:
             # #region agent log
-            _agent_log(
+            self._write_agent_debug_event(
                 "chain.py:_run_loop",
                 "loop exception",
                 {"error": str(exc), "error_type": type(exc).__name__},
@@ -1627,7 +1750,7 @@ class ChainExecutor:
         override_prompt: str | None = None,
     ) -> StepResult:
         # #region agent log
-        _agent_log(
+        self._write_agent_debug_event(
             "chain.py:_execute_step",
             "execute_step entry",
             {
@@ -1740,16 +1863,16 @@ class ChainExecutor:
         max_attempts = (step.max_retries + 1) if step.on_failure == "retry" else 1
 
         # Debug: log the working directory and command details
-        self._log("info", f"[DEBUG] Agent working dir: {repo}")
-        self._log("info", f"[DEBUG] Agent: {runner.name}, full_auto=True")
-        self._log("info", f"[DEBUG] Prompt length: {len(prompt)} chars")
+        self._debug_log(f"Agent working dir: {repo}")
+        self._debug_log(f"Agent: {runner.name}, full_auto=True")
+        self._debug_log(f"Prompt length: {len(prompt)} chars")
 
         run_result = None
         for attempt in range(1, max_attempts + 1):
             if self._stop_event.is_set():
                 break
             self._pause_event.wait()
-            # Always pass full_auto=True â€” agents run non-interactively and
+            # Always pass full_auto=True -- agents run non-interactively and
             # can't prompt for approval.  Dry-run vs apply controls whether
             # changes are committed or reverted AFTER the agent finishes.
             run_result = self._run_agent_with_keepalive(
@@ -1762,18 +1885,17 @@ class ChainExecutor:
             )
 
             # Debug: log full result details
-            self._log(
-                "info",
-                f"[DEBUG] Agent result: success={run_result.success}, "
+            self._debug_log(
+                f"Agent result: success={run_result.success}, "
                 f"exit={run_result.exit_code}, "
                 f"events={len(run_result.events)}, "
                 f"duration={run_result.duration_seconds:.1f}s, "
                 f"final_msg_len={len(run_result.final_message)}, "
                 f"file_changes={len(run_result.file_changes)}, "
-                f"errors={run_result.errors[:2] if run_result.errors else '[]'}",
+                f"errors={run_result.errors[:2] if run_result.errors else '[]'}"
             )
             # #region agent log
-            _agent_log(
+            self._write_agent_debug_event(
                 "chain.py:_execute_step",
                 "after runner.run",
                 {
@@ -1792,7 +1914,7 @@ class ChainExecutor:
             for ev in run_result.events:
                 k = ev.kind.value
                 evt_summary[k] = evt_summary.get(k, 0) + 1
-            self._log("info", f"[DEBUG] Event types: {evt_summary}")
+            self._debug_log(f"Event types: {evt_summary}")
 
             if run_result.success:
                 break
@@ -1827,13 +1949,12 @@ class ChainExecutor:
                 f"Agent emitted {TERMINATE_STEP_TAG}; remaining repeats for this step can be skipped.",
             )
 
-        self._log(
-            "info",
-            f"[DEBUG] Output capture: final_msg={len(run_result.final_message)} chars, "
+        self._debug_log(
+            f"Output capture: final_msg={len(run_result.final_message)} chars, "
             f"all_events_text={len(all_text_parts)} parts ({sum(len(t) for t in all_text_parts)} chars), "
             f"agent_event_text={len(agent_message_parts)} parts, "
             f"agent_output={len(agent_output)} chars, "
-            f"file_changes={len(run_result.file_changes)}",
+            f"file_changes={len(run_result.file_changes)}"
         )
 
         # If the agent didn't create/edit files itself, save its text output
@@ -1841,7 +1962,7 @@ class ChainExecutor:
         out_file = self._step_output_path(repo, step)
         out_file.parent.mkdir(parents=True, exist_ok=True)
         # #region agent log
-        _agent_log(
+        self._write_agent_debug_event(
             "chain.py:_execute_step",
             "save decision",
             {
@@ -1855,14 +1976,14 @@ class ChainExecutor:
         )
         # #endregion
         if agent_output and not run_result.file_changes:
-            self._log("info", f"[DEBUG] Saving output to: {out_file}")
+            self._debug_log(f"Saving output to: {out_file}")
             try:
                 with open(out_file, "a", encoding="utf-8") as f:
                     header = f"\n\n---\n## Loop {loop_num}, Step {step_idx + 1}\n\n"
                     f.write(header + agent_output + "\n")
                 self._log("info", f"Agent output saved to {out_file} ({len(agent_output)} chars)")
                 # #region agent log
-                _agent_log(
+                self._write_agent_debug_event(
                     "chain.py:_execute_step",
                     "saved to file",
                     {"out_file": str(out_file), "chars": len(agent_output)},
@@ -1872,7 +1993,7 @@ class ChainExecutor:
             except Exception as exc:
                 self._log("error", f"Could not save agent output to {out_file}: {exc}")
                 # #region agent log
-                _agent_log(
+                self._write_agent_debug_event(
                     "chain.py:_execute_step",
                     "save failed",
                     {"out_file": str(out_file), "error": str(exc)},
@@ -1882,7 +2003,7 @@ class ChainExecutor:
         elif agent_output and run_result.file_changes:
             # Preserve step output even when the agent also changed code files.
             if out_file.exists():
-                self._log("info", f"[DEBUG] Agent created output file directly: {out_file}")
+                self._debug_log(f"Agent created output file directly: {out_file}")
             else:
                 try:
                     with open(out_file, "a", encoding="utf-8") as f:
@@ -1915,7 +2036,7 @@ class ChainExecutor:
                 import json as _json
 
                 raw_str = _json.dumps(ev.raw)[:200]
-                self._log("info", f"[DEBUG] Event[{i}]: kind={ev.kind.value} raw={raw_str}")
+                self._debug_log(f"Event[{i}]: kind={ev.kind.value} raw={raw_str}")
 
         # Evaluate
         eval_result = evaluator.evaluate(repo)
@@ -2753,7 +2874,7 @@ class ChainExecutor:
             self.state.stop_reason = "budget_exhausted"
             self._log(
                 "warn",
-                f"Token budget reached ({self.state.total_tokens:,}/{config.max_total_tokens:,}) â€” strict budget mode stopping run now",
+                f"Token budget reached ({self.state.total_tokens:,}/{config.max_total_tokens:,}) -- strict budget mode stopping run now",
             )
         return True
 
@@ -2805,7 +2926,7 @@ class ChainExecutor:
                 self._log(
                     "info",
                     f"Improvement dropped to {imp_pct:.2f}% "
-                    f"(threshold {threshold}%) â€” diminishing returns",
+                    f"(threshold {threshold}%) -- diminishing returns",
                 )
                 return "diminishing_returns"
 

@@ -190,10 +190,9 @@ Inside target repo:
 
 - `.codex_manager/state.json`
 - `.codex_manager/outputs/*.md`
-- `.codex_manager/ERRORS.md` (chain mode)
 - `.codex_manager/logs/WISHLIST.md`
 - `.codex_manager/logs/TESTPLAN.md`
-- `.codex_manager/logs/ERRORS.md`
+- `.codex_manager/logs/ERRORS.md` (canonical runtime error log for chain + pipeline)
 - `.codex_manager/logs/EXPERIMENTS.md`
 - `.codex_manager/logs/PROGRESS.md`
 - `.codex_manager/logs/scientist/*`
@@ -223,6 +222,9 @@ python -m pytest -q
 python -m ruff check src tests
 python -m ruff format --check src tests
 ```
+
+Text encoding standard: source/docs/templates should remain UTF-8 without mojibake signatures.
+The `test_encoding_hygiene.py` test enforces this guardrail in CI.
 
 ---
 

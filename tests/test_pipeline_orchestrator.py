@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import time
 from pathlib import Path
@@ -368,6 +369,28 @@ def test_default_science_order_runs_before_implementation():
     assert phase_order.index(PipelinePhase.ANALYZE) < phase_order.index(
         PipelinePhase.IMPLEMENTATION
     )
+
+
+def test_pipeline_log_queue_drops_oldest_entries_on_overflow(caplog, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    cfg = PipelineConfig(mode="dry-run", max_cycles=1, test_cmd="")
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg, log_queue_maxsize=100)
+
+    with caplog.at_level(logging.WARNING):
+        for idx in range(160):
+            orch._log("info", f"overflow event {idx}")
+
+    assert orch.log_queue.qsize() == 100
+    assert orch._log_queue_drops == 60
+
+    events, replay_gap = orch.get_log_events_since(1, limit=500)
+    assert replay_gap is True
+    assert len(events) == 100
+    assert int(events[0]["id"]) > 1
+    assert int(events[-1]["id"]) == orch._next_log_event_id
+    assert any("Pipeline log queue overflow" in record.getMessage() for record in caplog.records)
 
 
 def test_default_deep_research_order_runs_before_prioritization():

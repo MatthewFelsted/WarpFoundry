@@ -6,7 +6,6 @@ import gzip
 import json
 import logging
 import os
-import queue
 import re
 import shutil
 import string
@@ -26,6 +25,7 @@ from urllib.request import Request, urlopen
 
 from flask import Flask, Response, jsonify, render_template, request
 
+from codex_manager.file_io import read_text_utf8_resilient
 from codex_manager.gui.chain import ChainExecutor
 from codex_manager.gui.models import (
     DANGER_CONFIRMATION_PHRASE,
@@ -167,6 +167,7 @@ _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
         "image/svg+xml",
     }
 )
+_SSE_REPLAY_BATCH_LIMIT = 500
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
@@ -267,30 +268,14 @@ def _repo_dirty_issue(repo: Path) -> str | None:
 
 def _read_text_utf8_resilient(path: Path) -> str:
     """Read a text file, recovering from legacy non-UTF8 bytes when possible."""
-    try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raw = path.read_bytes()
-        for encoding in ("utf-8-sig", "cp1252", "latin-1"):
-            try:
-                text = raw.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-            logger.warning(
-                "Recovered non-UTF8 text file %s using %s (%s); rewriting as UTF-8",
-                path,
-                encoding,
-                exc,
-            )
-            path.write_text(text, encoding="utf-8")
-            return text
-        text = raw.decode("utf-8", errors="replace")
+    result = read_text_utf8_resilient(path, normalize_to_utf8=True)
+    if result.used_fallback:
         logger.warning(
-            "Recovered undecodable text file %s using replacement decode; rewriting as UTF-8",
+            "Recovered non-UTF8 text file %s using %s; rewritten as UTF-8",
             path,
+            result.decoder,
         )
-        path.write_text(text, encoding="utf-8")
-        return text
+    return result.text
 
 
 def _write_json_file_atomic(path: Path, payload: object) -> None:
@@ -802,6 +787,75 @@ def _pipeline_logs_dir(repo: Path) -> Path:
 def _history_jsonl_path(repo: Path) -> Path:
     """Return the run-history JSONL path for *repo*."""
     return _pipeline_logs_dir(repo) / "HISTORY.jsonl"
+
+
+def _resolve_pipeline_logs_repo_for_api(repo_hint: str = "") -> tuple[Path | None, str, int]:
+    """Resolve a safe repository path for pipeline-log API endpoints."""
+    raw = (repo_hint or "").strip()
+    if raw:
+        repo = Path(raw).expanduser().resolve()
+        if not repo.is_dir():
+            return None, f"Repo path not found: {raw}", 400
+        return repo, "", 200
+
+    repo = _resolve_pipeline_logs_repo("")
+    if repo is not None:
+        return repo, "", 200
+    return None, "repo_path is required when no active pipeline run is available.", 400
+
+
+def _parse_sse_resume_id() -> int:
+    """Parse SSE replay cursor from query args or Last-Event-ID header."""
+    candidates = (
+        request.args.get("after_id"),
+        request.args.get("last_event_id"),
+        request.headers.get("Last-Event-ID"),
+    )
+    for raw in candidates:
+        if raw is None:
+            continue
+        try:
+            return max(0, int(str(raw).strip()))
+        except ValueError:
+            continue
+    return 0
+
+
+def _sse_frame(payload: dict[str, object], *, event_id: int | None = None) -> str:
+    """Build one SSE frame."""
+    lines: list[str] = []
+    if event_id is not None and event_id > 0:
+        lines.append(f"id: {event_id}")
+    lines.append(f"data: {json.dumps(payload)}")
+    return "\n".join(lines) + "\n\n"
+
+
+def _replay_log_events(
+    source: object,
+    *,
+    after_id: int,
+    limit: int = _SSE_REPLAY_BATCH_LIMIT,
+) -> tuple[list[dict[str, object]], bool]:
+    """Fetch non-destructive log events from a chain/pipeline executor."""
+    getter = getattr(source, "get_log_events_since", None)
+    if callable(getter):
+        events, replay_gap = getter(after_id, limit=limit)
+        return [dict(event) for event in events], bool(replay_gap)
+
+    queue_obj = getattr(source, "log_queue", None)
+    if queue_obj is None or not hasattr(queue_obj, "mutex"):
+        return [], False
+
+    with queue_obj.mutex:
+        snapshot = [dict(item) for item in list(queue_obj.queue)]
+    if not snapshot:
+        return [], False
+    oldest_id = _safe_int(snapshot[0].get("id"), 0)
+    replay_gap = bool(after_id > 0 and oldest_id > after_id + 1)
+    events = [entry for entry in snapshot if _safe_int(entry.get("id"), 0) > after_id]
+    if limit > 0 and len(events) > limit:
+        events = events[-limit:]
+    return events, replay_gap
 
 
 def _parse_iso_epoch_ms(value: object) -> int:
@@ -1511,7 +1565,6 @@ _CODEX_MANAGER_GITIGNORE_RULES = [
     ".codex_manager/state/",
     ".codex_manager/memory/",
     ".codex_manager/ledger/",
-    ".codex_manager/ERRORS.md",
 ]
 
 
@@ -4125,13 +4178,32 @@ def api_chain_output_file(filename: str):
 
 @app.route("/api/stream")
 def api_stream():
+    """SSE stream for chain logs with non-destructive replay support."""
+    resume_from = _parse_sse_resume_id()
+
     def generate():
+        last_id = resume_from
         while True:
-            try:
-                entry = executor.log_queue.get(timeout=2)
-                yield f"data: {json.dumps(entry)}\n\n"
-            except queue.Empty:
-                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            events, replay_gap = _replay_log_events(executor, after_id=last_id)
+            if replay_gap:
+                yield _sse_frame(
+                    {
+                        "type": "warning",
+                        "message": (
+                            "Some older chain log events were dropped before replay "
+                            "could resume."
+                        ),
+                    }
+                )
+            if events:
+                for entry in events:
+                    event_id = _safe_int(entry.get("id"), 0)
+                    if event_id > last_id:
+                        last_id = event_id
+                    yield _sse_frame(entry, event_id=event_id if event_id > 0 else None)
+                continue
+            time.sleep(2.0)
+            yield _sse_frame({"type": "heartbeat", "last_event_id": last_id})
 
     return Response(generate(), mimetype="text/event-stream")
 
@@ -8099,16 +8171,16 @@ def api_load_config():
     return jsonify(config)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ----------------------------------------------------------------------
 # Pipeline API
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ----------------------------------------------------------------------
 
 
 def _get_pipeline():
     """Get or create the global pipeline executor."""
     global _pipeline_executor
     if _pipeline_executor is None:
-        # Placeholder â€” will be configured on start
+        # Placeholder -- will be configured on start
         _pipeline_executor = None
     return _pipeline_executor
 
@@ -8343,6 +8415,11 @@ def api_pipeline_start():
         self_improvement_enabled=gui_config.self_improvement_enabled,
         self_improvement_auto_restart=gui_config.self_improvement_auto_restart,
         timeout_per_phase=gui_config.timeout_per_phase,
+        artifact_retention_enabled=gui_config.artifact_retention_enabled,
+        artifact_retention_max_age_days=gui_config.artifact_retention_max_age_days,
+        artifact_retention_max_files=gui_config.artifact_retention_max_files,
+        artifact_retention_max_bytes=gui_config.artifact_retention_max_bytes,
+        artifact_retention_max_output_runs=gui_config.artifact_retention_max_output_runs,
         max_total_tokens=gui_config.max_total_tokens,
         strict_token_budget=gui_config.strict_token_budget,
         max_time_minutes=gui_config.max_time_minutes,
@@ -8430,17 +8507,32 @@ def api_pipeline_status():
 def api_pipeline_stream():
     """SSE stream for pipeline logs."""
     global _pipeline_executor
+    resume_from = _parse_sse_resume_id()
 
     def generate():
+        last_id = resume_from
         while True:
             if _pipeline_executor is not None:
-                try:
-                    entry = _pipeline_executor.log_queue.get(timeout=2)
-                    yield f"data: {json.dumps(entry)}\n\n"
+                events, replay_gap = _replay_log_events(_pipeline_executor, after_id=last_id)
+                if replay_gap:
+                    yield _sse_frame(
+                        {
+                            "type": "warning",
+                            "message": (
+                                "Some older pipeline log events were dropped before replay "
+                                "could resume."
+                            ),
+                        }
+                    )
+                if events:
+                    for entry in events:
+                        event_id = _safe_int(entry.get("id"), 0)
+                        if event_id > last_id:
+                            last_id = event_id
+                        yield _sse_frame(entry, event_id=event_id if event_id > 0 else None)
                     continue
-                except queue.Empty:
-                    pass
-            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+            time.sleep(2.0)
+            yield _sse_frame({"type": "heartbeat", "last_event_id": last_id})
 
     return Response(generate(), mimetype="text/event-stream")
 
@@ -8452,7 +8544,9 @@ def api_pipeline_log(filename: str):
     if filename not in _PIPELINE_LOG_FILES:
         return jsonify({"error": "Invalid log file"}), 400
 
-    repo = _resolve_pipeline_logs_repo(request.args.get("repo_path", ""))
+    repo, resolve_error, resolve_status = _resolve_pipeline_logs_repo_for_api(
+        request.args.get("repo_path", "")
+    )
     if repo is None:
         if _pipeline_executor is not None and hasattr(_pipeline_executor, "tracker"):
             content = _pipeline_executor.tracker.read(filename)
@@ -8465,14 +8559,18 @@ def api_pipeline_log(filename: str):
                     "logs_dir": "",
                 }
             )
-        return jsonify(
-            {
-                "content": "",
-                "exists": False,
-                "filename": filename,
-                "repo_path": "",
-                "logs_dir": "",
-            }
+        return (
+            jsonify(
+                {
+                    "error": resolve_error or "Could not resolve repository for pipeline logs.",
+                    "content": "",
+                    "exists": False,
+                    "filename": filename,
+                    "repo_path": "",
+                    "logs_dir": "",
+                }
+            ),
+            resolve_status,
         )
 
     content = ""
@@ -8726,9 +8824,9 @@ def api_pipeline_science_dashboard():
     )
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ----------------------------------------------------------------------
 # CUA (Computer-Using Agent) API
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ----------------------------------------------------------------------
 
 _cua_result = None  # latest CUA session result (including in-flight placeholder)
 _cua_thread: threading.Thread | None = None
@@ -8857,9 +8955,9 @@ def api_cua_providers():
     return jsonify(providers)
 
 
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ----------------------------------------------------------------------
 # Prompt Catalog API
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# ----------------------------------------------------------------------
 
 
 @app.route("/api/prompts")
