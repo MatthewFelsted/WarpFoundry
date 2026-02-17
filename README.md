@@ -6,14 +6,30 @@
 ![Vector Memory](https://img.shields.io/badge/Memory-ChromaDB-ff7a59)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
 
-> **Continuous repo evolution at warp speed.**  
+**Software that upgrades itself — and everything else in your codebase.**
+ 
 > A local AI control plane that turns coding agents into a repeatable, evidence-backed engineering system.
+
+WarpFoundry is a self-improving AI framework. Point it at any repository and it will plan, execute, validate, and iterate on improvements autonomously — learning from each cycle to make the next one better. It ships with pre-made Autopilot recipes (structured prompt chains for common upgrade patterns). It orchestrates AI agents and coding tools into coherent, compounding engineering work.
+
+It doesn't just run agents. It manages them: choosing what to do, verifying that it worked, capturing evidence, and deciding whether to keep going or stop. The result is AI-driven development that behaves like engineering, not guesswork. You can choose how long to run it. Choose the number of cycles, minutes, tokens, to run or stop when the program hits diminishing returns. You can select 'unlimited' mode, and it will run until you stop it.
+
+**Continuous repo evolution at warp speed.** 
 
 WarpFoundry is an AI Manager for coding agents: a local control plane that plans, runs, validates, and tracks autonomous repo work so your agents ship real progress, not random edits.
 
 It orchestrates Codex (and optionally Claude Code) across iterative chains and autonomous pipelines, with Git-first safety rails, diagnostics, per-repo artifacts, and optional long-term vector memory.
 
 ---
+
+
+
+
+
+
+
+
+
 
 ## Continuous Improvement, On Autopilot
 
@@ -35,31 +51,6 @@ WarpFoundry can run this cycle on **any repo** - including **itself** - so impro
 
 ---
 
-## GitHub Setup (Copy/Paste)
-
-`About`: `AI manager for coding agents: autonomous repo pipelines, safety rails, diagnostics, and per-repo memory for repeatable AI engineering workflows.`
-
-Suggested topics:
-
-- `ai-manager`
-- `coding-agents`
-- `agentic-ai`
-- `developer-tools`
-- `automation`
-- `python`
-- `flask`
-- `git`
-- `codex`
-- `claude`
-- `chroma`
-- `llm-ops`
-
-CI badge tip:
-
-- Replace the generic CI badge with your real workflow badge after publish, for example:
-- `https://github.com/<OWNER>/<REPO>/actions/workflows/<WORKFLOW_FILE>.yml/badge.svg`
-
----
 
 ## Why Developers Use It
 

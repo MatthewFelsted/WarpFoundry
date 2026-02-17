@@ -1726,13 +1726,25 @@ body.mode-medium .easy-only{display:none}
   </div>
 
   <div class="chain-outputs-section">
-    <h3>Owner Decision Board (Monetization)</h3>
+    <h3>Repository Idea Generator (Free)</h3>
     <div class="form-row-inline" style="margin-bottom:8px">
-      <button class="btn" onclick="generateDecisionBoardFromCurrentOutput()">Generate from current output</button>
-      <button class="btn" onclick="loadOwnerDecisionBoard()">Refresh</button>
+      <input
+        type="text"
+        id="owner-ideas-model"
+        value="gpt-5.2"
+        placeholder="Model id (e.g. gpt-5.2, claude-opus-4-6, ollama:llama3.3)"
+        title="Separate model used only for idea generation. This does not change chain/pipeline models."
+        style="min-width:340px"
+      >
+      <button class="btn" onclick="generateOwnerIdeasFromRepo()">Generate ideas from repo</button>
+      <button class="btn" onclick="loadOwnerIdeas()">Refresh</button>
+    </div>
+    <div class="form-row" style="margin-bottom:6px">
+      <label style="font-size:11px;color:var(--text2)">Optional focus</label>
+      <input type="text" id="owner-ideas-context" placeholder="Example: prioritize onboarding, admin controls roadmap, and monetization hooks.">
     </div>
     <div id="owner-board-warning" style="font-size:11px;color:var(--warning);margin-bottom:6px;white-space:pre-wrap"></div>
-    <div class="log-content" id="owner-board-content" aria-live="polite">No decision board yet. Generate from a monetization output.</div>
+    <div class="log-content" id="owner-board-content" aria-live="polite">No ideas yet. Generate ideas from the repository.</div>
   </div>
 
   <!-- Results -->
@@ -4723,7 +4735,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   refreshChainOutputs(false);
   loadGovernancePolicy({ silent: true });
   loadGithubAuthSettings({ silent: true });
-  loadOwnerDecisionBoard();
+  loadOwnerIdeas();
   ['codex-bin', 'claude-bin'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -8178,7 +8190,7 @@ async function cloneRemoteRepo() {
     if (resp.checked_out_branch) {
       toast('Checked out branch: ' + String(resp.checked_out_branch), 'info');
     }
-    loadOwnerDecisionBoard();
+    loadOwnerIdeas();
   } catch (e) {
     const message = e && e.message ? e.message : String(e);
     _setCloneRepoStatus(message, 'error');
@@ -8380,7 +8392,7 @@ async function createProject() {
         toast('Legal review checkpoint was marked optional for this project.', 'info');
       }
     }
-    loadOwnerDecisionBoard();
+    loadOwnerIdeas();
 
   } catch (e) {
     toast('Failed to create project: ' + e.message, 'error');
@@ -10200,107 +10212,84 @@ async function viewChainOutput(name) {
 }
 
 /* -- Config Save / Load ----------------------------------------- */
-function renderOwnerDecisionBoard(board) {
+function renderOwnerIdeas(payload) {
   const area = document.getElementById('owner-board-content');
   const warningEl = document.getElementById('owner-board-warning');
   if (!area || !warningEl) return;
 
-  const cards = Array.isArray(board.cards) ? board.cards : [];
-  const warnings = Array.isArray(board.governance_warnings) ? board.governance_warnings : [];
-  warningEl.textContent = warnings.length ? ('Governance checks:\n- ' + warnings.join('\n- ')) : '';
+  const content = String(payload && payload.content || '').trim();
+  const warning = String(payload && payload.warning || '').trim();
+  const scan = payload && typeof payload.scan === 'object' && payload.scan !== null
+    ? payload.scan
+    : null;
+  const details = [];
+  if (warning) details.push(warning);
+  if (scan) {
+    const included = Number(scan.included_files || 0);
+    const excluded = Number(scan.excluded_files || 0);
+    const snippets = Number(scan.snippet_files || 0);
+    const truncated = !!scan.scan_truncated;
+    details.push(
+      'Repo scan: '
+      + included + ' included, '
+      + excluded + ' excluded, '
+      + snippets + ' snippet file(s)'
+      + (truncated ? ', truncated for performance.' : '.')
+    );
+  }
+  warningEl.textContent = details.join('\n');
 
-  if (!cards.length) {
-    area.textContent = 'No decision cards found yet. Generate from a monetization output.';
+  if (!content) {
+    setLogContentState(area, 'No ideas yet. Generate ideas from the repository.');
     return;
   }
-
-  area.innerHTML = cards.map(card => {
-    const id = String(card.id || '');
-    const title = esc(card.title || 'Untitled');
-    const summary = esc(card.summary || '');
-    const decision = String(card.decision || 'pending');
-    const prompt = esc(card.owner_prompt || '');
-    const decided = card.decided_at
-      ? ('<div style="font-size:10px;color:var(--text2);margin-top:4px">Decided: ' + esc(card.decided_at) + '</div>')
-      : '';
-    return ''
-      + '<div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--panel2)">'
-      +   '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'
-      +     '<strong>' + title + '</strong>'
-      +     '<span class="badge" style="font-size:10px;background:var(--surface2);color:var(--text2)">' + esc(decision) + '</span>'
-      +   '</div>'
-      +   '<div style="font-size:12px;color:var(--text2);margin-top:6px;white-space:pre-wrap">' + summary + '</div>'
-      +   '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
-      +     '<button class="btn btn-success" onclick="updateOwnerDecisionCard(\'' + esc(id) + '\', \'approve\')">Approve</button>'
-      +     '<button class="btn btn-warning" onclick="updateOwnerDecisionCard(\'' + esc(id) + '\', \'hold\')">Hold</button>'
-      +     '<button class="btn btn-danger" onclick="updateOwnerDecisionCard(\'' + esc(id) + '\', \'deny\')">Deny</button>'
-      +   '</div>'
-      +   '<div style="margin-top:8px">'
-      +     '<label style="font-size:11px;color:var(--text2)">Follow-up prompt override (optional)</label>'
-      +     '<textarea id="owner-card-prompt-' + esc(id) + '" rows="3" style="width:100%;margin-top:4px">' + prompt + '</textarea>'
-      +   '</div>'
-      +   decided
-      + '</div>';
-  }).join('');
+  setLogContentState(area, content);
 }
 
-async function loadOwnerDecisionBoard() {
+async function loadOwnerIdeas() {
   const repoPath = (document.getElementById('repo-path').value || '').trim();
   const area = document.getElementById('owner-board-content');
+  const warningEl = document.getElementById('owner-board-warning');
   if (!repoPath) {
-    if (area) area.textContent = 'Set Repository Path in Chain Builder first.';
+    if (area) setLogContentState(area, 'Set Repository Path in Chain Builder first.');
+    if (warningEl) warningEl.textContent = '';
     return;
   }
-  if (area) area.textContent = 'Loading decision board...';
-  const resp = await api('/api/owner/decision-board?repo_path=' + encodeURIComponent(repoPath));
-  if (resp.error) {
-    if (area) area.textContent = resp.error;
-    return;
+  if (area) setLogContentState(area, 'Loading repository ideas...', 'loading');
+  try {
+    const resp = await api('/api/owner/repo-ideas?repo_path=' + encodeURIComponent(repoPath));
+    if (resp.error) {
+      if (area) setLogContentState(area, resp.error);
+      return;
+    }
+    renderOwnerIdeas(resp);
+  } catch (e) {
+    if (area) setLogContentState(area, 'Could not load repository ideas.');
   }
-  renderOwnerDecisionBoard(resp);
 }
 
-async function generateDecisionBoardFromCurrentOutput() {
+async function generateOwnerIdeasFromRepo() {
   const repoPath = (document.getElementById('repo-path').value || '').trim();
   if (!repoPath) {
     toast('Set a repository path first.', 'error');
     return;
   }
-  const outputContent = document.getElementById('chain-output-content');
-  const markdown = (outputContent && outputContent.textContent) ? outputContent.textContent.trim() : '';
-  if (!markdown) {
-    toast('Open a monetization output file first, then generate the decision board.', 'error');
-    return;
-  }
-  const resp = await postJson('/api/owner/decision-board/generate', {
+  const model = String(document.getElementById('owner-ideas-model').value || 'gpt-5.2').trim() || 'gpt-5.2';
+  const ownerContext = String(document.getElementById('owner-ideas-context').value || '').trim();
+  const area = document.getElementById('owner-board-content');
+  if (area) setLogContentState(area, 'Generating repository ideas...', 'loading');
+  const payload = await postJson('/api/owner/repo-ideas/generate', {
     repo_path: repoPath,
-    markdown,
-    source: 'chain_output',
+    model: model,
+    owner_context: ownerContext,
+    existing_markdown: '',
   });
-  if (resp.error) {
-    toast(resp.error, 'error');
+  if (payload.error) {
+    toast(payload.error, 'error');
     return;
   }
-  renderOwnerDecisionBoard(resp);
-  toast('Owner decision board generated.', 'success');
-}
-
-async function updateOwnerDecisionCard(cardId, decision) {
-  const repoPath = (document.getElementById('repo-path').value || '').trim();
-  const promptEl = document.getElementById('owner-card-prompt-' + cardId);
-  const ownerPrompt = promptEl ? promptEl.value.trim() : '';
-  const resp = await postJson('/api/owner/decision-board/decision', {
-    repo_path: repoPath,
-    card_id: cardId,
-    decision,
-    owner_prompt: ownerPrompt,
-  });
-  if (resp.error) {
-    toast(resp.error, 'error');
-    return;
-  }
-  renderOwnerDecisionBoard(resp);
-  toast('Decision saved: ' + decision, 'success');
+  renderOwnerIdeas(payload);
+  toast('Repository ideas generated.', 'success');
 }
 
 async function loadConfigList() {
@@ -10377,7 +10366,7 @@ function applyConfig(data) {
   renderStepDetails();
   validateRepo();
   refreshChainOutputs(false);
-  loadOwnerDecisionBoard();
+  loadOwnerIdeas();
 }
 
 async function saveConfig() {

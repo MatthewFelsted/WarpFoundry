@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from collections import Counter
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -199,6 +200,78 @@ _DEFAULT_BRANCH_SENTINEL = "__remote_default__"
 _OWNER_CONTEXT_MAX_FILES = 6
 _OWNER_CONTEXT_MAX_FILE_CHARS = 6000
 _OWNER_CONTEXT_MAX_TOTAL_CHARS = 24000
+_OWNER_REPO_IDEAS_MAX_FILES = 5000
+_OWNER_REPO_IDEAS_MAX_MANIFEST_FILES = 1500
+_OWNER_REPO_IDEAS_MAX_SNIPPET_FILES = 80
+_OWNER_REPO_IDEAS_MAX_FILE_CHARS = 1800
+_OWNER_REPO_IDEAS_MAX_TOTAL_CHARS = 60000
+_OWNER_REPO_IDEAS_MAX_FILE_BYTES = 250000
+_OWNER_REPO_IDEAS_EXCLUDED_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".tox",
+        ".venv",
+        "venv",
+        "node_modules",
+        "dist",
+        "build",
+        "target",
+        "coverage",
+    }
+)
+_OWNER_REPO_IDEAS_EXCLUDED_SUBPATHS = frozenset(
+    {
+        ".codex_manager/logs",
+        ".codex_manager/outputs",
+        ".codex_manager/output_history",
+        ".codex_manager/state",
+        ".codex_manager/memory",
+        ".codex_manager/ledger",
+    }
+)
+_OWNER_REPO_IDEAS_EXCLUDED_SUFFIXES = frozenset(
+    {
+        ".log",
+        ".tmp",
+        ".cache",
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".7z",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".ico",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mp3",
+        ".wav",
+        ".pdf",
+        ".db",
+        ".sqlite",
+    }
+)
+_OWNER_REPO_IDEAS_EXCLUDED_FILENAMES = frozenset(
+    {
+        "thumbs.db",
+        ".ds_store",
+        "npm-debug.log",
+        "yarn-error.log",
+        "pnpm-debug.log",
+    }
+)
 _GENERAL_REQUEST_HISTORY_MAX_ITEMS = 200
 _HTTP_COMPRESSION_MIN_BYTES = 1024
 _HTTP_COMPRESSION_LEVEL = 6
@@ -1802,6 +1875,292 @@ def _owner_context_files_prompt_section(context_files: list[dict[str, str]]) -> 
         lines.append("```\n")
     lines.append("\n")
     return "".join(lines)
+
+
+def _owner_repo_ideas_skip_dir(rel_dir: Path) -> bool:
+    parts = [part.strip().lower() for part in rel_dir.parts if str(part).strip() and part != "."]
+    if not parts:
+        return False
+    if any(part in _OWNER_REPO_IDEAS_EXCLUDED_DIR_NAMES for part in parts):
+        return True
+    rel_posix = rel_dir.as_posix().replace("\\", "/").lower()
+    while rel_posix.startswith("./"):
+        rel_posix = rel_posix[2:]
+    if not rel_posix:
+        return False
+    return any(
+        rel_posix == blocked or rel_posix.startswith(f"{blocked}/")
+        for blocked in _OWNER_REPO_IDEAS_EXCLUDED_SUBPATHS
+    )
+
+
+def _owner_repo_ideas_skip_file(rel_file: Path) -> bool:
+    parts = [part.strip().lower() for part in rel_file.parts if str(part).strip() and part != "."]
+    if not parts:
+        return True
+    if any(part in _OWNER_REPO_IDEAS_EXCLUDED_DIR_NAMES for part in parts[:-1]):
+        return True
+    rel_posix = rel_file.as_posix().replace("\\", "/").lower()
+    while rel_posix.startswith("./"):
+        rel_posix = rel_posix[2:]
+    if any(
+        rel_posix == blocked or rel_posix.startswith(f"{blocked}/")
+        for blocked in _OWNER_REPO_IDEAS_EXCLUDED_SUBPATHS
+    ):
+        return True
+
+    filename = parts[-1]
+    if filename in _OWNER_REPO_IDEAS_EXCLUDED_FILENAMES:
+        return True
+    suffix = Path(filename).suffix.lower()
+    if suffix in _OWNER_REPO_IDEAS_EXCLUDED_SUFFIXES:
+        return True
+    if filename.startswith("error") and suffix in {".log", ".txt"}:
+        return True
+    return False
+
+
+def _looks_binary_blob(sample: bytes) -> bool:
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+    control_chars = 0
+    for byte in sample:
+        if byte in {9, 10, 13}:  # tab/newline/carriage return
+            continue
+        if 32 <= byte <= 126:
+            continue
+        if 128 <= byte <= 255:
+            continue
+        control_chars += 1
+    return (control_chars / max(len(sample), 1)) > 0.18
+
+
+def _collect_owner_repo_ideas_context(
+    repo: Path,
+    *,
+    max_files: int = _OWNER_REPO_IDEAS_MAX_FILES,
+    max_manifest_files: int = _OWNER_REPO_IDEAS_MAX_MANIFEST_FILES,
+    max_snippet_files: int = _OWNER_REPO_IDEAS_MAX_SNIPPET_FILES,
+    max_chars_per_file: int = _OWNER_REPO_IDEAS_MAX_FILE_CHARS,
+    max_total_chars: int = _OWNER_REPO_IDEAS_MAX_TOTAL_CHARS,
+    max_file_bytes: int = _OWNER_REPO_IDEAS_MAX_FILE_BYTES,
+) -> tuple[str, dict[str, object]]:
+    manifest: list[str] = []
+    snippets: list[dict[str, str]] = []
+    extension_counts: Counter[str] = Counter()
+    total_files = 0
+    excluded_files = 0
+    skipped_binary = 0
+    skipped_large = 0
+    scanned_bytes = 0
+    total_snippet_chars = 0
+    max_files_hit = False
+
+    for root, dirs, filenames in os.walk(repo):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(repo)
+        if str(rel_root) != "." and _owner_repo_ideas_skip_dir(rel_root):
+            dirs[:] = []
+            continue
+
+        kept_dirs: list[str] = []
+        for dirname in dirs:
+            rel_dir = rel_root / dirname if str(rel_root) != "." else Path(dirname)
+            if _owner_repo_ideas_skip_dir(rel_dir):
+                continue
+            kept_dirs.append(dirname)
+        dirs[:] = kept_dirs
+
+        for filename in sorted(filenames):
+            if total_files >= max_files:
+                max_files_hit = True
+                break
+
+            rel_file = rel_root / filename if str(rel_root) != "." else Path(filename)
+            if _owner_repo_ideas_skip_file(rel_file):
+                excluded_files += 1
+                continue
+
+            file_path = root_path / filename
+            if not file_path.is_file():
+                continue
+
+            total_files += 1
+            rel_text = rel_file.as_posix()
+            if len(manifest) < max_manifest_files:
+                manifest.append(rel_text)
+
+            ext = rel_file.suffix.lower().lstrip(".") or "(no-ext)"
+            extension_counts[ext] += 1
+
+            try:
+                scanned_bytes += int(file_path.stat().st_size)
+            except OSError:
+                pass
+
+            if len(snippets) >= max_snippet_files or total_snippet_chars >= max_total_chars:
+                continue
+
+            try:
+                size_bytes = int(file_path.stat().st_size)
+            except OSError:
+                continue
+            if size_bytes > max_file_bytes:
+                skipped_large += 1
+                continue
+
+            try:
+                with file_path.open("rb") as bf:
+                    sample = bf.read(4096)
+            except OSError:
+                continue
+            if _looks_binary_blob(sample):
+                skipped_binary += 1
+                continue
+
+            try:
+                raw = _read_text_utf8_resilient(file_path)
+            except Exception:
+                skipped_binary += 1
+                continue
+            content = raw.replace("\r\n", "\n").strip()
+            if not content:
+                continue
+            if len(content) > max_chars_per_file:
+                content = content[:max_chars_per_file].rstrip() + "\n... [truncated]"
+
+            remaining = max_total_chars - total_snippet_chars
+            if remaining <= 0:
+                continue
+            if len(content) > remaining:
+                content = content[:remaining].rstrip()
+                if content:
+                    content += "\n... [truncated]"
+            if not content:
+                continue
+
+            total_snippet_chars += len(content)
+            snippets.append({"path": rel_text, "content": content})
+
+        if max_files_hit:
+            break
+
+    ext_summary = ", ".join(
+        f"{ext}: {count}" for ext, count in extension_counts.most_common(10)
+    )
+    context_lines: list[str] = [
+        "Repository scan summary:",
+        f"- Included files: {total_files}",
+        f"- Excluded files/artifacts: {excluded_files}",
+        f"- Binary/unreadable files skipped for snippets: {skipped_binary}",
+        f"- Large files skipped for snippets: {skipped_large}",
+        f"- Snippet files included: {len(snippets)}",
+        f"- Total snippet characters: {total_snippet_chars}",
+        f"- Approximate scanned bytes: {scanned_bytes}",
+    ]
+    if max_files_hit:
+        context_lines.append(f"- Scan truncated at {max_files} files for performance.")
+    if ext_summary:
+        context_lines.append(f"- Top extensions: {ext_summary}")
+
+    context_lines.append("")
+    context_lines.append("Repository file inventory (relative paths):")
+    if manifest:
+        context_lines.extend(f"- {rel}" for rel in manifest)
+    else:
+        context_lines.append("- (No eligible files found after exclusions.)")
+    if total_files > len(manifest):
+        context_lines.append(
+            f"- ... ({total_files - len(manifest)} additional files omitted from listing)"
+        )
+
+    context_lines.append("")
+    context_lines.append("Repository file snippets:")
+    if snippets:
+        for row in snippets:
+            context_lines.append(f"[{row['path']}]")
+            context_lines.append("```text")
+            context_lines.append(row["content"])
+            if row["content"] and not row["content"].endswith("\n"):
+                context_lines.append("")
+            context_lines.append("```")
+    else:
+        context_lines.append("(No text snippets captured.)")
+
+    scan: dict[str, object] = {
+        "included_files": total_files,
+        "excluded_files": excluded_files,
+        "skipped_binary": skipped_binary,
+        "skipped_large": skipped_large,
+        "snippet_files": len(snippets),
+        "snippet_chars": total_snippet_chars,
+        "scan_truncated": max_files_hit,
+    }
+    return "\n".join(context_lines).strip(), scan
+
+
+def _suggest_repo_ideas_markdown(
+    *,
+    repo: Path,
+    model: str,
+    owner_context: str,
+    existing_markdown: str,
+) -> tuple[str, str, dict[str, object]]:
+    repo_context, scan = _collect_owner_repo_ideas_context(repo)
+    prompt = (
+        "You are helping the repository owner generate high-value ideas grounded in the real codebase.\n"
+        "Free-tier mode: ideation only. Do not claim code changes were implemented.\n"
+        "Return markdown only.\n\n"
+        "Required output:\n"
+        "1. Title: `# <repo name> Repository Ideas`\n"
+        "2. Sections exactly:\n"
+        "   - `## P0 - Highest Value / Lowest Effort`\n"
+        "   - `## P1 - Product Leverage`\n"
+        "   - `## P2 - Strategic Bets`\n"
+        "3. Use checklist items only: `- [ ] [S|M|L] <idea> - <single-sentence user value>`\n"
+        "4. Produce 10-20 concrete, repository-specific ideas and avoid duplicates.\n"
+        "5. Include a final section: `## Optional Future Commercial Add-Ons (Not Implemented)`\n"
+        "   with 2-5 optional ideas about admin controls, billing, monetization, or enterprise features.\n"
+        "6. Keep execution order top-to-bottom by impact and practicality.\n\n"
+        f"Repository: {repo.name}\n"
+        f"Owner context: {owner_context or '(none)'}\n\n"
+        "Existing ideas (dedupe context):\n"
+        f"{existing_markdown[:5000]}\n\n"
+        "Repository context (all files scanned except logs/runtime artifacts):\n"
+        f"{repo_context}"
+    )
+    try:
+        from codex_manager.brain.connector import connect
+    except Exception as exc:
+        logger.warning("Could not import AI connector for repo ideas suggestion: %s", exc)
+        return (
+            _default_feature_dreams_markdown(repo.name),
+            "AI suggestion unavailable; used a deterministic starter template.",
+            scan,
+        )
+
+    try:
+        raw = connect(
+            model=str(model or "gpt-5.2").strip() or "gpt-5.2",
+            prompt=prompt,
+            text_only=True,
+            operation="owner_repo_ideas_generate",
+            stage="owner:repo_ideas",
+            max_output_tokens=2600,
+            temperature=0.3,
+        )
+        suggested = _extract_first_code_fence(str(raw or "")).strip()
+        if not suggested:
+            suggested = str(raw or "").strip()
+        if not suggested:
+            raise RuntimeError("empty suggestion")
+        return suggested, "", scan
+    except Exception as exc:
+        logger.warning("AI suggestion failed for repo ideas", exc_info=True)
+        fallback = _default_feature_dreams_markdown(repo.name)
+        return fallback, f"AI suggestion failed ({exc}); used a starter template.", scan
 
 
 def _suggest_todo_wishlist_markdown(
@@ -4761,6 +5120,67 @@ def api_owner_decision_board_decision():
     board["cards"] = cards
     board = _save_decision_board(repo, board)
     return jsonify(board)
+
+
+@app.route("/api/owner/repo-ideas")
+def api_owner_repo_ideas():
+    """Read the owner idea list (feature dreams) for a repository."""
+    repo_raw = str(request.args.get("repo_path", "") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    path = _feature_dreams_path(repo)
+    content = _read_feature_dreams(repo)
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "path": str(path),
+            "exists": path.is_file(),
+            "has_open_items": _feature_dreams_has_open_items(content),
+            "content": content,
+        }
+    )
+
+
+@app.route("/api/owner/repo-ideas/generate", methods=["POST"])
+def api_owner_repo_ideas_generate():
+    """Generate repository-wide owner ideas and persist them to FEATURE_DREAMS.md."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    owner_context = str(data.get("owner_context") or "").strip()
+    existing_markdown = str(data.get("existing_markdown") or "").strip()
+    model = str(data.get("model") or "gpt-5.2").strip() or "gpt-5.2"
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    if not existing_markdown:
+        existing_markdown = _read_feature_dreams(repo)
+    suggested, warning, scan = _suggest_repo_ideas_markdown(
+        repo=repo,
+        model=model,
+        owner_context=owner_context,
+        existing_markdown=existing_markdown,
+    )
+    path = _write_feature_dreams(repo, suggested)
+    saved = _read_text_utf8_resilient(path).strip()
+    return jsonify(
+        {
+            "status": "generated",
+            "repo_path": str(repo),
+            "path": str(path),
+            "model": model,
+            "content": saved,
+            "has_open_items": _feature_dreams_has_open_items(saved),
+            "warning": warning,
+            "scan": scan,
+        }
+    )
 
 
 # -- Owner todo/wishlist workspace --------------------------------------------

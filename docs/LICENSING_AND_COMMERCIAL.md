@@ -32,8 +32,8 @@ These files are drafts intended to accelerate planning, not legal advice.
 ## Recommended Workflow
 
 1. Generate initial licensing/commercial docs during project creation.
-2. Run `Monetization Mode` to draft options and decision cards.
-3. Use the Owner Decision Board (`approve` / `hold` / `deny`) to track choices.
+2. Run the **Repository Idea Generator (Free)** to build repo-grounded feature/packaging ideas.
+3. Optionally run `Monetization Mode` for deeper business strategy drafting.
 4. Ask legal counsel to review before public release or paid launch.
 5. Record legal sign-off in the legal-review checkpoint before publishing pricing/licensing docs.
 
