@@ -43,6 +43,11 @@ from codex_manager.gui.models import ChainConfig, ChainState, StepResult, TaskSt
 from codex_manager.gui.presets import get_prompt
 from codex_manager.history_log import HistoryLogbook
 from codex_manager.ledger import KnowledgeLedger
+from codex_manager.managed_artifacts import (
+    capture_artifact_snapshot,
+    merge_eval_result_with_artifact_delta,
+    summarize_artifact_delta,
+)
 from codex_manager.memory.vector_store import ProjectVectorMemory
 
 logger = logging.getLogger(__name__)
@@ -64,6 +69,14 @@ _MUTATING_JOB_TYPES = {
     "strategic_product_maximization",
     "visual_asset_generation",
 }
+_HISTORY_ERROR_CONTEXT_CHARS = 2000
+_CHAIN_MANAGED_ARTIFACT_GLOBS: tuple[str, ...] = (
+    ".codex_manager/logs/WISHLIST.md",
+    ".codex_manager/logs/TESTPLAN.md",
+    ".codex_manager/logs/EXPERIMENTS.md",
+    ".codex_manager/logs/RESEARCH.md",
+    ".codex_manager/logs/SCIENTIST_REPORT.md",
+)
 
 
 def _resolve_debug_log_path() -> Path | None:
@@ -342,6 +355,16 @@ class ChainExecutor:
             level=level,
             context=context or {},
         )
+
+    def _append_chain_debug_event(self, repo: Path, payload: dict[str, Any]) -> None:
+        """Append one structured debug event for chain step troubleshooting."""
+        try:
+            path = repo / ".codex_manager" / "logs" / "CHAIN_DEBUG.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            logger.warning("Could not append chain debug event: %s", exc)
 
     def _finalize_run(
         self,
@@ -1628,7 +1651,9 @@ class ChainExecutor:
                     "files_changed": cua_result.files_changed,
                     "net_lines_changed": cua_result.net_lines_changed,
                     "duration_seconds": cua_result.duration_seconds,
-                    "error_message": cua_result.error_message[:500],
+                    "error_message": self._truncate_text(
+                        cua_result.error_message, _HISTORY_ERROR_CONTEXT_CHARS
+                    ),
                 },
             )
             return cua_result
@@ -1693,6 +1718,10 @@ class ChainExecutor:
             start_head_sha = head_sha(repo)
         except Exception:
             start_head_sha = ""
+        artifact_snapshot = capture_artifact_snapshot(
+            repo,
+            extra_globs=_CHAIN_MANAGED_ARTIFACT_GLOBS,
+        )
         max_attempts = (step.max_retries + 1) if step.on_failure == "retry" else 1
 
         # Debug: log the working directory and command details
@@ -1875,6 +1904,22 @@ class ChainExecutor:
 
         # Evaluate
         eval_result = evaluator.evaluate(repo)
+        artifact_entries, artifact_insertions, artifact_deletions = summarize_artifact_delta(
+            repo,
+            artifact_snapshot,
+            extra_globs=_CHAIN_MANAGED_ARTIFACT_GLOBS,
+        )
+        artifact_merge = merge_eval_result_with_artifact_delta(eval_result, artifact_entries)
+        artifact_net = artifact_merge["insertions"] - artifact_merge["deletions"]
+        if artifact_merge["files_added"] > 0:
+            self._log(
+                "info",
+                (
+                    "Managed artifacts: "
+                    f"{artifact_merge['files_added']} files, net {artifact_net:+d} "
+                    "(counted outside git numstat)."
+                ),
+            )
         outcome_level = (
             "info" if eval_result.test_outcome.value in ("passed", "skipped") else "warn"
         )
@@ -2077,8 +2122,86 @@ class ChainExecutor:
                 "output_tokens": step_result.output_tokens,
                 "commit_sha": step_result.commit_sha,
                 "terminate_repeats": step_result.terminate_repeats,
-                "error_message": step_result.error_message[:500],
+                "error_message": self._truncate_text(
+                    step_result.error_message, _HISTORY_ERROR_CONTEXT_CHARS
+                ),
                 "output_file": str(out_file),
+            },
+        )
+        changed_preview = []
+        for entry in eval_result.changed_files[:40]:
+            changed_preview.append(
+                {
+                    "path": str(entry.get("path") or ""),
+                    "insertions": entry.get("insertions"),
+                    "deletions": entry.get("deletions"),
+                    "source": entry.get("source", "git"),
+                }
+            )
+        self._append_chain_debug_event(
+            repo,
+            {
+                "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "loop_number": loop_num,
+                "step_index": step_idx,
+                "step_name": step.name or step.job_type,
+                "job_type": step.job_type,
+                "mode": config.mode,
+                "runner": runner.name,
+                "prompt_length": len(prompt or ""),
+                "prompt_preview": self._truncate_text(prompt, 1200),
+                "run": {
+                    "success": bool(run_result.success),
+                    "exit_code": run_result.exit_code,
+                    "duration_seconds": run_result.duration_seconds,
+                    "events_count": len(run_result.events),
+                    "file_changes_count": len(run_result.file_changes),
+                    "errors": [self._truncate_text(err, 4000) for err in run_result.errors],
+                    "usage": {
+                        "input_tokens": run_result.usage.input_tokens,
+                        "output_tokens": run_result.usage.output_tokens,
+                        "total_tokens": run_result.usage.total_tokens,
+                        "model": run_result.usage.model,
+                    },
+                },
+                "git": {
+                    "start_head_sha": start_head_sha,
+                    "end_head_sha": end_head_sha,
+                    "head_advanced": head_advanced,
+                    "repo_dirty": repo_dirty,
+                    "commit_sha": commit_sha,
+                },
+                "artifact_delta": {
+                    "snapshot_files": len(artifact_snapshot),
+                    "changed_files": len(artifact_entries),
+                    "insertions": artifact_insertions,
+                    "deletions": artifact_deletions,
+                    "merged_files": artifact_merge["files_added"],
+                    "merged_net_lines": artifact_net,
+                },
+                "metrics": {
+                    "test_outcome": eval_result.test_outcome.value,
+                    "test_exit_code": eval_result.test_exit_code,
+                    "files_changed": eval_result.files_changed,
+                    "net_lines_changed": eval_result.net_lines_changed,
+                    "changed_files_total": len(eval_result.changed_files),
+                    "changed_files_preview": changed_preview,
+                },
+                "validation": {
+                    "agent_success": step_result.agent_success,
+                    "tests_validation_success": tests_validation_success,
+                    "requires_repo_delta": requires_repo_delta,
+                    "has_repo_delta": has_repo_delta,
+                    "terminate_repeats": terminate_repeats,
+                    "validation_failures": validation_failures,
+                    "validation_success": step_result.validation_success,
+                    "final_success": step_result.success,
+                },
+                "messages": {
+                    "test_summary": self._truncate_text(eval_result.test_summary, 2000),
+                    "error_message": self._truncate_text(error_message, 4000),
+                    "agent_output_excerpt": self._truncate_text(agent_output, 2000),
+                },
             },
         )
         return step_result

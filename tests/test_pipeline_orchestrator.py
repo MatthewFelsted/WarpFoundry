@@ -141,6 +141,25 @@ class _NoopRunner:
         )
 
 
+class _OwnerDocRunner:
+    name = "StubCodex"
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        repo = Path(repo_path)
+        target = repo / ".codex_manager" / "owner" / "TODO_WISHLIST.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("- [ ] Add one high-value improvement.\n", encoding="utf-8")
+        return RunResult(
+            success=True,
+            exit_code=0,
+            final_message="Created owner todo document.",
+            usage=UsageInfo(input_tokens=2, output_tokens=3, total_tokens=5),
+        )
+
+
 class _PhaseWriteRunner:
     name = "StubCodex"
     calls: ClassVar[int] = 0
@@ -742,6 +761,52 @@ def test_non_mutating_phase_noop_can_still_succeed(monkeypatch, tmp_path: Path):
     assert result.validation_success is True
     assert result.tests_passed is False
     assert result.success is True
+
+
+def test_pipeline_counts_owner_artifacts_and_persists_debug_log(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _OwnerDocRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                custom_prompt="Create owner TODO markdown.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert state.results
+    result = state.results[0]
+    assert result.success is True
+    assert result.validation_success is True
+    assert result.files_changed >= 1
+    assert result.net_lines_changed > 0
+    assert any(
+        str(entry.get("path", "")).startswith(".codex_manager/owner/")
+        for entry in result.changed_files
+    )
+
+    debug_path = repo / ".codex_manager" / "logs" / "PIPELINE_DEBUG.jsonl"
+    assert debug_path.exists()
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert debug_lines
+    payload = json.loads(debug_lines[-1])
+    assert payload["phase"] == "implementation"
+    assert payload["metrics"]["files_changed"] >= 1
 
 
 def test_pipeline_phase_marks_failed_tests_as_failure(monkeypatch, tmp_path: Path):

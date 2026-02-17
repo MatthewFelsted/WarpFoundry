@@ -82,6 +82,25 @@ class _OutputRunner:
         )
 
 
+class _OwnerDocRunner:
+    name = "StubCodex"
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        repo = Path(repo_path)
+        target = repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("- [ ] Add one standout feature.\n", encoding="utf-8")
+        return RunResult(
+            success=True,
+            exit_code=0,
+            final_message="Created FEATURE_DREAMS owner document.",
+            usage=UsageInfo(input_tokens=2, output_tokens=3, total_tokens=5),
+        )
+
+
 class _ArmStopAfterStepRunner:
     name = "StubCodex"
     executor: ClassVar[ChainExecutor | None] = None
@@ -778,6 +797,58 @@ def test_chain_keeps_discovery_noop_as_success(monkeypatch, tmp_path: Path):
     assert result.validation_success is True
     assert result.tests_passed is False
     assert result.success is True
+
+
+def test_chain_counts_owner_artifacts_and_persists_debug_log(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _OwnerDocRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Owner artifact counts",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Create owner feature dream list.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    assert executor.state.results
+    result = executor.state.results[0]
+    assert result.success is True
+    assert result.validation_success is True
+    assert result.files_changed >= 1
+    assert result.net_lines_changed > 0
+    assert any(
+        str(entry.get("path", "")).startswith(".codex_manager/owner/")
+        for entry in result.changed_files
+    )
+
+    debug_path = repo / ".codex_manager" / "logs" / "CHAIN_DEBUG.jsonl"
+    assert debug_path.exists()
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert debug_lines
+    payload = json.loads(debug_lines[-1])
+    assert payload["job_type"] == "implementation"
+    assert payload["metrics"]["files_changed"] >= 1
 
 
 def test_chain_marks_step_failed_when_tests_fail(monkeypatch, tmp_path: Path):

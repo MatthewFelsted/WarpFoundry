@@ -61,6 +61,11 @@ from codex_manager.git_tools import (
 from codex_manager.history_log import HistoryLogbook
 from codex_manager.ledger import KnowledgeLedger
 from codex_manager.memory.vector_store import ProjectVectorMemory
+from codex_manager.managed_artifacts import (
+    capture_artifact_snapshot,
+    merge_eval_result_with_artifact_delta,
+    summarize_artifact_delta,
+)
 from codex_manager.pipeline.phases import (
     PHASE_LOG_FILES,
     PhaseConfig,
@@ -90,6 +95,21 @@ _GITHUB_API_TIMEOUT_SECONDS = 20
 _GITHUB_PAT_SERVICE = "warpfoundry.github_auth"
 _GITHUB_PAT_SERVICE_LEGACY = "codex_manager.github_auth"
 _GITHUB_PAT_KEY = "pat"
+_HISTORY_ERROR_CONTEXT_CHARS = 2000
+_PIPELINE_MANAGED_ARTIFACT_GLOBS: tuple[str, ...] = (
+    ".codex_manager/logs/WISHLIST.md",
+    ".codex_manager/logs/TESTPLAN.md",
+    ".codex_manager/logs/EXPERIMENTS.md",
+    ".codex_manager/logs/RESEARCH.md",
+    ".codex_manager/logs/SCIENTIST_REPORT.md",
+)
+
+
+def _clip_text(value: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    text = str(value or "")
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
 
 
 class PipelineOrchestrator:
@@ -303,6 +323,16 @@ class PipelineOrchestrator:
             level=level,
             context=context or {},
         )
+
+    def _append_pipeline_debug_event(self, payload: dict[str, Any]) -> None:
+        """Append one structured debug event for pipeline phase troubleshooting."""
+        try:
+            path = self.tracker.path_for("PIPELINE_DEBUG.jsonl")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            logger.warning("Could not append pipeline debug event: %s", exc)
 
     def _derive_deep_research_topic(self, cycle: int) -> str:
         """Derive a compact research topic from WISHLIST context."""
@@ -3137,7 +3167,9 @@ class PipelineOrchestrator:
                                 "duration_seconds": result.duration_seconds,
                                 "commit_sha": result.commit_sha,
                                 "terminate_repeats": result.terminate_repeats,
-                                "error_message": result.error_message[:500],
+                                "error_message": _clip_text(
+                                    result.error_message, _HISTORY_ERROR_CONTEXT_CHARS
+                                ),
                             },
                         )
                         if config.science_enabled:
@@ -3307,7 +3339,10 @@ class PipelineOrchestrator:
                                             "duration_seconds": followup_result.duration_seconds,
                                             "commit_sha": followup_result.commit_sha,
                                             "terminate_repeats": followup_result.terminate_repeats,
-                                            "error_message": followup_result.error_message[:500],
+                                            "error_message": _clip_text(
+                                                followup_result.error_message,
+                                                _HISTORY_ERROR_CONTEXT_CHARS,
+                                            ),
                                             "brain_follow_up": True,
                                         },
                                     )
@@ -3695,6 +3730,15 @@ class PipelineOrchestrator:
             start_head_sha = head_sha(repo)
         except Exception:
             start_head_sha = ""
+        artifact_extra_paths: list[str] = []
+        phase_log_name = PHASE_LOG_FILES.get(phase)
+        if phase_log_name:
+            artifact_extra_paths.append(f".codex_manager/logs/{phase_log_name}")
+        artifact_snapshot = capture_artifact_snapshot(
+            repo,
+            extra_globs=_PIPELINE_MANAGED_ARTIFACT_GLOBS,
+            extra_rel_paths=artifact_extra_paths,
+        )
 
         # Run the agent
         try:
@@ -3707,7 +3751,7 @@ class PipelineOrchestrator:
                 full_auto=True,
             )
         except Exception as exc:
-            return PhaseResult(
+            phase_result = PhaseResult(
                 cycle=cycle,
                 phase=phase.value,
                 iteration=iteration,
@@ -3721,6 +3765,30 @@ class PipelineOrchestrator:
                 prompt_used=prompt[:500],
                 duration_seconds=round(time.monotonic() - phase_start, 1),
             )
+            self._append_pipeline_debug_event(
+                {
+                    "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    "cycle": cycle,
+                    "phase": phase.value,
+                    "iteration": iteration,
+                    "mode": config.mode,
+                    "runner": runner.name,
+                    "prompt_length": len(prompt or ""),
+                    "prompt_preview": _clip_text(prompt, 600),
+                    "exception": _clip_text(str(exc), 4000),
+                    "result": {
+                        "agent_success": phase_result.agent_success,
+                        "validation_success": phase_result.validation_success,
+                        "success": phase_result.success,
+                        "test_outcome": phase_result.test_outcome,
+                        "files_changed": phase_result.files_changed,
+                        "net_lines_changed": phase_result.net_lines_changed,
+                        "error_message": _clip_text(phase_result.error_message, 4000),
+                        "duration_seconds": phase_result.duration_seconds,
+                    },
+                }
+            )
+            return phase_result
 
         all_text_parts = [event.text for event in run_result.events if event.text]
         agent_output = run_result.final_message or "\n\n".join(all_text_parts)
@@ -3733,6 +3801,23 @@ class PipelineOrchestrator:
 
         # Evaluate
         eval_result = evaluator.evaluate(repo)
+        artifact_entries, artifact_insertions, artifact_deletions = summarize_artifact_delta(
+            repo,
+            artifact_snapshot,
+            extra_globs=_PIPELINE_MANAGED_ARTIFACT_GLOBS,
+            extra_rel_paths=artifact_extra_paths,
+        )
+        artifact_merge = merge_eval_result_with_artifact_delta(eval_result, artifact_entries)
+        artifact_net = artifact_merge["insertions"] - artifact_merge["deletions"]
+        if artifact_merge["files_added"] > 0:
+            self._log(
+                "info",
+                (
+                    "  Managed artifacts: "
+                    f"{artifact_merge['files_added']} files, net {artifact_net:+d} "
+                    "(counted outside git numstat)."
+                ),
+            )
         outcome_level = (
             "info" if eval_result.test_outcome.value in ("passed", "skipped") else "warn"
         )
@@ -3845,7 +3930,7 @@ class PipelineOrchestrator:
             )
 
         duration = time.monotonic() - phase_start
-        return PhaseResult(
+        phase_result = PhaseResult(
             cycle=cycle,
             phase=phase.value,
             iteration=iteration,
@@ -3869,6 +3954,81 @@ class PipelineOrchestrator:
             terminate_repeats=terminate_repeats,
             agent_used=runner.name,
         )
+        changed_preview = []
+        for entry in eval_result.changed_files[:40]:
+            changed_preview.append(
+                {
+                    "path": str(entry.get("path") or ""),
+                    "insertions": entry.get("insertions"),
+                    "deletions": entry.get("deletions"),
+                    "source": entry.get("source", "git"),
+                }
+            )
+        self._append_pipeline_debug_event(
+            {
+                "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "cycle": cycle,
+                "phase": phase.value,
+                "iteration": iteration,
+                "mode": config.mode,
+                "runner": runner.name,
+                "prompt_length": len(prompt or ""),
+                "prompt_preview": _clip_text(prompt, 1200),
+                "run": {
+                    "success": bool(run_result.success),
+                    "exit_code": run_result.exit_code,
+                    "duration_seconds": run_result.duration_seconds,
+                    "events_count": len(run_result.events),
+                    "file_changes_count": len(run_result.file_changes),
+                    "errors": [_clip_text(err, 4000) for err in run_result.errors],
+                    "usage": {
+                        "input_tokens": run_result.usage.input_tokens,
+                        "output_tokens": run_result.usage.output_tokens,
+                        "total_tokens": run_result.usage.total_tokens,
+                        "model": run_result.usage.model,
+                    },
+                },
+                "git": {
+                    "start_head_sha": start_head_sha,
+                    "end_head_sha": end_head_sha,
+                    "head_advanced": head_advanced,
+                    "repo_dirty": repo_dirty,
+                    "commit_sha": commit_sha,
+                },
+                "artifact_delta": {
+                    "snapshot_files": len(artifact_snapshot),
+                    "changed_files": len(artifact_entries),
+                    "insertions": artifact_insertions,
+                    "deletions": artifact_deletions,
+                    "merged_files": artifact_merge["files_added"],
+                    "merged_net_lines": artifact_net,
+                },
+                "metrics": {
+                    "test_outcome": eval_result.test_outcome.value,
+                    "test_exit_code": eval_result.test_exit_code,
+                    "files_changed": eval_result.files_changed,
+                    "net_lines_changed": eval_result.net_lines_changed,
+                    "changed_files_total": len(eval_result.changed_files),
+                    "changed_files_preview": changed_preview,
+                },
+                "validation": {
+                    "agent_success": phase_result.agent_success,
+                    "tests_validation_success": tests_validation_success,
+                    "requires_repo_delta": requires_repo_delta,
+                    "has_repo_delta": has_repo_delta,
+                    "terminate_repeats": terminate_repeats,
+                    "validation_failures": validation_failures,
+                    "validation_success": phase_result.validation_success,
+                    "final_success": phase_result.success,
+                },
+                "messages": {
+                    "test_summary": _clip_text(eval_result.test_summary, 2000),
+                    "error_message": _clip_text(error_message, 4000),
+                    "agent_output_excerpt": _clip_text(agent_output, 2000),
+                },
+            }
+        )
+        return phase_result
 
     def _run_agent_with_keepalive(
         self,
