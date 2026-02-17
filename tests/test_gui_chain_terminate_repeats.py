@@ -851,6 +851,97 @@ def test_chain_counts_owner_artifacts_and_persists_debug_log(monkeypatch, tmp_pa
     assert payload["metrics"]["files_changed"] >= 1
 
 
+def test_chain_prompt_logging_is_metadata_only_by_default(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(chain_module, "CodexRunner", _OutputRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    secret = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz123456"
+    config = ChainConfig(
+        name="Prompt safety default",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Ideation",
+                job_type="ideation",
+                prompt_mode="custom",
+                custom_prompt=f"Inspect this project with api_key={secret}.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    logged_messages = [entry["message"] for entry in list(executor.log_queue.queue)]
+    joined = "\n".join(logged_messages)
+    assert "Prompt metadata: " in joined
+    assert secret not in joined
+
+    debug_path = repo / ".codex_manager" / "logs" / "CHAIN_DEBUG.jsonl"
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    payload = json.loads(debug_lines[-1])
+    assert payload["prompt_preview"].startswith("[metadata-only] ")
+    assert payload["prompt_metadata"]["redaction_hits"] >= 1
+    assert payload["prompt_length"] == payload["prompt_metadata"]["length_chars"]
+    assert payload["prompt_sha256"] == payload["prompt_metadata"]["sha256"]
+    assert secret not in json.dumps(payload)
+
+
+def test_chain_prompt_logging_debug_opt_in_shows_raw_prompt(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setenv("CODEX_MANAGER_PROMPT_DEBUG", "1")
+    monkeypatch.setattr(chain_module, "CodexRunner", _OutputRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    secret = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz123456"
+    config = ChainConfig(
+        name="Prompt debug opt-in",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Ideation",
+                job_type="ideation",
+                prompt_mode="custom",
+                custom_prompt=f"Use api_key={secret} in this dry run.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    executor.config = config
+    executor.state.running = True
+    executor._run_loop()
+
+    logged_messages = [entry["message"] for entry in list(executor.log_queue.queue)]
+    assert any(secret in message for message in logged_messages)
+
+    debug_path = repo / ".codex_manager" / "logs" / "CHAIN_DEBUG.jsonl"
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    payload = json.loads(debug_lines[-1])
+    assert secret in payload["prompt_preview"]
+
+
 def test_chain_marks_step_failed_when_tests_fail(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)

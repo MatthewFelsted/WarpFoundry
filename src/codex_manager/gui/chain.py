@@ -49,6 +49,11 @@ from codex_manager.managed_artifacts import (
     summarize_artifact_delta,
 )
 from codex_manager.memory.vector_store import ProjectVectorMemory
+from codex_manager.prompt_logging import (
+    format_prompt_log_line,
+    format_prompt_preview,
+    prompt_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1232,7 +1237,12 @@ class ChainExecutor:
                                                     "step_index": step_idx,
                                                     "step_rep": step_rep,
                                                     "action": decision.action,
-                                                    "prompt_preview": followup_prompt[:400],
+                                                    "prompt_preview": format_prompt_preview(
+                                                        followup_prompt
+                                                    ),
+                                                    "prompt_metadata": prompt_metadata(
+                                                        followup_prompt
+                                                    ),
                                                 },
                                             )
                                             self.state.stop_reason = "brain_needs_input"
@@ -1250,7 +1260,12 @@ class ChainExecutor:
                                                 "step_index": step_idx,
                                                 "step_rep": step_rep,
                                                 "action": decision.action,
-                                                "prompt_preview": followup_prompt[:400],
+                                                "prompt_preview": format_prompt_preview(
+                                                    followup_prompt
+                                                ),
+                                                "prompt_metadata": prompt_metadata(
+                                                    followup_prompt
+                                                ),
                                             },
                                         )
                                         self.state.current_step_name = (
@@ -1710,7 +1725,7 @@ class ChainExecutor:
         # and what files from prior steps are available to read.
         prompt = self._append_file_instructions(prompt, repo, config, step, step_idx)
 
-        self._log("info", f"Prompt: {prompt[:120]}...")
+        self._log("info", format_prompt_log_line(prompt))
 
         step_start = time.monotonic()
         start_head_sha = ""
@@ -2138,6 +2153,7 @@ class ChainExecutor:
                     "source": entry.get("source", "git"),
                 }
             )
+        prompt_meta = prompt_metadata(prompt)
         self._append_chain_debug_event(
             repo,
             {
@@ -2148,8 +2164,11 @@ class ChainExecutor:
                 "job_type": step.job_type,
                 "mode": config.mode,
                 "runner": runner.name,
-                "prompt_length": len(prompt or ""),
-                "prompt_preview": self._truncate_text(prompt, 1200),
+                "prompt_length": prompt_meta["length_chars"],
+                "prompt_sha256": prompt_meta["sha256"],
+                "prompt_redaction_hits": prompt_meta["redaction_hits"],
+                "prompt_preview": format_prompt_preview(prompt),
+                "prompt_metadata": prompt_meta,
                 "run": {
                     "success": bool(run_result.success),
                     "exit_code": run_result.exit_code,

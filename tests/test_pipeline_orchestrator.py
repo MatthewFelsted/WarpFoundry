@@ -809,6 +809,95 @@ def test_pipeline_counts_owner_artifacts_and_persists_debug_log(monkeypatch, tmp
     assert payload["metrics"]["files_changed"] >= 1
 
 
+def test_pipeline_prompt_logging_is_metadata_only_by_default(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    secret = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz123456"
+    captured_logs: list[str] = []
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt=f"Analyze this repo with api_key={secret}.",
+            )
+        ],
+    )
+
+    PipelineOrchestrator(
+        repo_path=repo,
+        config=cfg,
+        log_callback=lambda _level, message: captured_logs.append(message),
+    ).run()
+
+    joined = "\n".join(captured_logs)
+    assert "Prompt metadata: " in joined
+    assert secret not in joined
+
+    debug_path = repo / ".codex_manager" / "logs" / "PIPELINE_DEBUG.jsonl"
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    payload = json.loads(debug_lines[-1])
+    assert payload["prompt_preview"].startswith("[metadata-only] ")
+    assert payload["prompt_metadata"]["redaction_hits"] >= 1
+    assert payload["prompt_length"] == payload["prompt_metadata"]["length_chars"]
+    assert payload["prompt_sha256"] == payload["prompt_metadata"]["sha256"]
+    assert secret not in json.dumps(payload)
+
+
+def test_pipeline_prompt_logging_debug_opt_in_shows_raw_prompt(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    monkeypatch.setenv("CODEX_MANAGER_PROMPT_DEBUG", "1")
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(orchestrator_module, "RepoEvaluator", _SpyEvaluator)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    secret = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz123456"
+    captured_logs: list[str] = []
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt=f"Use api_key={secret} for troubleshooting.",
+            )
+        ],
+    )
+
+    PipelineOrchestrator(
+        repo_path=repo,
+        config=cfg,
+        log_callback=lambda _level, message: captured_logs.append(message),
+    ).run()
+
+    assert any(secret in message for message in captured_logs)
+
+    debug_path = repo / ".codex_manager" / "logs" / "PIPELINE_DEBUG.jsonl"
+    debug_lines = [line for line in debug_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    payload = json.loads(debug_lines[-1])
+    assert secret in payload["prompt_preview"]
+
+
 def test_pipeline_phase_marks_failed_tests_as_failure(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)

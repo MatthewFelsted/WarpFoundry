@@ -8078,9 +8078,9 @@ def api_save_config():
 def api_load_config():
     data = request.get_json(silent=True) or {}
     raw_name = str(data.get("name", "") or "").strip()
-    safe_name = _sanitize_config_name(raw_name)
-    if not raw_name or safe_name != raw_name:
+    if not _is_valid_config_name(raw_name):
         return jsonify({"error": "Invalid config name"}), 400
+    safe_name = raw_name
 
     CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
     root = CONFIGS_DIR.resolve()

@@ -1465,7 +1465,18 @@ def test_configs_save_and_load_roundtrip(client, monkeypatch, tmp_path: Path):
     assert load_data == payload
 
 
-@pytest.mark.parametrize("name", ["../secret", "..\\secret", "secret.json", ""])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../secret",
+        "..\\secret",
+        "..\\nested/secret",
+        "/etc/passwd",
+        "C:\\Windows\\System32\\drivers\\etc\\hosts",
+        "secret.json",
+        "",
+    ],
+)
 def test_configs_load_rejects_invalid_names(client, monkeypatch, tmp_path: Path, name: str):
     cfg_dir = tmp_path / "chains"
     monkeypatch.setattr(gui_app_module, "CONFIGS_DIR", cfg_dir)

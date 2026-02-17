@@ -81,6 +81,11 @@ from codex_manager.preflight import (
 from codex_manager.preflight import (
     repo_worktree_counts as shared_repo_worktree_counts,
 )
+from codex_manager.prompt_logging import (
+    format_prompt_log_line,
+    format_prompt_preview,
+    prompt_metadata,
+)
 from codex_manager.prompts.catalog import PromptCatalog, get_catalog
 from codex_manager.research import DeepResearchSettings, run_native_deep_research
 from codex_manager.schemas import EvalResult
@@ -3014,7 +3019,10 @@ class PipelineOrchestrator:
                                     ),
                                 )
 
-                            self._log("info", f"  Prompt: {full_prompt[:120]}...")
+                            self._log(
+                                "info",
+                                f"  {format_prompt_log_line(full_prompt)}",
+                            )
 
                             # Execute
                             agent_key = (phase_cfg.agent or "").strip().lower()
@@ -3253,7 +3261,10 @@ class PipelineOrchestrator:
                                             "phase": phase.value,
                                             "iteration": iteration,
                                             "action": decision.action,
-                                            "prompt_preview": followup_prompt[:400],
+                                            "prompt_preview": format_prompt_preview(
+                                                followup_prompt
+                                            ),
+                                            "prompt_metadata": prompt_metadata(followup_prompt),
                                         },
                                     )
                                     followup_result = self._execute_phase(
@@ -3741,6 +3752,7 @@ class PipelineOrchestrator:
         )
 
         # Run the agent
+        prompt_meta = prompt_metadata(prompt)
         try:
             run_result = self._run_agent_with_keepalive(
                 runner,
@@ -3773,8 +3785,11 @@ class PipelineOrchestrator:
                     "iteration": iteration,
                     "mode": config.mode,
                     "runner": runner.name,
-                    "prompt_length": len(prompt or ""),
-                    "prompt_preview": _clip_text(prompt, 600),
+                    "prompt_length": prompt_meta["length_chars"],
+                    "prompt_sha256": prompt_meta["sha256"],
+                    "prompt_redaction_hits": prompt_meta["redaction_hits"],
+                    "prompt_preview": format_prompt_preview(prompt),
+                    "prompt_metadata": prompt_meta,
                     "exception": _clip_text(str(exc), 4000),
                     "result": {
                         "agent_success": phase_result.agent_success,
@@ -3972,8 +3987,11 @@ class PipelineOrchestrator:
                 "iteration": iteration,
                 "mode": config.mode,
                 "runner": runner.name,
-                "prompt_length": len(prompt or ""),
-                "prompt_preview": _clip_text(prompt, 1200),
+                "prompt_length": prompt_meta["length_chars"],
+                "prompt_sha256": prompt_meta["sha256"],
+                "prompt_redaction_hits": prompt_meta["redaction_hits"],
+                "prompt_preview": format_prompt_preview(prompt),
+                "prompt_metadata": prompt_meta,
                 "run": {
                     "success": bool(run_result.success),
                     "exit_code": run_result.exit_code,
