@@ -1,7 +1,7 @@
 ﻿# WarpFoundry
 
 ![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 ![GUI + CLI](https://img.shields.io/badge/Interface-GUI%20%2B%20CLI-0ea5e9)
 
 **Software that upgrades itself — and everything else in your codebase.**
@@ -241,4 +241,4 @@ python -m ruff format --check src tests
 
 ## License
 
-MIT (declared in [`pyproject.toml`](pyproject.toml)).
+Apache 2.0 (declared in [`pyproject.toml`](pyproject.toml)).
