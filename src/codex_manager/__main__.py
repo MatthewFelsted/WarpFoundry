@@ -44,6 +44,126 @@ DISCOVER_CHAIN_FOCUS = (
     "quality, user trust, and repeat usage."
 )
 
+STRATEGIC_FOCUS_GUIDANCE: dict[str, str] = {
+    "docs": "Improve onboarding clarity and reduce ambiguity in day-one usage.",
+    "dx": "Reduce contributor friction and make changes easier to ship safely.",
+    "growth": "Increase activation, retention, and repeat usage momentum.",
+    "performance": "Speed up critical user workflows and cut avoidable latency.",
+    "reliability": "Eliminate failure paths, regressions, and fragile behavior first.",
+    "security": "Harden trust boundaries and reduce data or execution risk.",
+    "testing": "Increase confidence with targeted regression and edge-case coverage.",
+    "ux": "Make key journeys clearer, faster, and easier to complete correctly.",
+}
+
+
+def _extract_requested_followups(repo: Path, *, limit: int = 3) -> list[str]:
+    """Return unresolved requested follow-up items when present."""
+    todo_path = repo / "docs" / "REQUESTED_FEATURES_TODO.md"
+    if not todo_path.is_file():
+        return []
+    try:
+        lines = todo_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+    in_section = False
+    items: list[str] = []
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not in_section:
+            if line.lower().startswith("## remaining follow-ups"):
+                in_section = True
+            continue
+
+        if line.startswith("## "):
+            break
+        if not line.startswith("- "):
+            continue
+
+        item = line[2:].strip()
+        if not item:
+            continue
+        lowered = item.lower()
+        if lowered.startswith("none at the moment") or lowered == "none":
+            return []
+
+        items.append(item)
+        if len(items) >= limit:
+            break
+
+    return items
+
+
+def _normalize_strategic_focus_values(focus_values: list[str] | None) -> list[str]:
+    """Deduplicate and normalize strategic focus options while preserving order."""
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in focus_values or []:
+        key = str(value or "").strip().lower()
+        if not key or key in seen:
+            continue
+        if key not in STRATEGIC_FOCUS_GUIDANCE:
+            continue
+        seen.add(key)
+        normalized.append(key)
+    return normalized
+
+
+def _build_strategic_goal(
+    *,
+    repo: Path,
+    goal_extra: str = "",
+    focus_values: list[str] | None = None,
+) -> str:
+    """Build a repository-aware strategic goal prompt."""
+    sections: list[str] = [STRATEGIC_PRODUCT_MAXIMIZATION_GOAL]
+    repo_name = repo.name.lower()
+    if "discover" in repo_name and "chain" in repo_name:
+        sections.append(DISCOVER_CHAIN_FOCUS)
+
+    normalized_focus = _normalize_strategic_focus_values(focus_values)
+    if normalized_focus:
+        focus_lines = [
+            f"- {focus}: {STRATEGIC_FOCUS_GUIDANCE[focus]}" for focus in normalized_focus
+        ]
+        sections.append("Strategic focus priorities:\n" + "\n".join(focus_lines))
+
+    context_lines: list[str] = []
+    todo_wishlist = repo / ".codex_manager" / "owner" / "TODO_WISHLIST.md"
+    if todo_wishlist.is_file():
+        context_lines.append(
+            "Use .codex_manager/owner/TODO_WISHLIST.md as the primary execution backlog. "
+            "If items are stale or vague, refine before implementing."
+        )
+
+    feature_dreams = repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md"
+    if feature_dreams.is_file():
+        context_lines.append(
+            "Use .codex_manager/owner/FEATURE_DREAMS.md as secondary input when TODO "
+            "backlog quality is insufficient."
+        )
+
+    requested_followups = _extract_requested_followups(repo)
+    if requested_followups:
+        context_lines.append(
+            "Review unresolved follow-ups from docs/REQUESTED_FEATURES_TODO.md when they "
+            "align with the top-ranked opportunity."
+        )
+
+    if context_lines:
+        sections.append("Repository-specific context:\n" + "\n".join(f"- {line}" for line in context_lines))
+    if requested_followups:
+        sections.append(
+            "Requested follow-ups to consider:\n"
+            + "\n".join(f"- {item}" for item in requested_followups)
+        )
+
+    extra = goal_extra.strip()
+    if extra:
+        sections.append(f"Additional priority context:\n{extra}")
+
+    return "\n\n".join(sections)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build and return the command-line parser for all supported modes."""
@@ -203,6 +323,16 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="",
         help="Optional extra context appended to the strategic goal.",
+    )
+    strategic_p.add_argument(
+        "--focus",
+        action="append",
+        choices=sorted(STRATEGIC_FOCUS_GUIDANCE),
+        default=[],
+        help=(
+            "Optional product focus area. Repeat for multiple priorities "
+            "(reliability, ux, performance, growth, security, testing, dx, docs)."
+        ),
     )
     strategic_p.add_argument(
         "--skip-preflight",
@@ -625,17 +755,15 @@ def _run_goal_loop(
 
 def _run_strategic(args: argparse.Namespace) -> int:
     """Run the classic loop with a built-in strategic goal template."""
-    goal = STRATEGIC_PRODUCT_MAXIMIZATION_GOAL
-    repo_name = Path(args.repo).name.lower()
-    if "discover" in repo_name and "chain" in repo_name:
-        goal = f"{goal} {DISCOVER_CHAIN_FOCUS}"
-
-    extra = (args.goal_extra or "").strip()
-    if extra:
-        goal = f"{goal}\n\nAdditional priority context:\n{extra}"
+    repo = Path(args.repo).resolve()
+    goal = _build_strategic_goal(
+        repo=repo,
+        goal_extra=str(getattr(args, "goal_extra", "") or ""),
+        focus_values=list(getattr(args, "focus", []) or []),
+    )
 
     return _run_goal_loop(
-        repo_path=args.repo,
+        repo_path=str(repo),
         goal=goal,
         mode=args.mode,
         rounds=args.rounds,

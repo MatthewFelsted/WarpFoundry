@@ -99,6 +99,22 @@ def test_pipeline_parser_accepts_binary_overrides() -> None:
     assert args.claude_bin == "claude-dev"
 
 
+def test_strategic_parser_accepts_focus_repetitions() -> None:
+    parser = main_module._build_parser()
+    args = parser.parse_args(
+        [
+            "strategic",
+            "--repo",
+            "C:/repo",
+            "--focus",
+            "reliability",
+            "--focus",
+            "ux",
+        ]
+    )
+    assert args.focus == ["reliability", "ux"]
+
+
 def test_gui_parser_accepts_pipeline_resume_checkpoint() -> None:
     parser = main_module._build_parser()
     args = parser.parse_args(
@@ -354,6 +370,7 @@ def test_run_strategic_uses_builtin_goal(monkeypatch, capsys, tmp_path: Path) ->
         codex_bin="codex-strat",
         timeout=50,
         goal_extra="Prioritize user retention instrumentation.",
+        focus=["reliability", "ux"],
     )
     rc = main_module._run_strategic(args)
     captured = capsys.readouterr()
@@ -364,8 +381,68 @@ def test_run_strategic_uses_builtin_goal(monkeypatch, capsys, tmp_path: Path) ->
     goal = str(StubLoop.init_kwargs["goal"])
     assert "STRATEGIC PRODUCT MAXIMIZATION MODE" in goal
     assert "Discover Chain" in goal
+    assert "Strategic focus priorities" in goal
+    assert "- reliability:" in goal
+    assert "- ux:" in goal
     assert "Prioritize user retention instrumentation." in goal
     assert "WarpFoundry - Run Summary" in captured.out
+
+
+def test_extract_requested_followups_returns_items(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    docs_dir = repo / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "REQUESTED_FEATURES_TODO.md").write_text(
+        "# Requested Features TODO\n\n"
+        "## Remaining follow-ups (backlog)\n"
+        "- Improve first-run diagnostics in low-connectivity environments.\n"
+        "- Add a safer migration guide for existing codex_manager users.\n"
+        "- Expand examples for strategic mode focus flags.\n",
+        encoding="utf-8",
+    )
+
+    followups = main_module._extract_requested_followups(repo)
+    assert followups == [
+        "Improve first-run diagnostics in low-connectivity environments.",
+        "Add a safer migration guide for existing codex_manager users.",
+        "Expand examples for strategic mode focus flags.",
+    ]
+
+
+def test_build_strategic_goal_includes_repo_context(tmp_path: Path) -> None:
+    repo = tmp_path / "discover-chain"
+    (repo / ".codex_manager" / "owner").mkdir(parents=True)
+    (repo / "docs").mkdir(parents=True)
+    (repo / ".codex_manager" / "owner" / "TODO_WISHLIST.md").write_text(
+        "- [ ] Example\n",
+        encoding="utf-8",
+    )
+    (repo / ".codex_manager" / "owner" / "FEATURE_DREAMS.md").write_text(
+        "- [ ] Example\n",
+        encoding="utf-8",
+    )
+    (repo / "docs" / "REQUESTED_FEATURES_TODO.md").write_text(
+        "# Requested Features TODO\n\n"
+        "## Remaining follow-ups (backlog)\n"
+        "- Improve first-run setup diagnostics.\n",
+        encoding="utf-8",
+    )
+
+    goal = main_module._build_strategic_goal(
+        repo=repo,
+        goal_extra="Protect onboarding quality.",
+        focus_values=["reliability", "ux", "reliability"],
+    )
+
+    assert "STRATEGIC PRODUCT MAXIMIZATION MODE" in goal
+    assert "Discover Chain" in goal
+    assert goal.count("- reliability:") == 1
+    assert "- ux:" in goal
+    assert ".codex_manager/owner/TODO_WISHLIST.md" in goal
+    assert ".codex_manager/owner/FEATURE_DREAMS.md" in goal
+    assert "Requested follow-ups to consider" in goal
+    assert "Improve first-run setup diagnostics." in goal
+    assert "Protect onboarding quality." in goal
 
 
 def test_run_pipeline_validates_repo_and_runs_orchestrator(

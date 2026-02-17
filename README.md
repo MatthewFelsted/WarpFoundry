@@ -151,7 +151,7 @@ When a run stops, the Execution panel now shows a `Why it stopped` card with act
 - GUI: `warpfoundry gui`
 - Pipeline: `warpfoundry pipeline --repo <path>`
 - Goal loop: `warpfoundry --repo <path> --goal "<goal>"`
-- Strategic loop: `warpfoundry strategic --repo <path>`
+- Strategic loop: `warpfoundry strategic --repo <path> [--focus reliability --focus ux]`
 - Setup diagnostics: `warpfoundry doctor --repo <path>`
 - Visual test: `warpfoundry visual-test --url <url>`
 - Prompt tools: `warpfoundry list-prompts`, `warpfoundry optimize-prompts`, `warpfoundry list-recipes`
@@ -163,6 +163,7 @@ When a run stops, the Execution panel now shows a `Why it stopped` card with act
 - GUI: choose recipe `Strategic Product Max` in Autopilot mode.
 - Step type: `Strategic Product Maximization` is available in the chain builder.
 - CLI shortcut example for Discover Chain: `warpfoundry strategic --repo C:\path\to\discover-chain --rounds 6 --mode dry-run`
+- Optional strategic priority targeting: add `--focus` one or more times (`reliability`, `ux`, `performance`, `growth`, `security`, `testing`, `dx`, `docs`).
 
 ---
 
@@ -222,4 +223,3 @@ The `test_encoding_hygiene.py` test enforces this guardrail in CI.
 ## License
 
 MIT
-

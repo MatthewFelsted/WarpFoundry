@@ -72,6 +72,7 @@ warpfoundry strategic --repo <path> [options]
 
 Runs the classic loop with a built-in Strategic Product Maximization goal.
 When the repo path name includes both `discover` and `chain`, extra Discover Chain focus is appended automatically.
+When repo artifacts exist, strategic mode also injects context from owner backlog files and unresolved requested follow-ups.
 
 | Option | Default |
 |---|---|
@@ -81,7 +82,10 @@ When the repo path name includes both `discover` and `chain`, extra Discover Cha
 | `--codex-bin` | `codex` |
 | `--timeout` | `600` |
 | `--goal-extra` | empty |
+| `--focus` | empty (repeatable) |
 | `--skip-preflight` | false |
+
+`--focus` accepts one or more values: `reliability`, `ux`, `performance`, `growth`, `security`, `testing`, `dx`, `docs`.
 
 ## Subcommand: `optimize-prompts`
 
@@ -148,6 +152,7 @@ Runs setup diagnostics before a run. Returns exit code `0` when ready, `1` when 
 ```bash
 warpfoundry --repo /repo --goal "Increase test coverage" --rounds 3 --mode dry-run
 warpfoundry strategic --repo /repo --mode dry-run --rounds 6
+warpfoundry strategic --repo /repo --focus reliability --focus ux --goal-extra "Prioritize first-run completion."
 warpfoundry doctor --repo /repo --agents codex,claude_code
 warpfoundry pipeline --repo /repo --mode apply --cycles 2 --brain --brain-model gpt-5.2
 warpfoundry pipeline --repo /repo --agent claude_code --claude-bin /usr/local/bin/claude
