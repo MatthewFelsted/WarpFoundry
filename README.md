@@ -172,6 +172,7 @@ warpfoundry doctor --repo /path/to/repo
 warpfoundry --repo /path/to/repo --goal "Improve tests and docs" --mode dry-run --rounds 2
 warpfoundry strategic --repo /path/to/repo --focus reliability --focus ux
 warpfoundry pipeline --repo /path/to/repo --mode dry-run --cycles 1
+warpfoundry pipeline --repo /path/to/repo --resume-state
 warpfoundry github-actions --repo /path/to/repo --branch main
 warpfoundry list-recipes
 warpfoundry visual-test --url http://localhost:5088

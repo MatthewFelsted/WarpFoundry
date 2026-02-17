@@ -45,10 +45,15 @@ warpfoundry gui [--port 5088] [--no-browser]
 
 ```bash
 warpfoundry pipeline --repo <path> [options]
+warpfoundry pipeline --resume-checkpoint <path>
+warpfoundry pipeline --repo <path> --resume-state
 ```
 
 | Option | Default |
 |---|---|
+| `--repo` | empty (required unless resume flags are used) |
+| `--resume-checkpoint` | empty |
+| `--resume-state` | false |
 | `--mode` | `dry-run` |
 | `--cycles` | `3` |
 | `--science` | false |

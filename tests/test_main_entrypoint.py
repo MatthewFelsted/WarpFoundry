@@ -106,6 +106,21 @@ def test_pipeline_parser_accepts_binary_overrides() -> None:
     assert args.claude_bin == "claude-dev"
 
 
+def test_pipeline_parser_accepts_resume_flags() -> None:
+    parser = main_module._build_parser()
+    args = parser.parse_args(
+        [
+            "pipeline",
+            "--resume-checkpoint",
+            "C:/tmp/pipeline_resume.json",
+            "--resume-state",
+        ]
+    )
+    assert args.repo == ""
+    assert args.resume_checkpoint == "C:/tmp/pipeline_resume.json"
+    assert args.resume_state is True
+
+
 def test_github_actions_parser_accepts_repeated_branches() -> None:
     parser = main_module._build_parser()
     args = parser.parse_args(
@@ -504,7 +519,14 @@ def test_run_pipeline_validates_repo_and_runs_orchestrator(
     class StubPipeline:
         last_instance: StubPipeline | None = None
 
-        def __init__(self, repo_path: Path, config):
+        def __init__(
+            self,
+            repo_path: Path,
+            config,
+            *,
+            resume_cycle: int = 1,
+            resume_phase_index: int = 0,
+        ):
             self.repo_path = repo_path
             self.config = config
             self.__class__.last_instance = self
@@ -598,7 +620,14 @@ def test_run_pipeline_preflight_uses_selected_agent(monkeypatch, tmp_path: Path)
         return True
 
     class StubPipeline:
-        def __init__(self, repo_path: Path, config):
+        def __init__(
+            self,
+            repo_path: Path,
+            config,
+            *,
+            resume_cycle: int = 1,
+            resume_phase_index: int = 0,
+        ):
             self.repo_path = repo_path
             self.config = config
 
@@ -638,6 +667,238 @@ def test_run_pipeline_preflight_uses_selected_agent(monkeypatch, tmp_path: Path)
     assert captured_guard_args["agents"] == ["claude_code"]
     assert captured_guard_args["codex_bin"] == "codex-custom"
     assert captured_guard_args["claude_bin"] == "claude-custom"
+
+
+def test_run_pipeline_resumes_from_checkpoint_payload(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "repo_path": str(repo),
+                "config": {
+                    "mode": "apply",
+                    "max_cycles": 4,
+                    "agent": "claude_code",
+                    "codex_binary": "codex-from-checkpoint",
+                    "claude_binary": "claude-from-checkpoint",
+                    "brain_enabled": True,
+                },
+                "resume_cycle": 3,
+                "resume_phase_index": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured_guard_args: dict[str, object] = {}
+
+    def _fake_guard(**kwargs):
+        captured_guard_args.update(kwargs)
+        return True
+
+    class StubPipeline:
+        init_kwargs: ClassVar[dict[str, object]] = {}
+
+        def __init__(
+            self,
+            repo_path: Path,
+            config,
+            *,
+            resume_cycle: int = 1,
+            resume_phase_index: int = 0,
+        ):
+            self.__class__.init_kwargs = {
+                "repo_path": repo_path,
+                "config": config,
+                "resume_cycle": resume_cycle,
+                "resume_phase_index": resume_phase_index,
+            }
+
+        def run(self):
+            return SimpleNamespace(
+                total_cycles_completed=1,
+                total_phases_completed=1,
+                stop_reason="done",
+                total_tokens=0,
+                elapsed_seconds=0.0,
+                results=[],
+            )
+
+    monkeypatch.setattr(main_module, "_print_cli_preflight_guard", _fake_guard)
+    monkeypatch.setattr("codex_manager.pipeline.PipelineOrchestrator", StubPipeline)
+
+    args = argparse.Namespace(
+        repo="",
+        mode="dry-run",
+        cycles=1,
+        science=False,
+        brain=False,
+        brain_model="gpt-5.2",
+        agent="codex",
+        codex_bin="codex-cli",
+        claude_bin="claude-cli",
+        test_cmd=None,
+        timeout=60,
+        max_tokens=1000,
+        max_time=10,
+        local_only=False,
+        skip_preflight=False,
+        resume_checkpoint=str(checkpoint),
+        resume_state=False,
+    )
+
+    assert main_module._run_pipeline(args) == 0
+    out = capsys.readouterr().out
+
+    assert "Resuming from checkpoint" in out
+    assert StubPipeline.init_kwargs["repo_path"] == repo.resolve()
+    assert StubPipeline.init_kwargs["resume_cycle"] == 3
+    assert StubPipeline.init_kwargs["resume_phase_index"] == 2
+    resumed_config = StubPipeline.init_kwargs["config"]
+    assert resumed_config.mode == "apply"
+    assert resumed_config.agent == "claude_code"
+    assert resumed_config.codex_binary == "codex-from-checkpoint"
+    assert resumed_config.claude_binary == "claude-from-checkpoint"
+    assert captured_guard_args["agents"] == ["claude_code"]
+    assert captured_guard_args["codex_bin"] == "codex-from-checkpoint"
+    assert captured_guard_args["claude_bin"] == "claude-from-checkpoint"
+    assert checkpoint.exists() is False
+
+
+def test_run_pipeline_resume_state_uses_repo_default_checkpoint(
+    monkeypatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    checkpoint = repo / ".codex_manager" / "state" / "pipeline_resume.json"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "repo_path": str(repo),
+                "config": {
+                    "mode": "dry-run",
+                    "max_cycles": 2,
+                    "agent": "codex",
+                },
+                "resume_cycle": 2,
+                "resume_phase_index": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class StubPipeline:
+        init_kwargs: ClassVar[dict[str, object]] = {}
+
+        def __init__(
+            self,
+            repo_path: Path,
+            config,
+            *,
+            resume_cycle: int = 1,
+            resume_phase_index: int = 0,
+        ):
+            self.__class__.init_kwargs = {
+                "repo_path": repo_path,
+                "resume_cycle": resume_cycle,
+                "resume_phase_index": resume_phase_index,
+                "config": config,
+            }
+
+        def run(self):
+            return SimpleNamespace(
+                total_cycles_completed=0,
+                total_phases_completed=0,
+                stop_reason="done",
+                total_tokens=0,
+                elapsed_seconds=0.0,
+                results=[],
+            )
+
+    monkeypatch.setattr(main_module, "_print_cli_preflight_guard", lambda **_kwargs: True)
+    monkeypatch.setattr("codex_manager.pipeline.PipelineOrchestrator", StubPipeline)
+
+    args = argparse.Namespace(
+        repo=str(repo),
+        mode="apply",
+        cycles=5,
+        science=True,
+        brain=True,
+        brain_model="gpt-5.2",
+        agent="claude_code",
+        codex_bin="codex-cli",
+        claude_bin="claude-cli",
+        test_cmd="pytest -q",
+        timeout=60,
+        max_tokens=1000,
+        max_time=10,
+        local_only=False,
+        skip_preflight=False,
+        resume_checkpoint="",
+        resume_state=True,
+    )
+
+    assert main_module._run_pipeline(args) == 0
+    assert StubPipeline.init_kwargs["repo_path"] == repo.resolve()
+    assert StubPipeline.init_kwargs["resume_cycle"] == 2
+    assert StubPipeline.init_kwargs["resume_phase_index"] == 1
+    assert StubPipeline.init_kwargs["config"].mode == "dry-run"
+    assert checkpoint.exists() is False
+
+
+def test_run_pipeline_resume_checkpoint_rejects_repo_mismatch(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    repo_a = tmp_path / "repo-a"
+    repo_b = tmp_path / "repo-b"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "repo_path": str(repo_a),
+                "config": {"mode": "dry-run", "max_cycles": 1, "agent": "codex"},
+                "resume_cycle": 1,
+                "resume_phase_index": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(main_module, "_print_cli_preflight_guard", lambda **_kwargs: True)
+
+    args = argparse.Namespace(
+        repo=str(repo_b),
+        mode="dry-run",
+        cycles=1,
+        science=False,
+        brain=False,
+        brain_model="gpt-5.2",
+        agent="codex",
+        codex_bin="codex",
+        claude_bin="claude",
+        test_cmd=None,
+        timeout=60,
+        max_tokens=1000,
+        max_time=10,
+        local_only=False,
+        skip_preflight=False,
+        resume_checkpoint=str(checkpoint),
+        resume_state=False,
+    )
+
+    assert main_module._run_pipeline(args) == 1
+    captured = capsys.readouterr()
+    assert "--repo does not match checkpoint repo_path" in captured.err
+    assert checkpoint.exists() is True
 
 
 def test_run_github_actions_generates_workflow_file(capsys, tmp_path: Path) -> None:

@@ -193,8 +193,25 @@ def _build_parser() -> argparse.ArgumentParser:
     pipe_p.add_argument(
         "--repo",
         type=str,
-        required=True,
+        default="",
         help="Path to the target git repository.",
+    )
+    pipe_p.add_argument(
+        "--resume-checkpoint",
+        type=str,
+        default="",
+        help=(
+            "Resume from a pipeline checkpoint JSON file produced by self-improvement "
+            "restart handoff."
+        ),
+    )
+    pipe_p.add_argument(
+        "--resume-state",
+        action="store_true",
+        help=(
+            "Resume from <repo>/.codex_manager/state/pipeline_resume.json "
+            "(or current directory when --repo is omitted)."
+        ),
     )
     pipe_p.add_argument(
         "--mode",
@@ -909,45 +926,152 @@ def _run_github_actions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pipeline_resume_checkpoint_path(repo: Path) -> Path:
+    """Return the default pipeline resume checkpoint path for a repository."""
+    return repo / ".codex_manager" / "state" / "pipeline_resume.json"
+
+
+def _load_pipeline_resume_checkpoint(
+    checkpoint_path: Path,
+) -> tuple[Path, dict[str, object], int, int]:
+    """Load and validate a pipeline resume checkpoint payload."""
+    try:
+        payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"Could not read checkpoint: {checkpoint_path} ({exc})") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse checkpoint JSON: {checkpoint_path} ({exc})") from exc
+
+    if not isinstance(payload, dict):
+        raise ValueError("Checkpoint payload must be a JSON object.")
+
+    repo_raw = str(payload.get("repo_path") or "").strip()
+    if not repo_raw:
+        raise ValueError("Checkpoint missing repo_path.")
+    repo_path = Path(repo_raw).resolve()
+    if not repo_path.is_dir():
+        raise ValueError(f"Checkpoint repo_path does not exist: {repo_path}")
+
+    config_payload = payload.get("config")
+    if not isinstance(config_payload, dict):
+        raise ValueError("Checkpoint missing pipeline config object.")
+
+    try:
+        resume_cycle = int(payload.get("resume_cycle") or 1)
+        resume_phase_index = int(payload.get("resume_phase_index") or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Checkpoint has invalid resume_cycle/resume_phase_index values.") from exc
+
+    return repo_path, config_payload, max(1, resume_cycle), max(0, resume_phase_index)
+
+
 # Pipeline command
 def _run_pipeline(args: argparse.Namespace) -> int:
     """Run the autonomous improvement pipeline."""
     from codex_manager.pipeline import PipelineConfig, PipelineOrchestrator
 
-    repo = Path(args.repo).resolve()
-    if not repo.is_dir():
-        print(f"Error: repo path does not exist: {repo}", file=sys.stderr)
+    repo_raw = str(getattr(args, "repo", "") or "").strip()
+    resume_checkpoint_raw = str(getattr(args, "resume_checkpoint", "") or "").strip()
+    resume_state = bool(getattr(args, "resume_state", False))
+    if resume_checkpoint_raw and resume_state:
+        print("Error: --resume-checkpoint and --resume-state cannot be used together.", file=sys.stderr)
         return 1
+
+    checkpoint_to_consume: Path | None = None
+    if resume_checkpoint_raw:
+        checkpoint_to_consume = Path(resume_checkpoint_raw).expanduser().resolve()
+    elif resume_state:
+        repo_hint = Path(repo_raw).resolve() if repo_raw else Path.cwd().resolve()
+        checkpoint_to_consume = _pipeline_resume_checkpoint_path(repo_hint)
+
+    resume_cycle = 1
+    resume_phase_index = 0
+    if checkpoint_to_consume is not None:
+        if not checkpoint_to_consume.is_file():
+            print(f"Error: resume checkpoint not found: {checkpoint_to_consume}", file=sys.stderr)
+            if resume_state and not repo_raw:
+                print(
+                    "Tip: pass --repo <path> when resuming state from a different repository.",
+                    file=sys.stderr,
+                )
+            return 1
+        try:
+            repo, config_payload, resume_cycle, resume_phase_index = (
+                _load_pipeline_resume_checkpoint(checkpoint_to_consume)
+            )
+            config = PipelineConfig(**config_payload)
+        except Exception as exc:
+            print(f"Error: could not resume from checkpoint: {exc}", file=sys.stderr)
+            return 1
+        if repo_raw:
+            requested_repo = Path(repo_raw).resolve()
+            if requested_repo != repo:
+                print(
+                    "Error: --repo does not match checkpoint repo_path.",
+                    file=sys.stderr,
+                )
+                print(f"  --repo: {requested_repo}", file=sys.stderr)
+                print(f"  checkpoint repo_path: {repo}", file=sys.stderr)
+                return 1
+        print(
+            "\n  Resuming from checkpoint: "
+            f"{checkpoint_to_consume} (cycle={resume_cycle}, phase_index={resume_phase_index})"
+        )
+    else:
+        if not repo_raw:
+            print(
+                "Error: --repo is required unless --resume-checkpoint or --resume-state is provided.",
+                file=sys.stderr,
+            )
+            return 1
+        repo = Path(repo_raw).resolve()
+        if not repo.is_dir():
+            print(f"Error: repo path does not exist: {repo}", file=sys.stderr)
+            return 1
+
+        config = PipelineConfig(
+            mode=args.mode,
+            max_cycles=args.cycles,
+            agent=args.agent,
+            science_enabled=args.science,
+            brain_enabled=args.brain,
+            brain_model=args.brain_model,
+            local_only=args.local_only,
+            codex_binary=getattr(args, "codex_bin", "codex"),
+            claude_binary=getattr(args, "claude_bin", "claude"),
+            timeout_per_phase=args.timeout,
+            max_total_tokens=args.max_tokens,
+            max_time_minutes=args.max_time,
+        )
+        if args.test_cmd:
+            config.test_cmd = args.test_cmd
+
     if not getattr(args, "skip_preflight", False) and not _print_cli_preflight_guard(
         repo=repo,
-        agents=[getattr(args, "agent", "codex")],
-        codex_bin=getattr(args, "codex_bin", "codex"),
-        claude_bin=getattr(args, "claude_bin", "claude"),
+        agents=[str(getattr(config, "agent", "codex"))],
+        codex_bin=str(getattr(config, "codex_binary", "codex")),
+        claude_bin=str(getattr(config, "claude_binary", "claude")),
     ):
         return 1
 
-    if args.mode == "dry-run":
+    if config.mode == "dry-run":
         print("\n  WARNING: SAFE MODE ACTIVE (dry-run). Any file edits will be reverted.\n")
 
-    config = PipelineConfig(
-        mode=args.mode,
-        max_cycles=args.cycles,
-        agent=args.agent,
-        science_enabled=args.science,
-        brain_enabled=args.brain,
-        brain_model=args.brain_model,
-        local_only=args.local_only,
-        codex_binary=getattr(args, "codex_bin", "codex"),
-        claude_binary=getattr(args, "claude_bin", "claude"),
-        timeout_per_phase=args.timeout,
-        max_total_tokens=args.max_tokens,
-        max_time_minutes=args.max_time,
+    pipeline = PipelineOrchestrator(
+        repo_path=repo,
+        config=config,
+        resume_cycle=resume_cycle,
+        resume_phase_index=resume_phase_index,
     )
-    if args.test_cmd:
-        config.test_cmd = args.test_cmd
-
-    pipeline = PipelineOrchestrator(repo_path=repo, config=config)
     state = pipeline.run()
+    if checkpoint_to_consume is not None:
+        try:
+            checkpoint_to_consume.unlink(missing_ok=True)
+        except OSError as exc:
+            print(
+                f"Warning: could not remove consumed checkpoint {checkpoint_to_consume}: {exc}",
+                file=sys.stderr,
+            )
 
     # Summary
     print("\n" + "=" * 60)
