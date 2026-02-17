@@ -4,6 +4,61 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![GUI + CLI](https://img.shields.io/badge/Interface-GUI%20%2B%20CLI-0ea5e9)
 
+**Software that upgrades itself — and everything else in your codebase.**
+ 
+> A local AI control plane that turns coding agents into a repeatable, evidence-backed engineering system.
+
+WarpFoundry is a self-improving AI framework. Point it at any repository and it will plan, execute, validate, and iterate on improvements autonomously — learning from each cycle to make the next one better. It ships with pre-made Autopilot recipes (structured prompt chains for common upgrade patterns). It orchestrates AI agents and coding tools into coherent, compounding engineering work.
+
+It doesn't just run agents. It manages them: choosing what to do, verifying that it worked, capturing evidence, and deciding whether to keep going or stop. The result is AI-driven development that behaves like engineering, not guesswork. You can choose how long to run it. Choose the number of cycles, minutes, tokens, to run or stop when the program hits diminishing returns. You can select 'unlimited' mode, and it will run until you stop it.
+
+**Continuous repo evolution at warp speed.** 
+
+WarpFoundry is an AI Manager for coding agents: a local control plane that plans, runs, validates, and tracks autonomous repo work so your agents ship real progress, not random edits.
+
+It orchestrates Codex (and optionally Claude Code) across iterative chains and autonomous pipelines, with Git-first safety rails, diagnostics, per-repo artifacts, and optional long-term vector memory.
+
+---
+
+
+
+
+
+
+
+
+
+
+## Continuous Improvement, On Autopilot
+
+WarpFoundry is designed for **iterative upgrade cycles** - not "one prompt and pray."
+
+A typical cycle looks like this:
+
+1. **Preflight & diagnostics** (is the repo runnable, writable, correctly configured?)
+2. **Plan** a structured change set (tasks, phases, stop reasons)
+3. **Execute** changes through agent runs (chains or pipelines)
+4. **Validate** with tests, lint, and sanity checks
+5. **Capture evidence** (logs, outputs, experiment notes, progress reports)
+6. **Decide**: stop, iterate, or escalate
+7. **Repeat** until you hit a stop condition or diminishing returns
+
+WarpFoundry can run this cycle on **any repo** - including **itself** - so improvements can compound over time rather than reset every session.
+
+---
+
+
+## Why Developers Use It
+
+WarpFoundry is built for teams and solo devs who want agentic coding to feel like **engineering**: controlled, observable, reproducible.
+
+- Turn AI coding agents into a repeatable engineering workflow, not one-off chats.
+- Run autonomous improvement loops with clear stop reasons, logs, and evidence.
+- Keep control with `dry-run` and `apply` modes, branch automation, and preflight checks.
+- Reuse prior work through per-repo memory, deep-research caching, and structured outputs.
+- Operate from one interface for planning, execution, troubleshooting, and iteration.
+
+
 WarpFoundry is a local orchestration layer for AI coding agents. It provides a web GUI and CLI workflows for repeatable repo improvement loops with preflight checks, run controls, and structured artifacts.
 
 Compatibility note: the package/CLI name is `warpfoundry`, while source modules are currently under `src/codex_manager/`.
