@@ -425,6 +425,74 @@ def parse_agents(raw_agents: str | None) -> list[str]:
     return keys or ["codex"]
 
 
+def agent_preflight_issues(
+    agents: Iterable[str],
+    *,
+    codex_binary: str,
+    claude_binary: str,
+    binary_exists_detector: Callable[[str], bool] | None = None,
+    codex_auth_detector: Callable[[], bool] | None = None,
+    claude_auth_detector: Callable[[], bool] | None = None,
+) -> list[str]:
+    """Return runtime binary/auth issues for normalized agent selections."""
+    binary_check = binary_exists_detector or binary_exists
+    codex_auth_check = codex_auth_detector or has_codex_auth
+    claude_auth_check = claude_auth_detector or has_claude_auth
+
+    requested = sorted(
+        {
+            normalize_agent(str(agent or ""))
+            for agent in agents
+            if str(agent or "").strip()
+        }
+    )
+    issues: list[str] = []
+    for agent in requested:
+        if agent not in {"codex", "claude_code"}:
+            issues.append(f"Unknown agent '{agent}'. Supported: codex, claude_code, auto")
+            continue
+        if agent == "codex":
+            if not binary_check(codex_binary):
+                issues.append(f"Codex binary not found: '{codex_binary}'")
+            if not codex_auth_check():
+                issues.append(
+                    "Codex auth not detected. Set CODEX_API_KEY or OPENAI_API_KEY, "
+                    "or run 'codex login' first."
+                )
+            continue
+        if not binary_check(claude_binary):
+            issues.append(f"Claude Code binary not found: '{claude_binary}'")
+        if not claude_auth_check():
+            issues.append(
+                "Claude auth not detected. Set ANTHROPIC_API_KEY (or CLAUDE_API_KEY), "
+                "or log in with the Claude CLI first."
+            )
+    return issues
+
+
+def image_provider_auth_issue(
+    enabled: bool,
+    provider: str,
+    *,
+    codex_auth_detector: Callable[[], bool] | None = None,
+) -> str | None:
+    """Return an auth/config issue for image generation provider setup."""
+    if not enabled:
+        return None
+    provider_key = (provider or "openai").strip().lower()
+    if provider_key == "google":
+        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
+            return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
+        return None
+    codex_auth_check = codex_auth_detector or has_codex_auth
+    if not codex_auth_check():
+        return (
+            "Image generation (openai provider) requires OPENAI_API_KEY "
+            "or CODEX_API_KEY (or Codex CLI auth)."
+        )
+    return None
+
+
 def build_preflight_report(
     *,
     repo_path: str | Path | None,

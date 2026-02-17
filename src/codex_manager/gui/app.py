@@ -46,7 +46,9 @@ from codex_manager.preflight import (
     binary_exists as shared_binary_exists,
 )
 from codex_manager.preflight import (
+    agent_preflight_issues as shared_agent_preflight_issues,
     build_preflight_report,
+    image_provider_auth_issue as shared_image_provider_auth_issue,
     parse_agents,
 )
 from codex_manager.preflight import (
@@ -360,45 +362,81 @@ def _agent_preflight_issues(
     claude_binary: str,
 ) -> list[str]:
     """Return binary/auth validation issues for the requested agents."""
-    issues: list[str] = []
-    for agent in sorted(agents):
-        if agent not in {"codex", "claude_code"}:
-            issues.append(f"Unknown agent '{agent}'. Supported: codex, claude_code, auto")
-            continue
-        if agent == "codex":
-            if not _binary_exists(codex_binary):
-                issues.append(f"Codex binary not found: '{codex_binary}'")
-            if not _has_codex_auth():
-                issues.append(
-                    "Codex auth not detected. Set CODEX_API_KEY or OPENAI_API_KEY, "
-                    "or run 'codex login' first."
-                )
-        elif agent == "claude_code":
-            if not _binary_exists(claude_binary):
-                issues.append(f"Claude Code binary not found: '{claude_binary}'")
-            if not _has_claude_auth():
-                issues.append(
-                    "Claude auth not detected. Set ANTHROPIC_API_KEY (or CLAUDE_API_KEY), "
-                    "or log in with the Claude CLI first."
-                )
-    return issues
+    return shared_agent_preflight_issues(
+        agents,
+        codex_binary=codex_binary,
+        claude_binary=claude_binary,
+        binary_exists_detector=_binary_exists,
+        codex_auth_detector=_has_codex_auth,
+        claude_auth_detector=_has_claude_auth,
+    )
 
 
 def _image_provider_auth_issue(enabled: bool, provider: str) -> str | None:
     """Return an auth/config issue for configured image generation provider."""
-    if not enabled:
-        return None
-    provider_key = (provider or "openai").strip().lower()
-    if provider_key == "google":
-        if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
-            return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
-        return None
-    if not _has_codex_auth():
-        return (
-            "Image generation (openai provider) requires OPENAI_API_KEY "
-            "or CODEX_API_KEY (or Codex CLI auth)."
+    return shared_image_provider_auth_issue(
+        enabled,
+        provider,
+        codex_auth_detector=_has_codex_auth,
+    )
+
+
+def _append_repository_preflight_issues(
+    issues: list[str],
+    *,
+    repo: Path,
+    git_preflight_enabled: bool,
+) -> None:
+    """Append repository existence/write/dirty preflight issues."""
+    if not (repo / ".git").exists():
+        issues.append(f"Not a git repository: {repo}")
+
+    write_error = _repo_write_error(repo)
+    if write_error:
+        issues.append(write_error)
+
+    if not git_preflight_enabled:
+        dirty_issue = _repo_dirty_issue(repo)
+        if dirty_issue:
+            issues.append(dirty_issue)
+
+
+def _append_danger_confirmation_issue(
+    issues: list[str],
+    *,
+    bypass_approvals_and_sandbox: bool,
+    danger_confirmation: str,
+) -> None:
+    """Append the required warning/confirmation gate for dangerous mode."""
+    if (
+        bypass_approvals_and_sandbox
+        and danger_confirmation.strip() != DANGER_CONFIRMATION_PHRASE
+    ):
+        issues.append(
+            "Danger confirmation missing. Set codex_danger_confirmation to "
+            f"'{DANGER_CONFIRMATION_PHRASE}' to enable bypass."
         )
-    return None
+
+
+def _append_vector_memory_preflight_issues(
+    issues: list[str],
+    *,
+    vector_memory_enabled: bool,
+    vector_memory_backend: str,
+) -> None:
+    """Append vector-memory backend/import readiness issues."""
+    if not vector_memory_enabled:
+        return
+    backend = str(vector_memory_backend or "chroma").strip().lower()
+    if backend != "chroma":
+        issues.append("Unsupported vector_memory_backend. Supported backend(s): chroma.")
+        return
+    try:
+        import chromadb  # noqa: F401
+    except Exception:
+        issues.append(
+            "Vector memory requires ChromaDB. Install with: pip install chromadb"
+        )
 
 
 def _normalize_requested_agents(raw_agents: object) -> list[str]:
@@ -614,17 +652,11 @@ def _chain_preflight_issues(config: ChainConfig) -> list[str]:
     repo = Path(config.repo_path).resolve()
     issues: list[str] = []
 
-    if not (repo / ".git").exists():
-        issues.append(f"Not a git repository: {repo}")
-
-    write_error = _repo_write_error(repo)
-    if write_error:
-        issues.append(write_error)
-
-    if not config.git_preflight_enabled:
-        dirty_issue = _repo_dirty_issue(repo)
-        if dirty_issue:
-            issues.append(dirty_issue)
+    _append_repository_preflight_issues(
+        issues,
+        repo=repo,
+        git_preflight_enabled=bool(config.git_preflight_enabled),
+    )
 
     # Detect output-file collisions up front (same filename from multiple steps).
     by_file: dict[str, list[str]] = {}
@@ -641,14 +673,11 @@ def _chain_preflight_issues(config: ChainConfig) -> list[str]:
             out_file = display_name_by_file.get(out_file_key, out_file_key)
             issues.append(f"Multiple enabled steps write to '{out_file}': {', '.join(names)}")
 
-    if (
-        config.codex_bypass_approvals_and_sandbox
-        and config.codex_danger_confirmation.strip() != DANGER_CONFIRMATION_PHRASE
-    ):
-        issues.append(
-            "Danger confirmation missing. Set codex_danger_confirmation to "
-            f"'{DANGER_CONFIRMATION_PHRASE}' to enable bypass."
-        )
+    _append_danger_confirmation_issue(
+        issues,
+        bypass_approvals_and_sandbox=bool(config.codex_bypass_approvals_and_sandbox),
+        danger_confirmation=config.codex_danger_confirmation,
+    )
 
     issues.extend(
         _agent_preflight_issues(
@@ -665,17 +694,11 @@ def _chain_preflight_issues(config: ChainConfig) -> list[str]:
     if image_issue:
         issues.append(image_issue)
 
-    if config.vector_memory_enabled:
-        backend = str(config.vector_memory_backend or "chroma").strip().lower()
-        if backend != "chroma":
-            issues.append("Unsupported vector_memory_backend. Supported backend(s): chroma.")
-        else:
-            try:
-                import chromadb  # noqa: F401
-            except Exception:
-                issues.append(
-                    "Vector memory requires ChromaDB. Install with: pip install chromadb"
-                )
+    _append_vector_memory_preflight_issues(
+        issues,
+        vector_memory_enabled=bool(config.vector_memory_enabled),
+        vector_memory_backend=config.vector_memory_backend,
+    )
 
     return issues
 
@@ -685,26 +708,17 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
     repo = Path(config.repo_path).resolve()
     issues: list[str] = []
 
-    if not (repo / ".git").exists():
-        issues.append(f"Not a git repository: {repo}")
+    _append_repository_preflight_issues(
+        issues,
+        repo=repo,
+        git_preflight_enabled=bool(config.git_preflight_enabled),
+    )
 
-    write_error = _repo_write_error(repo)
-    if write_error:
-        issues.append(write_error)
-
-    if not config.git_preflight_enabled:
-        dirty_issue = _repo_dirty_issue(repo)
-        if dirty_issue:
-            issues.append(dirty_issue)
-
-    if (
-        config.codex_bypass_approvals_and_sandbox
-        and config.codex_danger_confirmation.strip() != DANGER_CONFIRMATION_PHRASE
-    ):
-        issues.append(
-            "Danger confirmation missing. Set codex_danger_confirmation to "
-            f"'{DANGER_CONFIRMATION_PHRASE}' to enable bypass."
-        )
+    _append_danger_confirmation_issue(
+        issues,
+        bypass_approvals_and_sandbox=bool(config.codex_bypass_approvals_and_sandbox),
+        danger_confirmation=config.codex_danger_confirmation,
+    )
 
     issues.extend(
         _agent_preflight_issues(
@@ -721,17 +735,11 @@ def _pipeline_preflight_issues(config: PipelineGUIConfig) -> list[str]:
     if image_issue:
         issues.append(image_issue)
 
-    if config.vector_memory_enabled:
-        backend = str(config.vector_memory_backend or "chroma").strip().lower()
-        if backend != "chroma":
-            issues.append("Unsupported vector_memory_backend. Supported backend(s): chroma.")
-        else:
-            try:
-                import chromadb  # noqa: F401
-            except Exception:
-                issues.append(
-                    "Vector memory requires ChromaDB. Install with: pip install chromadb"
-                )
+    _append_vector_memory_preflight_issues(
+        issues,
+        vector_memory_enabled=bool(config.vector_memory_enabled),
+        vector_memory_backend=config.vector_memory_backend,
+    )
 
     if config.self_improvement_auto_restart and not config.self_improvement_enabled:
         issues.append("self_improvement_auto_restart requires self_improvement_enabled.")

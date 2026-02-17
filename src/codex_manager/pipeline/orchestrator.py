@@ -77,9 +77,11 @@ from codex_manager.pipeline.phases import (
 )
 from codex_manager.pipeline.tracker import LogTracker
 from codex_manager.preflight import (
+    agent_preflight_issues as shared_agent_preflight_issues,
     binary_exists as shared_binary_exists,
     has_claude_auth as shared_has_claude_auth,
     has_codex_auth as shared_has_codex_auth,
+    image_provider_auth_issue as shared_image_provider_auth_issue,
 )
 from codex_manager.preflight import (
     repo_worktree_counts as shared_repo_worktree_counts,
@@ -2305,17 +2307,11 @@ class PipelineOrchestrator:
 
     @staticmethod
     def _image_provider_auth_issue(provider: str) -> str | None:
-        provider_key = (provider or "openai").strip().lower()
-        if provider_key == "google":
-            if not (os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")):
-                return "Image generation (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
-            return None
-        if not PipelineOrchestrator._has_codex_auth():
-            return (
-                "Image generation (openai provider) requires OPENAI_API_KEY "
-                "or CODEX_API_KEY (or Codex CLI auth)."
-            )
-        return None
+        return shared_image_provider_auth_issue(
+            True,
+            provider,
+            codex_auth_detector=PipelineOrchestrator._has_codex_auth,
+        )
 
     def _write_restart_checkpoint(
         self,
@@ -2414,25 +2410,16 @@ class PipelineOrchestrator:
                     "Native deep research (google provider) requires GOOGLE_API_KEY or GEMINI_API_KEY."
                 )
 
-        for agent in sorted(self._collect_required_agents(config)):
-            if agent == "codex":
-                if not self._binary_exists(config.codex_binary):
-                    issues.append(f"Codex binary not found: '{config.codex_binary}'")
-                if not self._has_codex_auth():
-                    issues.append(
-                        "Codex auth not detected. Set CODEX_API_KEY or OPENAI_API_KEY, "
-                        "or run 'codex login' first."
-                    )
-            elif agent == "claude_code":
-                if not self._binary_exists(config.claude_binary):
-                    issues.append(f"Claude Code binary not found: '{config.claude_binary}'")
-                if not self._has_claude_auth():
-                    issues.append(
-                        "Claude auth not detected. Set ANTHROPIC_API_KEY (or CLAUDE_API_KEY), "
-                        "or log in with the Claude CLI first."
-                    )
-            else:
-                issues.append(f"Unknown agent '{agent}'. Supported: codex, claude_code, auto")
+        issues.extend(
+            shared_agent_preflight_issues(
+                self._collect_required_agents(config),
+                codex_binary=config.codex_binary,
+                claude_binary=config.claude_binary,
+                binary_exists_detector=self._binary_exists,
+                codex_auth_detector=self._has_codex_auth,
+                claude_auth_detector=self._has_claude_auth,
+            )
+        )
 
         uses_cua = any(p.enabled and p.phase == PipelinePhase.VISUAL_TEST for p in phase_order)
         if uses_cua:
