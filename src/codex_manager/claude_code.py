@@ -14,6 +14,7 @@ from codex_manager.agent_runner import AgentRunner, register_agent
 from codex_manager.runner_common import (
     coerce_int,
     execute_streaming_json_command,
+    is_command_line_too_long_error,
     resolve_binary,
 )
 from codex_manager.schemas import (
@@ -114,6 +115,28 @@ class ClaudeCodeRunner(AgentRunner):
                 cwd=repo_path,
                 stdin_text=prompt if use_stdin_prompt else None,
             )
+        except OSError as exc:
+            if not use_stdin_prompt and is_command_line_too_long_error(exc):
+                logger.warning(
+                    "Claude Code argv exceeded command-line limits; retrying with stdin prompt transport."
+                )
+                cmd = self._build_command("-", full_auto=full_auto, extra_args=extra_args)
+                try:
+                    result = self._execute(cmd, cwd=repo_path, stdin_text=prompt)
+                except Exception as retry_exc:
+                    return RunResult(
+                        success=False,
+                        exit_code=-1,
+                        errors=[f"Failed to execute claude: {retry_exc}"],
+                        duration_seconds=time.monotonic() - start,
+                    )
+            else:
+                return RunResult(
+                    success=False,
+                    exit_code=-1,
+                    errors=[f"Failed to execute claude: {exc}"],
+                    duration_seconds=time.monotonic() - start,
+                )
         except Exception as exc:
             return RunResult(
                 success=False,

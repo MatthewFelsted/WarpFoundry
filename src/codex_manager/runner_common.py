@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_CAPTURED_EVENTS = 20_000
 _DEFAULT_MAX_CAPTURED_STDOUT_LINES = 20_000
 _DEFAULT_MAX_CAPTURED_STDERR_LINES = 10_000
+_COMMAND_LINE_LENGTH_ERROR_CODES = {7, 87, 206}
+_COMMAND_LINE_LENGTH_ERROR_SUBSTRINGS = (
+    "command line is too long",
+    "filename or extension is too long",
+    "argument list too long",
+)
 
 
 def _streaming_process_isolation_kwargs() -> dict[str, object]:
@@ -86,6 +92,23 @@ def coerce_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def is_command_line_too_long_error(exc: BaseException) -> bool:
+    """Return True when an exception indicates argv length exceeded OS limits."""
+    message = str(exc or "").strip().lower()
+    if any(token in message for token in _COMMAND_LINE_LENGTH_ERROR_SUBSTRINGS):
+        return True
+
+    for attr_name in ("winerror", "errno"):
+        raw_code = getattr(exc, attr_name, None)
+        try:
+            code = int(raw_code)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if code in _COMMAND_LINE_LENGTH_ERROR_CODES:
+            return True
+    return False
 
 
 @dataclass(slots=True)

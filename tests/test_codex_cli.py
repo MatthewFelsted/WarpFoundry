@@ -229,6 +229,40 @@ class TestCodexRunnerBuildCommand:
         assert captured["cmd"][-1] == "-"
         assert captured["stdin_text"] == "very long prompt payload"
 
+    def test_run_retries_with_stdin_when_command_line_is_too_long(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(codex_binary="codex")
+
+        monkeypatch.setattr(
+            runner,
+            "_should_pipe_prompt_via_stdin",
+            lambda *_args, **_kwargs: False,
+        )
+
+        prompt = "very long prompt payload"
+        captured: list[tuple[list[str], str | None]] = []
+
+        def _fake_execute(cmd: list[str], cwd: Path, *, stdin_text: str | None = None) -> RunResult:
+            assert cwd == repo.resolve()
+            captured.append((list(cmd), stdin_text))
+            if len(captured) == 1:
+                raise OSError("The command line is too long.")
+            return RunResult(success=True, exit_code=0, final_message="ok")
+
+        monkeypatch.setattr(runner, "_execute", _fake_execute)
+
+        result = runner.run(repo, prompt, full_auto=True)
+
+        assert result.success is True
+        assert len(captured) == 2
+        assert captured[0][0][-1] == prompt
+        assert captured[0][1] is None
+        assert captured[1][0][-1] == "-"
+        assert captured[1][1] == prompt
+
     def test_should_pipe_prompt_early_for_windows_batch_shims(
         self, monkeypatch, tmp_path: Path
     ) -> None:
