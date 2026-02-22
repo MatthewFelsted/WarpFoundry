@@ -263,6 +263,32 @@ class TestCodexRunnerBuildCommand:
         assert captured[1][0][-1] == "-"
         assert captured[1][1] == prompt
 
+    def test_run_logging_omits_raw_prompt_text(self, monkeypatch, tmp_path: Path, caplog) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        runner = CodexRunner(codex_binary="codex")
+        prompt = "api_key=sk-proj-super-secret-value"
+
+        monkeypatch.setattr(
+            runner,
+            "_should_pipe_prompt_via_stdin",
+            lambda *_args, **_kwargs: False,
+        )
+        monkeypatch.setattr(
+            runner,
+            "_execute",
+            lambda *_args, **_kwargs: RunResult(success=True, exit_code=0),
+        )
+
+        with caplog.at_level("INFO", logger="codex_manager.codex_cli"):
+            result = runner.run(repo, prompt)
+
+        assert result.success is True
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert prompt not in joined
+        assert "prompt_len=" in joined
+        assert "prompt_sha256=" in joined
+
     def test_should_pipe_prompt_early_for_windows_batch_shims(
         self, monkeypatch, tmp_path: Path
     ) -> None:

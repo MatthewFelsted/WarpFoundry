@@ -18,6 +18,7 @@ from codex_manager.runner_common import (
     is_command_line_too_long_error,
     resolve_binary,
 )
+from codex_manager.prompt_logging import prompt_metadata
 from codex_manager.schemas import (
     CodexEvent,
     EventKind,
@@ -181,7 +182,14 @@ class CodexRunner(AgentRunner):
             full_auto=full_auto,
             extra_args=extra_args,
         )
-        logger.info("Running: %s (cwd=%s)", " ".join(cmd), repo_path)
+        prompt_meta = prompt_metadata(prompt)
+        logger.info(
+            "Running Codex CLI (cwd=%s, prompt_transport=%s, prompt_len=%s, prompt_sha256=%s)",
+            repo_path,
+            "stdin" if use_stdin_prompt else "argv",
+            prompt_meta["length_chars"],
+            prompt_meta["sha256"],
+        )
 
         start = time.monotonic()
         max_attempts = self.transient_network_retries + 1

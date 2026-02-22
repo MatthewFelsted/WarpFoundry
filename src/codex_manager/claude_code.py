@@ -17,6 +17,7 @@ from codex_manager.runner_common import (
     is_command_line_too_long_error,
     resolve_binary,
 )
+from codex_manager.prompt_logging import prompt_metadata
 from codex_manager.schemas import (
     CodexEvent,
     EventKind,
@@ -106,7 +107,14 @@ class ClaudeCodeRunner(AgentRunner):
         )
         prompt_arg = "-" if use_stdin_prompt else prompt
         cmd = self._build_command(prompt_arg, full_auto=full_auto, extra_args=extra_args)
-        logger.info("Running: %s (cwd=%s)", " ".join(cmd), repo_path)
+        prompt_meta = prompt_metadata(prompt)
+        logger.info(
+            "Running Claude Code CLI (cwd=%s, prompt_transport=%s, prompt_len=%s, prompt_sha256=%s)",
+            repo_path,
+            "stdin" if use_stdin_prompt else "argv",
+            prompt_meta["length_chars"],
+            prompt_meta["sha256"],
+        )
 
         start = time.monotonic()
         try:
