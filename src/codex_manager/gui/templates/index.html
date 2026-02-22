@@ -660,6 +660,12 @@ body.mode-medium .easy-only{display:none}
 }
 .recipe-card .recipe-title{font-weight:600;font-size:13px;margin-bottom:4px;color:var(--text)}
 .recipe-card .recipe-desc{font-size:11px;color:var(--text2);line-height:1.4}
+.recipe-card .recipe-source{margin-top:8px;font-size:10px;color:var(--accent2);text-transform:uppercase;letter-spacing:.3px}
+.recipe-card.custom{border-style:dashed}
+.recipe-card.custom:hover{border-color:var(--accent2)}
+.recipe-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px}
+.recipe-tools .summary{font-size:11px;color:var(--text2)}
+.recipe-extra-cards{display:contents}
 
 /* -- Onboarding overlay ----------------------------------------- */
 #onboarding-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -878,14 +884,14 @@ body.mode-medium .easy-only{display:none}
 .git-commit-message{margin-top:12px}
 .git-commit-message textarea{min-height:100px}
 
-#todo-wishlist-overlay,#feature-dreams-overlay,#general-request-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
-#todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden,#general-request-overlay.hidden{display:none}
-.todo-wishlist-card,.feature-dreams-card,.general-request-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.todo-wishlist-card h2,.feature-dreams-card h2,.general-request-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
-.todo-wishlist-card .subtitle,.feature-dreams-card .subtitle,.general-request-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
-.todo-wishlist-card .actions,.feature-dreams-card .actions,.general-request-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
-.todo-wishlist-card .status,.feature-dreams-card .status,.general-request-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
-.todo-wishlist-card .inline-actions,.feature-dreams-card .inline-actions,.general-request-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#todo-wishlist-overlay,#feature-dreams-overlay,#general-request-overlay,#custom-recipes-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:2200;display:flex;align-items:center;justify-content:center;padding:24px}
+#todo-wishlist-overlay.hidden,#feature-dreams-overlay.hidden,#general-request-overlay.hidden,#custom-recipes-overlay.hidden{display:none}
+.todo-wishlist-card,.feature-dreams-card,.general-request-card,.custom-recipes-card{width:760px;max-width:100%;max-height:88vh;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.todo-wishlist-card h2,.feature-dreams-card h2,.general-request-card h2,.custom-recipes-card h2{margin-bottom:4px;font-size:18px;color:var(--text)}
+.todo-wishlist-card .subtitle,.feature-dreams-card .subtitle,.general-request-card .subtitle,.custom-recipes-card .subtitle{color:var(--text2);font-size:13px;margin-bottom:14px}
+.todo-wishlist-card .actions,.feature-dreams-card .actions,.general-request-card .actions,.custom-recipes-card .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+.todo-wishlist-card .status,.feature-dreams-card .status,.general-request-card .status,.custom-recipes-card .status{font-size:12px;color:var(--text2);margin-top:6px;min-height:1.2em}
+.todo-wishlist-card .inline-actions,.feature-dreams-card .inline-actions,.general-request-card .inline-actions,.custom-recipes-card .inline-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .context-file-list{margin-top:8px;font-size:11px;color:var(--text2)}
 .general-request-history{margin-top:10px;display:grid;gap:10px}
 .general-request-history-item{border:1px solid var(--border);border-radius:var(--radius);padding:10px;background:var(--bg)}
@@ -1099,6 +1105,7 @@ body.mode-medium .easy-only{display:none}
 #todo-wishlist-overlay,
 #feature-dreams-overlay,
 #general-request-overlay,
+#custom-recipes-overlay,
 #about-overlay,
 #browse-overlay,
 #docs-overlay,
@@ -1482,6 +1489,11 @@ body.mode-medium .easy-only{display:none}
         <div class="recipe-title">Feature Dream Autopilot</div>
         <div class="recipe-desc">Dream up features and implement all open items</div>
       </div>
+      <div class="recipe-extra-cards" id="custom-recipe-cards"></div>
+    </div>
+    <div class="recipe-tools">
+      <button class="btn" type="button" onclick="openCustomRecipesModal()">Manage Custom Recipes</button>
+      <span class="summary" id="custom-recipes-summary">Set Repository Path to load custom recipes.</span>
     </div>
   </div>
 
@@ -2765,6 +2777,66 @@ body.mode-medium .easy-only{display:none}
   </div>
 </div>
 
+<!-- Custom Recipes modal -->
+<div id="custom-recipes-overlay" class="hidden" onclick="if(event.target===this)hideCustomRecipesModal()">
+  <div class="custom-recipes-card" role="dialog" aria-modal="true" aria-labelledby="custom-recipes-title">
+    <h2 id="custom-recipes-title">Custom Autopilot Recipes</h2>
+    <p class="subtitle">Create, edit, delete, import, and export per-repository recipe JSON.</p>
+
+    <div class="form-row">
+      <label>Repository Path</label>
+      <div class="repo-row">
+        <input type="text" id="custom-recipes-repo" placeholder="C:\path\to\your\repo">
+        <button class="btn" type="button" onclick="syncCustomRecipesRepoFromMain()">Use Current Repo</button>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>Saved Custom Recipes</label>
+      <div class="repo-row">
+        <select id="custom-recipes-select" onchange="loadSelectedCustomRecipeIntoEditor()">
+          <option value="">Select custom recipe...</option>
+        </select>
+        <button class="btn" type="button" onclick="newCustomRecipeTemplate()">New Template</button>
+        <button class="btn" type="button" onclick="refreshCustomRecipesModal()">Refresh</button>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>Recipe JSON (single recipe object)</label>
+      <textarea id="custom-recipe-json" rows="12" placeholder='{"id":"my_recipe","name":"My Recipe","steps":[{"job_type":"implementation"}]}'></textarea>
+      <div class="field-help">Use one recipe object with keys like <code>id</code>, <code>name</code>, <code>description</code>, <code>sequence</code>, and <code>steps</code>.</div>
+    </div>
+
+    <div class="inline-actions">
+      <button class="btn btn-primary" type="button" onclick="saveCustomRecipeFromEditor()">Save Recipe</button>
+      <button class="btn" type="button" onclick="deleteSelectedCustomRecipe()">Delete Selected</button>
+      <button class="btn" type="button" onclick="exportSelectedCustomRecipe()">Export Selected</button>
+    </div>
+
+    <details>
+      <summary>Import / Export Bundle</summary>
+      <div class="form-row" style="margin-top:8px">
+        <label>Import JSON (<code>{"recipes":[...]}</code>, list, or single recipe object)</label>
+        <textarea id="custom-recipes-import-json" rows="8" placeholder='{"recipes":[...]}'></textarea>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="custom-recipes-import-replace"> Replace existing custom recipes</label>
+      </div>
+      <div class="inline-actions">
+        <button class="btn" type="button" onclick="importCustomRecipesFromJson()">Import JSON</button>
+        <button class="btn" type="button" onclick="exportAllCustomRecipesToEditor()">Export All</button>
+      </div>
+    </details>
+
+    <div class="status" id="custom-recipes-status"></div>
+
+    <div class="actions">
+      <button class="btn" type="button" onclick="hideCustomRecipesModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Commit workflow modal -->
 <div id="git-commit-overlay" class="hidden" onclick="if(event.target===this)hideGitCommitModal()">
   <div class="git-commit-card" role="dialog" aria-modal="true" aria-labelledby="git-commit-title">
@@ -3310,7 +3382,12 @@ let currentMode = (typeof localStorage !== 'undefined' && localStorage.getItem('
 const GIT_SYNC_DRAWER_STORAGE_KEY = 'cm_git_sync_open';
 
 const RECIPES_PAYLOAD = {{ recipes_payload | tojson }};
-const RECIPES = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.recipes) || {};
+const BUILTIN_RECIPE_STEPS = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.recipes) || {};
+let RECIPES = Object.assign({}, BUILTIN_RECIPE_STEPS);
+let recipeSummaries = [];
+let customRecipeSummaries = [];
+let recipeCatalogRepoPath = '';
+let recipeCatalogRefreshTimer = null;
 const DEFAULT_EASY_RECIPE_ID = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.default_recipe_id) || 'autopilot_default';
 const PROGRAM_DISPLAY_NAME = {{ project_display_name | tojson }};
 
@@ -3354,6 +3431,7 @@ const _modalOverlayIds = [
   'todo-wishlist-overlay',
   'feature-dreams-overlay',
   'general-request-overlay',
+  'custom-recipes-overlay',
   'about-overlay',
   'onboarding-overlay',
   'first-run-wizard-overlay',
@@ -3564,6 +3642,10 @@ function _closeTopOverlay() {
   }
   if (overlayId === 'general-request-overlay') {
     hideGeneralRequestModal();
+    return true;
+  }
+  if (overlayId === 'custom-recipes-overlay') {
+    hideCustomRecipesModal();
     return true;
   }
   if (overlayId === 'about-overlay') {
@@ -4904,6 +4986,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     scheduleGitSyncRefresh({ delayMs: 0, silent: true });
   }, GIT_SYNC_POLL_INTERVAL_MS);
   applyMode(currentMode);
+  scheduleRecipeCatalogRefresh({ delayMs: 0, silent: true });
   loadConfigList();
   renderSteps();
   // Fetch Ollama models in background - populates both brain dropdowns
@@ -5372,6 +5455,455 @@ function _activeRepoPath() {
   if (chainRepo) return chainRepo;
   const pipeRepo = String(document.getElementById('pipe-repo-path').value || '').trim();
   return pipeRepo;
+}
+
+function _setCustomRecipesSummary(text, tone = 'muted') {
+  const el = document.getElementById('custom-recipes-summary');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+function _renderCustomRecipeCards(rows) {
+  const container = document.getElementById('custom-recipe-cards');
+  if (!container) return;
+  const recipes = Array.isArray(rows) ? rows : [];
+  if (!recipes.length) {
+    container.innerHTML = '';
+    initRecipeCardKeyboardAccess();
+    return;
+  }
+
+  container.innerHTML = recipes.map((row) => {
+    const id = String(row && row.id || '').trim();
+    if (!id) return '';
+    const name = String(row && row.name || id).trim() || id;
+    const desc = String(row && row.description || 'Custom recipe').trim() || 'Custom recipe';
+    const title = String(row && row.sequence || desc).trim() || desc;
+    const encodedId = encodeURIComponent(id);
+    return '<div class="recipe-card custom" data-recipe="' + escAttr(id) + '" onclick="selectRecipe(decodeURIComponent(\'' + encodedId + '\'))" title="' + escAttr(title) + '">'
+      + '<div class="recipe-title">' + esc(name) + '</div>'
+      + '<div class="recipe-desc">' + esc(desc) + '</div>'
+      + '<div class="recipe-source">Custom</div>'
+      + '</div>';
+  }).join('');
+  initRecipeCardKeyboardAccess();
+}
+
+function _setRecipeCatalogFromPayload(payload, repoPath) {
+  RECIPES = Object.assign({}, BUILTIN_RECIPE_STEPS);
+  recipeSummaries = Array.isArray(payload && payload.recipes) ? payload.recipes.slice() : [];
+  const stepsMap = payload && typeof payload.recipe_steps === 'object' ? payload.recipe_steps : {};
+  Object.keys(stepsMap || {}).forEach((recipeId) => {
+    RECIPES[recipeId] = Array.isArray(stepsMap[recipeId]) ? stepsMap[recipeId] : [];
+  });
+  customRecipeSummaries = recipeSummaries.filter((row) => String(row && row.source || '') === 'custom');
+  _renderCustomRecipeCards(customRecipeSummaries);
+  recipeCatalogRepoPath = String(repoPath || '').trim();
+  if (!recipeCatalogRepoPath) {
+    _setCustomRecipesSummary('Set Repository Path to load custom recipes.', 'muted');
+    return;
+  }
+  if (!customRecipeSummaries.length) {
+    _setCustomRecipesSummary('No custom recipes saved for this repository yet.', 'muted');
+    return;
+  }
+  _setCustomRecipesSummary('Loaded ' + customRecipeSummaries.length + ' custom recipe(s).', 'ok');
+}
+
+async function refreshRecipeCatalogForActiveRepo(opts = {}) {
+  const requestedRepo = String(opts.repoPath || _activeRepoPath()).trim();
+  if (!requestedRepo) {
+    _setRecipeCatalogFromPayload({
+      recipes: [],
+      recipe_steps: {},
+    }, '');
+    return;
+  }
+  const resp = await api('/api/recipes?repo_path=' + encodeURIComponent(requestedRepo));
+  if (resp && resp.error) {
+    RECIPES = Object.assign({}, BUILTIN_RECIPE_STEPS);
+    recipeSummaries = [];
+    customRecipeSummaries = [];
+    _renderCustomRecipeCards([]);
+    recipeCatalogRepoPath = requestedRepo;
+    _setCustomRecipesSummary('Could not load custom recipes: ' + String(resp.error || 'Unknown error'), 'error');
+    if (!opts.silent) {
+      toast('Could not load custom recipes: ' + String(resp.error || 'Unknown error'), 'error');
+    }
+    return;
+  }
+
+  const resolvedRepo = String(resp && (resp.repo_path || requestedRepo) || requestedRepo).trim();
+  _setRecipeCatalogFromPayload(resp || {}, resolvedRepo);
+  const overlay = document.getElementById('custom-recipes-overlay');
+  if (overlay && !overlay.classList.contains('hidden')) {
+    _populateCustomRecipesSelector();
+  }
+}
+
+function scheduleRecipeCatalogRefresh(opts = {}) {
+  if (recipeCatalogRefreshTimer) {
+    clearTimeout(recipeCatalogRefreshTimer);
+    recipeCatalogRefreshTimer = null;
+  }
+  const delayRaw = Number(opts.delayMs);
+  const delayMs = Number.isFinite(delayRaw) ? Math.max(0, Math.floor(delayRaw)) : 250;
+  const repoPath = String(opts.repoPath || '').trim();
+  recipeCatalogRefreshTimer = setTimeout(() => {
+    recipeCatalogRefreshTimer = null;
+    refreshRecipeCatalogForActiveRepo({
+      repoPath: repoPath || undefined,
+      silent: opts.silent !== false,
+    });
+  }, delayMs);
+}
+
+function syncCustomRecipesRepoFromMain() {
+  const repo = _activeRepoPath();
+  const input = document.getElementById('custom-recipes-repo');
+  if (input) input.value = repo;
+  return repo;
+}
+
+function _setCustomRecipesStatus(text, tone = 'muted') {
+  const el = document.getElementById('custom-recipes-status');
+  if (!el) return;
+  el.textContent = String(text || '');
+  if (tone === 'ok') {
+    el.style.color = 'var(--success)';
+  } else if (tone === 'warn') {
+    el.style.color = 'var(--warning)';
+  } else if (tone === 'error') {
+    el.style.color = 'var(--danger)';
+  } else {
+    el.style.color = 'var(--text2)';
+  }
+}
+
+function _defaultCustomRecipeTemplate() {
+  return {
+    id: 'my_custom_autopilot',
+    name: 'My Custom Autopilot',
+    description: 'Repository-specific workflow recipe',
+    sequence: 'Discover -> Implement -> Validate',
+    steps: [
+      {
+        name: '01 Discover Opportunities',
+        job_type: 'feature_discovery',
+        loop_count: 1,
+        prompt_mode: 'preset',
+        on_failure: 'skip',
+        max_retries: 1,
+        enabled: true,
+        agent: 'auto',
+      },
+      {
+        name: '02 Implement Highest ROI',
+        job_type: 'implementation',
+        loop_count: 1,
+        prompt_mode: 'preset',
+        on_failure: 'abort',
+        max_retries: 1,
+        enabled: true,
+        agent: 'auto',
+      },
+      {
+        name: '03 Verify Stability',
+        job_type: 'testing',
+        loop_count: 1,
+        prompt_mode: 'preset',
+        on_failure: 'abort',
+        max_retries: 1,
+        enabled: true,
+        agent: 'auto',
+      },
+    ],
+  };
+}
+
+function _populateCustomRecipesSelector(selectedId = '') {
+  const select = document.getElementById('custom-recipes-select');
+  if (!select) return;
+  const target = String(selectedId || select.value || '').trim();
+  let html = '<option value="">Select custom recipe...</option>';
+  customRecipeSummaries.forEach((row) => {
+    const id = String(row && row.id || '').trim();
+    if (!id) return;
+    const name = String(row && row.name || id).trim() || id;
+    html += '<option value="' + escAttr(id) + '">' + esc(name) + '</option>';
+  });
+  select.innerHTML = html;
+  if (target && customRecipeSummaries.some((row) => String(row && row.id || '').trim() === target)) {
+    select.value = target;
+  } else {
+    select.value = '';
+  }
+}
+
+function _editorRecipeJsonValue() {
+  const el = document.getElementById('custom-recipe-json');
+  return el ? String(el.value || '').trim() : '';
+}
+
+function _readCustomRecipeEditorPayload() {
+  const text = _editorRecipeJsonValue();
+  if (!text) {
+    _setCustomRecipesStatus('Recipe JSON is required.', 'warn');
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      _setCustomRecipesStatus('Recipe JSON must be a single object.', 'warn');
+      return null;
+    }
+    return parsed;
+  } catch (e) {
+    _setCustomRecipesStatus('Recipe JSON parse error: ' + String(e), 'error');
+    return null;
+  }
+}
+
+function newCustomRecipeTemplate() {
+  const select = document.getElementById('custom-recipes-select');
+  if (select) select.value = '';
+  const editor = document.getElementById('custom-recipe-json');
+  if (editor) editor.value = JSON.stringify(_defaultCustomRecipeTemplate(), null, 2);
+  _setCustomRecipesStatus('Loaded starter recipe template. Edit and click Save Recipe.', 'muted');
+}
+
+async function refreshCustomRecipesModal() {
+  const repoInput = document.getElementById('custom-recipes-repo');
+  const repo = String(repoInput && repoInput.value || '').trim() || syncCustomRecipesRepoFromMain();
+  if (repoInput) repoInput.value = repo;
+  if (!repo) {
+    _populateCustomRecipesSelector('');
+    newCustomRecipeTemplate();
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+  _populateCustomRecipesSelector();
+  if (!customRecipeSummaries.length && !_editorRecipeJsonValue()) {
+    newCustomRecipeTemplate();
+  }
+  _setCustomRecipesStatus('Custom recipe catalog loaded.', 'ok');
+}
+
+async function openCustomRecipesModal() {
+  syncCustomRecipesRepoFromMain();
+  _setCustomRecipesStatus('', 'muted');
+  _openOverlay('custom-recipes-overlay', '#custom-recipes-repo');
+  await refreshCustomRecipesModal();
+}
+
+function hideCustomRecipesModal() {
+  _closeOverlay('custom-recipes-overlay');
+}
+
+async function loadSelectedCustomRecipeIntoEditor() {
+  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+  const select = document.getElementById('custom-recipes-select');
+  const recipeId = String(select && select.value || '').trim();
+  if (!recipeId) {
+    _setCustomRecipesStatus('Select a custom recipe to load.', 'warn');
+    return;
+  }
+  if (!repo) {
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const resp = await api('/api/recipes/' + encodeURIComponent(recipeId) + '?repo_path=' + encodeURIComponent(repo));
+  if (resp && resp.error) {
+    _setCustomRecipesStatus('Could not load recipe: ' + String(resp.error || 'Unknown error'), 'error');
+    return;
+  }
+  const payload = Object.assign({}, resp || {});
+  delete payload.source;
+  const editor = document.getElementById('custom-recipe-json');
+  if (editor) editor.value = JSON.stringify(payload, null, 2);
+  _setCustomRecipesStatus('Loaded recipe "' + recipeId + '".', 'ok');
+}
+
+async function saveCustomRecipeFromEditor() {
+  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+  if (!repo) {
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const payload = _readCustomRecipeEditorPayload();
+  if (!payload) return;
+  const resp = await postJson('/api/recipes/custom/save', {
+    repo_path: repo,
+    recipe: payload,
+  });
+  if (resp.error) {
+    _setCustomRecipesStatus(String(resp.error || 'Could not save custom recipe.'), 'error');
+    return;
+  }
+  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+  _populateCustomRecipesSelector(String(resp.recipe && resp.recipe.id || '').trim());
+  const editorPayload = Object.assign({}, resp.recipe || payload);
+  delete editorPayload.source;
+  const editor = document.getElementById('custom-recipe-json');
+  if (editor) editor.value = JSON.stringify(editorPayload, null, 2);
+  const verb = resp.created ? 'Created' : 'Updated';
+  _setCustomRecipesStatus(verb + ' custom recipe "' + String(resp.recipe && resp.recipe.id || '').trim() + '".', 'ok');
+  toast(verb + ' custom recipe.', 'success');
+}
+
+async function deleteSelectedCustomRecipe() {
+  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+  if (!repo) {
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const select = document.getElementById('custom-recipes-select');
+  let recipeId = String(select && select.value || '').trim();
+  if (!recipeId) {
+    const payload = _readCustomRecipeEditorPayload();
+    recipeId = String(payload && payload.id || '').trim();
+  }
+  if (!recipeId) {
+    _setCustomRecipesStatus('Select or define a recipe id first.', 'warn');
+    return;
+  }
+  if (!confirm('Delete custom recipe "' + recipeId + '"?')) return;
+
+  const resp = await postJson('/api/recipes/custom/delete', {
+    repo_path: repo,
+    recipe_id: recipeId,
+  });
+  if (resp.error) {
+    _setCustomRecipesStatus(String(resp.error || 'Could not delete custom recipe.'), 'error');
+    return;
+  }
+
+  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+  _populateCustomRecipesSelector('');
+  newCustomRecipeTemplate();
+  _setCustomRecipesStatus('Deleted custom recipe "' + recipeId + '".', 'ok');
+  toast('Deleted custom recipe.', 'success');
+}
+
+async function exportSelectedCustomRecipe() {
+  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+  if (!repo) {
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const select = document.getElementById('custom-recipes-select');
+  let recipeId = String(select && select.value || '').trim();
+  if (!recipeId) {
+    const payload = _readCustomRecipeEditorPayload();
+    recipeId = String(payload && payload.id || '').trim();
+  }
+  if (!recipeId) {
+    _setCustomRecipesStatus('Select or define a recipe id first.', 'warn');
+    return;
+  }
+  const resp = await api('/api/recipes/custom/export?repo_path=' + encodeURIComponent(repo) + '&recipe_id=' + encodeURIComponent(recipeId));
+  if (resp && resp.error) {
+    _setCustomRecipesStatus(String(resp.error || 'Could not export recipe.'), 'error');
+    return;
+  }
+  const payload = resp && resp.payload ? resp.payload : { recipes: [] };
+  const importEl = document.getElementById('custom-recipes-import-json');
+  if (importEl) importEl.value = JSON.stringify(payload, null, 2);
+  const rows = Array.isArray(payload && payload.recipes) ? payload.recipes : [];
+  if (rows.length) {
+    const editor = document.getElementById('custom-recipe-json');
+    if (editor) editor.value = JSON.stringify(rows[0], null, 2);
+  }
+  _setCustomRecipesStatus('Exported recipe "' + recipeId + '" to Import/Export editor.', 'ok');
+}
+
+async function exportAllCustomRecipesToEditor() {
+  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+  if (!repo) {
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const resp = await api('/api/recipes/custom/export?repo_path=' + encodeURIComponent(repo));
+  if (resp && resp.error) {
+    _setCustomRecipesStatus(String(resp.error || 'Could not export recipes.'), 'error');
+    return;
+  }
+  const payload = resp && resp.payload ? resp.payload : { recipes: [] };
+  const importEl = document.getElementById('custom-recipes-import-json');
+  if (importEl) importEl.value = JSON.stringify(payload, null, 2);
+  _setCustomRecipesStatus('Exported all custom recipes to Import/Export editor.', 'ok');
+}
+
+async function importCustomRecipesFromJson() {
+  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+  if (!repo) {
+    _setCustomRecipesStatus('Set a repository path first.', 'warn');
+    return;
+  }
+  const importEl = document.getElementById('custom-recipes-import-json');
+  const raw = String(importEl && importEl.value || '').trim();
+  if (!raw) {
+    _setCustomRecipesStatus('Paste recipe JSON into the Import/Export editor first.', 'warn');
+    return;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (e) {
+    _setCustomRecipesStatus('Import JSON parse error: ' + String(e), 'error');
+    return;
+  }
+  const replace = !!(document.getElementById('custom-recipes-import-replace') && document.getElementById('custom-recipes-import-replace').checked);
+  const resp = await postJson('/api/recipes/custom/import', {
+    repo_path: repo,
+    payload: payload,
+    replace: replace,
+  });
+  if (resp.error) {
+    _setCustomRecipesStatus(String(resp.error || 'Could not import recipes.'), 'error');
+    return;
+  }
+
+  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+  const first = customRecipeSummaries.length ? String(customRecipeSummaries[0].id || '').trim() : '';
+  _populateCustomRecipesSelector(first);
+  if (first) {
+    await loadSelectedCustomRecipeIntoEditor();
+  } else {
+    newCustomRecipeTemplate();
+  }
+  _setCustomRecipesStatus(
+    'Imported ' + Number(resp.imported || 0) + ' recipe(s): ' + Number(resp.created || 0) + ' created, ' + Number(resp.updated || 0) + ' updated.',
+    'ok',
+  );
+  toast('Imported custom recipes.', 'success');
+}
+
+function resetCustomRecipesForm() {
+  const repo = _activeRepoPath();
+  const repoEl = document.getElementById('custom-recipes-repo');
+  if (repoEl) repoEl.value = repo;
+  const selectEl = document.getElementById('custom-recipes-select');
+  if (selectEl) selectEl.value = '';
+  const recipeEl = document.getElementById('custom-recipe-json');
+  if (recipeEl) recipeEl.value = '';
+  const importEl = document.getElementById('custom-recipes-import-json');
+  if (importEl) importEl.value = '';
+  const replaceEl = document.getElementById('custom-recipes-import-replace');
+  if (replaceEl) replaceEl.checked = false;
+  _setCustomRecipesStatus('', 'muted');
+  hideCustomRecipesModal();
 }
 
 function _activeMainTabId() {
@@ -9983,6 +10515,7 @@ function validateRepo() {
   clearTimeout(repoTimeout);
   const path = document.getElementById('repo-path').value.trim();
   config.repo_path = path;
+  scheduleRecipeCatalogRefresh({ delayMs: 220, silent: true });
   scheduleDiagnosticsRefresh('chain');
   scheduleGitSyncRefresh({ delayMs: 300, silent: true });
   if (!path) {
@@ -11348,6 +11881,7 @@ async function clearEverything() {
   resetTodoWishlistForm();
   resetFeatureDreamsForm();
   resetGeneralRequestForm();
+  resetCustomRecipesForm();
   closeRunPlanModal({ action: 'cancel' });
   closePermissionsHelpModal();
   closeReadOnlyWarningModal('cancel');
@@ -11982,6 +12516,7 @@ function validatePipeRepo() {
   clearTimeout(pipeRepoTimeout);
   const path = document.getElementById('pipe-repo-path').value.trim();
   pipeConfig.repo_path = path;
+  scheduleRecipeCatalogRefresh({ delayMs: 220, silent: true });
   scheduleDiagnosticsRefresh('pipeline');
   scheduleGitSyncRefresh({ delayMs: 300, silent: true });
   if (!path) {

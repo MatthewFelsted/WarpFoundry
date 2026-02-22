@@ -106,6 +106,7 @@ These are based on the current codebase and CLI parser, not marketing copy:
 - Prompt tools (`list-prompts`, `optimize-prompts`, `list-recipes`)
 - Optional visual UI testing via CUA (`warpfoundry visual-test --url <url>`)
 - Built-in Autopilot recipes (8 total; see `warpfoundry list-recipes`)
+- Per-repo custom Autopilot recipe editor (GUI modal + API CRUD/import/export JSON for sharing)
 - `dry-run` and `apply` execution modes
 
 ## Quick Start

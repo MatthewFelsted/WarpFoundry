@@ -3839,8 +3839,11 @@ def test_recipes_api_lists_default_and_known_recipes(client):
     assert data["default_recipe_id"] == "autopilot_default"
     recipes = {entry["id"]: entry for entry in data["recipes"]}
     assert "autopilot_default" in recipes
+    assert recipes["autopilot_default"]["source"] == "builtin"
     assert recipes["autopilot_default"]["step_count"] == 7
     assert "New Features" in recipes["autopilot_default"]["sequence"]
+    assert "recipe_steps" in data
+    assert "autopilot_default" in data["recipe_steps"]
 
 
 def test_recipes_api_detail_exposes_new_features_prompt(client):
@@ -3864,6 +3867,123 @@ def test_recipes_api_detail_rejects_unknown_id(client):
     assert resp.status_code == 404
     assert data
     assert data["error"] == "not found"
+
+
+def test_recipes_api_includes_custom_recipes_for_repo(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    save_resp = client.post(
+        "/api/recipes/custom/save",
+        json={
+            "repo_path": str(repo),
+            "recipe": {
+                "id": "custom_fast_lane",
+                "name": "Custom Fast Lane",
+                "description": "Focused implementation flow",
+                "steps": [
+                    {"job_type": "implementation"},
+                    {"job_type": "testing", "on_failure": "abort"},
+                ],
+            },
+        },
+    )
+    save_data = save_resp.get_json()
+    assert save_resp.status_code == 200
+    assert save_data
+    assert save_data["status"] == "saved"
+    assert save_data["recipe"]["id"] == "custom_fast_lane"
+
+    list_resp = client.get(
+        "/api/recipes",
+        query_string={"repo_path": str(repo)},
+    )
+    list_data = list_resp.get_json()
+    assert list_resp.status_code == 200
+    assert list_data
+    assert list_data["custom_recipe_count"] == 1
+    assert list_data["custom_store_path"].endswith("CUSTOM_RECIPES.json")
+    by_id = {entry["id"]: entry for entry in list_data["recipes"]}
+    assert "custom_fast_lane" in by_id
+    assert by_id["custom_fast_lane"]["source"] == "custom"
+    assert "custom_fast_lane" in list_data["recipe_steps"]
+
+    detail_resp = client.get(
+        "/api/recipes/custom_fast_lane",
+        query_string={"repo_path": str(repo)},
+    )
+    detail_data = detail_resp.get_json()
+    assert detail_resp.status_code == 200
+    assert detail_data
+    assert detail_data["id"] == "custom_fast_lane"
+    assert detail_data["source"] == "custom"
+
+
+def test_custom_recipes_import_export_and_delete_endpoints(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+
+    import_resp = client.post(
+        "/api/recipes/custom/import",
+        json={
+            "repo_path": str(repo),
+            "payload": {
+                "recipes": [
+                    {
+                        "id": "alpha_recipe",
+                        "name": "Alpha",
+                        "steps": [{"job_type": "implementation"}],
+                    },
+                    {
+                        "id": "beta_recipe",
+                        "name": "Beta",
+                        "steps": [{"job_type": "testing"}],
+                    },
+                ]
+            },
+        },
+    )
+    import_data = import_resp.get_json()
+    assert import_resp.status_code == 200
+    assert import_data
+    assert import_data["status"] == "imported"
+    assert import_data["imported"] == 2
+    assert import_data["created"] == 2
+
+    export_one_resp = client.get(
+        "/api/recipes/custom/export",
+        query_string={"repo_path": str(repo), "recipe_id": "alpha_recipe"},
+    )
+    export_one_data = export_one_resp.get_json()
+    assert export_one_resp.status_code == 200
+    assert export_one_data
+    exported_rows = export_one_data["payload"]["recipes"]
+    assert len(exported_rows) == 1
+    assert exported_rows[0]["id"] == "alpha_recipe"
+
+    list_custom_resp = client.get(
+        "/api/recipes/custom",
+        query_string={"repo_path": str(repo)},
+    )
+    list_custom_data = list_custom_resp.get_json()
+    assert list_custom_resp.status_code == 200
+    assert list_custom_data
+    assert len(list_custom_data["recipes"]) == 2
+
+    delete_resp = client.post(
+        "/api/recipes/custom/delete",
+        json={"repo_path": str(repo), "recipe_id": "alpha_recipe"},
+    )
+    delete_data = delete_resp.get_json()
+    assert delete_resp.status_code == 200
+    assert delete_data
+    assert delete_data["status"] == "deleted"
+
+    missing_delete_resp = client.post(
+        "/api/recipes/custom/delete",
+        json={"repo_path": str(repo), "recipe_id": "missing_recipe"},
+    )
+    missing_delete_data = missing_delete_resp.get_json()
+    assert missing_delete_resp.status_code == 404
+    assert missing_delete_data
+    assert missing_delete_data["error"] == "not found"
 
 
 def test_owner_todo_wishlist_get_and_save_roundtrip(client, tmp_path: Path):
@@ -4210,6 +4330,29 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert 'id="pipe-smoke-test-cmd"' in html
     assert "default_test_policy" in html
     assert "data-phase-test-policy" in html
+
+
+def test_index_includes_custom_recipe_editor_controls(client):
+    resp = client.get("/")
+    html = resp.get_data(as_text=True)
+
+    assert resp.status_code == 200
+    assert 'onclick="openCustomRecipesModal()"' in html
+    assert 'id="custom-recipe-cards"' in html
+    assert 'id="custom-recipes-summary"' in html
+    assert 'id="custom-recipes-overlay"' in html
+    assert 'id="custom-recipes-repo"' in html
+    assert 'id="custom-recipes-select"' in html
+    assert 'id="custom-recipe-json"' in html
+    assert 'id="custom-recipes-import-json"' in html
+    assert "async function saveCustomRecipeFromEditor()" in html
+    assert "async function importCustomRecipesFromJson()" in html
+    assert "async function exportSelectedCustomRecipe()" in html
+    assert "/api/recipes/custom/save" in html
+    assert "/api/recipes/custom/import" in html
+    assert "/api/recipes/custom/export?repo_path=" in html
+    assert "scheduleRecipeCatalogRefresh(" in html
+    assert "refreshRecipeCatalogForActiveRepo(" in html
 
 
 def test_index_includes_repo_ideas_generator_controls(client):

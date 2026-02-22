@@ -45,9 +45,15 @@ from codex_manager.gui.models import (
 from codex_manager.gui.presets import get_preset, list_presets
 from codex_manager.gui.recipes import (
     DEFAULT_RECIPE_ID,
+    custom_recipes_path,
+    delete_custom_recipe,
+    export_custom_recipes,
     get_recipe,
+    import_custom_recipes,
+    list_custom_recipes,
     list_recipe_summaries,
     recipe_steps_map,
+    save_custom_recipe,
 )
 from codex_manager.gui.stop_guidance import get_stop_guidance
 from codex_manager.monitoring import ModelCatalogWatchdog
@@ -5972,11 +5978,24 @@ def api_preset_detail(key: str):
 
 @app.route("/api/recipes")
 def api_recipes():
-    """List recipe summaries and default recipe id."""
+    """List recipe summaries (built-in + optional per-repo custom) and recipe steps."""
+    repo_raw = str(request.args.get("repo_path") or "").strip()
+    repo: Path | None = None
+    if repo_raw:
+        repo = Path(repo_raw).expanduser().resolve()
+        if not repo.is_dir():
+            return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    summaries = list_recipe_summaries(repo=repo)
+    custom_count = sum(1 for entry in summaries if str(entry.get("source") or "") == "custom")
     return jsonify(
         {
             "default_recipe_id": DEFAULT_RECIPE_ID,
-            "recipes": list_recipe_summaries(),
+            "repo_path": str(repo) if repo is not None else "",
+            "custom_store_path": str(custom_recipes_path(repo)) if repo is not None else "",
+            "custom_recipe_count": custom_count,
+            "recipes": summaries,
+            "recipe_steps": recipe_steps_map(repo=repo),
         }
     )
 
@@ -5984,10 +6003,161 @@ def api_recipes():
 @app.route("/api/recipes/<recipe_id>")
 def api_recipe_detail(recipe_id: str):
     """Return one recipe with full step definitions."""
-    recipe = get_recipe(recipe_id)
+    repo_raw = str(request.args.get("repo_path") or "").strip()
+    repo: Path | None = None
+    if repo_raw:
+        repo = Path(repo_raw).expanduser().resolve()
+        if not repo.is_dir():
+            return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    recipe = get_recipe(recipe_id, repo=repo)
     if recipe is None:
         return jsonify({"error": "not found"}), 404
     return jsonify(recipe)
+
+
+@app.route("/api/recipes/custom")
+def api_custom_recipes():
+    """Return custom recipes for a repository."""
+    repo_raw = str(request.args.get("repo_path") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    recipes = list_custom_recipes(repo)
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "path": str(custom_recipes_path(repo)),
+            "recipes": recipes,
+        }
+    )
+
+
+@app.route("/api/recipes/custom/save", methods=["POST"])
+def api_custom_recipes_save():
+    """Create/update one custom recipe for a repository."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    recipe_payload = data.get("recipe")
+    if not isinstance(recipe_payload, dict):
+        return jsonify({"error": "recipe object is required."}), 400
+
+    try:
+        _ensure_codex_manager_gitignore_rules(repo)
+        recipe, created, path = save_custom_recipe(repo, recipe_payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "status": "saved",
+            "created": created,
+            "repo_path": str(repo),
+            "path": str(path),
+            "recipe": recipe,
+            "custom_recipes": list_custom_recipes(repo),
+        }
+    )
+
+
+@app.route("/api/recipes/custom/delete", methods=["POST"])
+def api_custom_recipes_delete():
+    """Delete one custom recipe for a repository."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    recipe_id = str(data.get("recipe_id") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    if not recipe_id:
+        return jsonify({"error": "recipe_id is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    try:
+        deleted, path = delete_custom_recipe(repo, recipe_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not deleted:
+        return jsonify({"error": "not found"}), 404
+
+    return jsonify(
+        {
+            "status": "deleted",
+            "repo_path": str(repo),
+            "path": str(path),
+            "recipe_id": recipe_id,
+            "custom_recipes": list_custom_recipes(repo),
+        }
+    )
+
+
+@app.route("/api/recipes/custom/import", methods=["POST"])
+def api_custom_recipes_import():
+    """Import custom recipe JSON into a repository."""
+    data = request.get_json(silent=True) or {}
+    repo_raw = str(data.get("repo_path") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    payload = data.get("payload")
+    if payload is None:
+        return jsonify({"error": "payload is required."}), 400
+    replace = bool(data.get("replace", False))
+
+    try:
+        _ensure_codex_manager_gitignore_rules(repo)
+        summary, path = import_custom_recipes(repo, payload, replace=replace)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "status": "imported",
+            "repo_path": str(repo),
+            "path": str(path),
+            **summary,
+            "custom_recipes": list_custom_recipes(repo),
+        }
+    )
+
+
+@app.route("/api/recipes/custom/export")
+def api_custom_recipes_export():
+    """Export custom recipe JSON for a repository."""
+    repo_raw = str(request.args.get("repo_path") or "").strip()
+    if not repo_raw:
+        return jsonify({"error": "repo_path is required."}), 400
+    repo = Path(repo_raw).expanduser().resolve()
+    if not repo.is_dir():
+        return jsonify({"error": f"Repo path not found: {repo_raw}"}), 400
+
+    recipe_id = str(request.args.get("recipe_id") or "").strip()
+    try:
+        payload = export_custom_recipes(repo, recipe_id=recipe_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify(
+        {
+            "repo_path": str(repo),
+            "path": str(custom_recipes_path(repo)),
+            "recipe_id": recipe_id,
+            "payload": payload,
+        }
+    )
 
 
 # â”€â”€ Chain control â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
