@@ -5660,6 +5660,60 @@ def test_git_commit_stage_then_unstage_file(client, tmp_path: Path):
     assert unstage_entry["untracked"] is True
 
 
+def test_git_commit_stage_batches_paths_to_avoid_command_length_overflow(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    paths = [f"dir/{idx:03d}_{'x' * 60}.txt" for idx in range(14)]
+    calls: list[tuple[str, ...]] = []
+
+    def _fake_run(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        calls.append(tuple(args))
+        return subprocess.CompletedProcess(["git", *args], 0, "", "")
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run)
+    monkeypatch.setattr(gui_app_module, "_git_sync_path_batch_length_limit", lambda: 260)
+
+    result = gui_app_module._git_stage_paths(repo, paths)
+
+    assert result.returncode == 0
+    assert len(calls) > 1
+    flattened: list[str] = []
+    for call in calls:
+        assert call[:2] == ("add", "--")
+        flattened.extend(list(call[2:]))
+    assert flattened == paths
+
+
+def test_git_commit_unstage_batches_paths_and_preserves_fallback(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    paths = [f"dir/{idx:03d}_{'y' * 60}.txt" for idx in range(14)]
+    calls: list[tuple[str, ...]] = []
+    restore_calls = {"count": 0}
+
+    def _fake_run(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        calls.append(tuple(args))
+        if args and args[0] == "restore":
+            restore_calls["count"] += 1
+            if restore_calls["count"] == 1:
+                return subprocess.CompletedProcess(["git", *args], 1, "", "restore failed")
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+        if args and args[0] == "rm":
+            return subprocess.CompletedProcess(["git", *args], 0, "", "")
+        return subprocess.CompletedProcess(["git", *args], 0, "", "")
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run)
+    monkeypatch.setattr(gui_app_module, "_git_sync_path_batch_length_limit", lambda: 260)
+
+    result = gui_app_module._git_unstage_paths(repo, paths)
+
+    assert result.returncode == 0
+    assert restore_calls["count"] > 1
+    assert any(call and call[0] == "rm" for call in calls)
+
+
 def test_git_commit_create_commits_staged_changes(client, tmp_path: Path):
     remote = _make_remote_repo(tmp_path)
     local = _clone_tracking_repo(tmp_path, remote, clone_name="local-commit-create")

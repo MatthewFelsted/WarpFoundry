@@ -213,6 +213,8 @@ _GIT_CLONE_TIMEOUT_SECONDS = 180
 _GIT_SYNC_TIMEOUT_SECONDS = 30
 _GIT_SIGNING_CHECK_TIMEOUT_SECONDS = 20
 _GIT_SIGNING_PUSH_GUARD_KEY = "warpfoundry.signing.requirePushGuard"
+_GIT_SYNC_PATH_BATCH_LIMIT_WINDOWS = 7600
+_GIT_SYNC_PATH_BATCH_LIMIT_POSIX = 30000
 _DEFAULT_BRANCH_SENTINEL = "__remote_default__"
 _OWNER_CONTEXT_MAX_FILES = 6
 _OWNER_CONTEXT_MAX_FILE_CHARS = 6000
@@ -7099,6 +7101,43 @@ def _extract_git_error_message(exc: subprocess.CalledProcessError) -> str:
     return str(exc)
 
 
+def _estimate_argv_length(argv: list[str]) -> int:
+    """Estimate command-line length for conservative Windows/POSIX batching."""
+    try:
+        return len(subprocess.list2cmdline(argv))
+    except Exception:
+        return sum(len(str(part or "")) + 3 for part in argv)
+
+
+def _git_sync_path_batch_length_limit() -> int:
+    """Return argv length ceiling used for staged/unstaged path batching."""
+    if os.name == "nt":
+        return _GIT_SYNC_PATH_BATCH_LIMIT_WINDOWS
+    return _GIT_SYNC_PATH_BATCH_LIMIT_POSIX
+
+
+def _batch_git_paths_for_command(*, prefix_args: tuple[str, ...], paths: list[str]) -> list[list[str]]:
+    """Split path lists so git argv stays below OS command-line limits."""
+    if not paths:
+        return []
+
+    limit = _git_sync_path_batch_length_limit()
+    base_argv = ["git", *prefix_args]
+    batches: list[list[str]] = []
+    current: list[str] = []
+    for path in paths:
+        candidate = [*current, path]
+        estimated = _estimate_argv_length([*base_argv, *candidate])
+        if current and estimated > limit:
+            batches.append(current)
+            current = [path]
+            continue
+        current = candidate
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _run_git_sync_command(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run one git command for sync APIs and return the completed process."""
     return subprocess.run(
@@ -8167,16 +8206,39 @@ def _git_commit_user_error_status(message: str) -> int:
     return 400
 
 
+def _git_stage_paths(repo: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
+    """Stage selected paths using command-length-safe batching."""
+    batches = _batch_git_paths_for_command(prefix_args=("add", "--"), paths=paths)
+    last_result: subprocess.CompletedProcess[str] | None = None
+    for batch in batches:
+        stage_result = _run_git_sync_command(repo, "add", "--", *batch)
+        if stage_result.returncode != 0:
+            return stage_result
+        last_result = stage_result
+    if last_result is not None:
+        return last_result
+    return _run_git_sync_command(repo, "add", "--")
+
+
 def _git_unstage_paths(repo: Path, paths: list[str]) -> subprocess.CompletedProcess[str]:
-    """Unstage paths, including fallback support for unborn HEAD repositories."""
-    restore_result = _run_git_sync_command(repo, "restore", "--staged", "--", *paths)
-    if restore_result.returncode == 0:
+    """Unstage paths (with batching) and fallback for unborn HEAD repositories."""
+    batches = _batch_git_paths_for_command(prefix_args=("restore", "--staged", "--"), paths=paths)
+    last_result: subprocess.CompletedProcess[str] | None = None
+    for batch in batches:
+        restore_result = _run_git_sync_command(repo, "restore", "--staged", "--", *batch)
+        if restore_result.returncode == 0:
+            last_result = restore_result
+            continue
+
+        fallback_result = _run_git_sync_command(repo, "rm", "--cached", "--quiet", "--", *batch)
+        if fallback_result.returncode == 0:
+            last_result = fallback_result
+            continue
         return restore_result
 
-    fallback_result = _run_git_sync_command(repo, "rm", "--cached", "--quiet", "--", *paths)
-    if fallback_result.returncode == 0:
-        return fallback_result
-    return restore_result
+    if last_result is not None:
+        return last_result
+    return _run_git_sync_command(repo, "restore", "--staged", "--")
 
 
 def _git_remote_names(repo: Path) -> list[str]:
@@ -9609,7 +9671,7 @@ def api_git_sync_commit_stage():
         if include_all:
             stage_result = _run_git_sync_command(repo, "add", "--all")
         else:
-            stage_result = _run_git_sync_command(repo, "add", "--", *target_paths)
+            stage_result = _git_stage_paths(repo, target_paths)
         if stage_result.returncode != 0:
             detail = _extract_git_process_error(stage_result, "git add failed")
             return jsonify({"error": f"Git stage failed: {detail}"}), 502
