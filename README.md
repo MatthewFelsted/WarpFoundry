@@ -100,6 +100,7 @@ These are based on the current codebase and CLI parser, not marketing copy:
 - Git Sync signing setup (GPG/SSH) with validation and push guardrails in GUI
 - Pipeline "Promote Last Dry-Run to Apply" action with diff/test summary confirmation
 - Run Comparison cost analytics (estimated USD by model/provider, lowest-cost + cost-efficiency badges, budget-outlier flagging)
+- One-click run artifact bundle export (zip outputs/logs/config/history with per-run export/download from Run Comparison)
 - Setup diagnostics with actionable next steps (`warpfoundry doctor --repo <path>`)
 - Prompt tools (`list-prompts`, `optimize-prompts`, `list-recipes`)
 - Optional visual UI testing via CUA (`warpfoundry visual-test --url <url>`)

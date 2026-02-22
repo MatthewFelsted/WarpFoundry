@@ -20,6 +20,7 @@ import threading
 import time
 import traceback
 import webbrowser
+import zipfile
 from collections import Counter
 from contextlib import suppress
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 from codex_manager import __version__
 from codex_manager.file_io import read_text_utf8_resilient
@@ -128,6 +129,8 @@ _PIPELINE_LOG_FILES = frozenset(
         "HISTORY.md",
     }
 )
+_RUN_ARTIFACT_BUNDLE_INCLUDE_KEYS = ("outputs", "logs", "config", "history")
+_RUN_ARTIFACT_BUNDLE_LOOKBACK_LIMIT = 250
 _RUNNABLE_DIAGNOSTIC_ACTION_KEYS = frozenset(
     {
         "init_git_repo",
@@ -972,6 +975,280 @@ def _pipeline_logs_dir(repo: Path) -> Path:
 def _history_jsonl_path(repo: Path) -> Path:
     """Return the run-history JSONL path for *repo*."""
     return _pipeline_logs_dir(repo) / "HISTORY.jsonl"
+
+
+def _pipeline_artifact_bundle_dir(repo: Path) -> Path:
+    """Return the run-artifact bundle directory under ``.codex_manager/output_history``."""
+    return repo / ".codex_manager" / "output_history" / "artifact_bundles"
+
+
+def _normalize_run_artifact_bundle_includes(payload: object) -> dict[str, bool]:
+    """Normalize include toggles for run-artifact bundle export APIs."""
+    data = payload if isinstance(payload, dict) else {}
+    return {
+        key: _safe_bool(data.get(f"include_{key}"), True)
+        for key in _RUN_ARTIFACT_BUNDLE_INCLUDE_KEYS
+    }
+
+
+def _find_run_comparison_run(repo: Path, run_id: str) -> dict[str, object] | None:
+    """Return one run-comparison row by run id when available."""
+    target = str(run_id or "").strip()
+    if not target:
+        return None
+    payload = _pipeline_run_comparison(
+        repo,
+        scope="all",
+        limit=_RUN_ARTIFACT_BUNDLE_LOOKBACK_LIMIT,
+    )
+    rows_obj = payload.get("runs") if isinstance(payload, dict) else []
+    rows = rows_obj if isinstance(rows_obj, list) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("run_id") or "").strip() == target:
+            return dict(row)
+    return None
+
+
+def _history_events_for_run(repo: Path, run_id: str) -> list[dict[str, object]]:
+    """Return HISTORY.jsonl events associated with a run id."""
+    target = str(run_id or "").strip()
+    if not target:
+        return []
+    history_path = _history_jsonl_path(repo)
+    if not history_path.is_file():
+        return []
+    try:
+        raw = _read_text_utf8_resilient(history_path)
+    except Exception:
+        return []
+
+    events: list[dict[str, object]] = []
+    open_run_by_scope: dict[str, str] = {}
+    for line in raw.splitlines():
+        row = line.strip()
+        if not row:
+            continue
+        try:
+            event = json.loads(row)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        scope = str(event.get("scope") or "").strip().lower()
+        if scope not in {"chain", "pipeline"}:
+            continue
+        event_name = str(event.get("event") or "").strip().lower()
+        event_id = str(event.get("id") or "").strip()
+        context_obj = event.get("context")
+        context = context_obj if isinstance(context_obj, dict) else {}
+        context_run_id = str(context.get("run_id") or "").strip()
+
+        if event_name == "run_started":
+            derived_run_id = context_run_id or event_id
+            if derived_run_id:
+                open_run_by_scope[scope] = derived_run_id
+        else:
+            derived_run_id = context_run_id or open_run_by_scope.get(scope, "")
+
+        if derived_run_id == target:
+            enriched = dict(event)
+            patched_context = dict(context)
+            if target and not str(patched_context.get("run_id") or "").strip():
+                patched_context["run_id"] = target
+            enriched["context"] = patched_context
+            events.append(enriched)
+
+        if event_name == "run_finished":
+            open_run_by_scope.pop(scope, None)
+    return events
+
+
+def _zip_add_text(archive: zipfile.ZipFile, *, arcname: str, content: str) -> None:
+    """Write one UTF-8 text entry into a zip archive."""
+    normalized_arcname = str(arcname or "").replace("\\", "/").strip("/") or "entry.txt"
+    archive.writestr(normalized_arcname, str(content or ""))
+
+
+def _zip_add_directory(
+    archive: zipfile.ZipFile,
+    *,
+    source_dir: Path,
+    archive_prefix: str,
+    exclude_top_level: set[str] | None = None,
+) -> int:
+    """Recursively add files from *source_dir* under *archive_prefix*."""
+    if not source_dir.is_dir():
+        return 0
+    excluded = {str(name or "").strip().lower() for name in (exclude_top_level or set())}
+    added = 0
+    prefix = str(archive_prefix or "").replace("\\", "/").strip("/")
+    for path in sorted(source_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(source_dir)
+        if rel.parts and rel.parts[0].strip().lower() in excluded:
+            continue
+        rel_posix = rel.as_posix()
+        arcname = f"{prefix}/{rel_posix}" if prefix else rel_posix
+        archive.write(path, arcname)
+        added += 1
+    return added
+
+
+def _create_run_artifact_bundle(
+    repo: Path,
+    *,
+    run_id: str,
+    includes: dict[str, bool],
+) -> dict[str, object]:
+    """Create a zip bundle with selected run artifacts and return bundle metadata."""
+    run_key = str(run_id or "").strip()
+    if not run_key:
+        raise ValueError("run_id is required.")
+
+    normalized_includes = {
+        key: bool(includes.get(key))
+        for key in _RUN_ARTIFACT_BUNDLE_INCLUDE_KEYS
+    }
+    if not any(normalized_includes.values()):
+        raise ValueError("Select at least one artifact category to export.")
+
+    run = _find_run_comparison_run(repo, run_key)
+    run_events = _history_events_for_run(repo, run_key)
+    if run is None and not run_events:
+        raise FileNotFoundError(f"Run id not found in history: {run_key}")
+    if run is None:
+        first_scope = str(run_events[0].get("scope") or "").strip() if run_events else ""
+        run = {
+            "run_id": run_key,
+            "scope": first_scope,
+            "event_count": len(run_events),
+        }
+
+    start_context_obj = run.get("start_context")
+    start_context = start_context_obj if isinstance(start_context_obj, dict) else {}
+    config_snapshot_obj = start_context.get("config_snapshot")
+    config_snapshot = config_snapshot_obj if isinstance(config_snapshot_obj, dict) else {}
+
+    export_dir = _pipeline_artifact_bundle_dir(repo)
+    export_dir.mkdir(parents=True, exist_ok=True)
+    export_dir_resolved = export_dir.resolve()
+
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", run_key).strip("-") or "run"
+    if len(slug) > 56:
+        slug = slug[:56].rstrip("-") or "run"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    bundle_name = f"run-artifacts-{timestamp}-{slug}.zip"
+    bundle_path = (export_dir_resolved / bundle_name).resolve()
+    if bundle_path.parent != export_dir_resolved:
+        raise RuntimeError("Refusing to write artifact bundle outside export directory.")
+
+    created_at = _utc_now_iso_z()
+    entry_count = 0
+    with zipfile.ZipFile(bundle_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        if normalized_includes["outputs"]:
+            entry_count += _zip_add_directory(
+                archive,
+                source_dir=_chain_output_dir(repo),
+                archive_prefix="outputs/current",
+            )
+            entry_count += _zip_add_directory(
+                archive,
+                source_dir=repo / ".codex_manager" / "output_history",
+                archive_prefix="outputs/history",
+                exclude_top_level={"artifact_bundles"},
+            )
+
+        if normalized_includes["logs"]:
+            entry_count += _zip_add_directory(
+                archive,
+                source_dir=_pipeline_logs_dir(repo),
+                archive_prefix="logs",
+            )
+
+        if normalized_includes["history"]:
+            history_path = _history_jsonl_path(repo)
+            if history_path.is_file():
+                archive.write(history_path, "history/HISTORY.jsonl")
+                entry_count += 1
+            if run_events:
+                run_events_jsonl = "\n".join(
+                    json.dumps(event, ensure_ascii=False) for event in run_events
+                )
+                _zip_add_text(
+                    archive,
+                    arcname="history/run-events.jsonl",
+                    content=(run_events_jsonl + "\n") if run_events_jsonl else "",
+                )
+                _zip_add_text(
+                    archive,
+                    arcname="history/run-events.json",
+                    content=json.dumps(run_events, indent=2, ensure_ascii=False),
+                )
+                entry_count += 2
+
+        if normalized_includes["config"]:
+            state_path = repo / ".codex_manager" / "state.json"
+            if state_path.is_file():
+                archive.write(state_path, "config/state.json")
+                entry_count += 1
+            _zip_add_text(
+                archive,
+                arcname="config/run-summary.json",
+                content=json.dumps(run, indent=2, ensure_ascii=False),
+            )
+            entry_count += 1
+            if start_context:
+                _zip_add_text(
+                    archive,
+                    arcname="config/run-start-context.json",
+                    content=json.dumps(start_context, indent=2, ensure_ascii=False),
+                )
+                entry_count += 1
+            if config_snapshot:
+                _zip_add_text(
+                    archive,
+                    arcname="config/run-config-snapshot.json",
+                    content=json.dumps(config_snapshot, indent=2, ensure_ascii=False),
+                )
+                entry_count += 1
+
+        manifest = {
+            "created_at": created_at,
+            "repo_path": str(repo),
+            "run_id": run_key,
+            "includes": normalized_includes,
+            "history_event_count": len(run_events),
+            "entry_count": entry_count,
+        }
+        _zip_add_text(
+            archive,
+            arcname="manifest.json",
+            content=json.dumps(manifest, indent=2, ensure_ascii=False),
+        )
+        entry_count += 1
+
+    size_bytes = bundle_path.stat().st_size if bundle_path.is_file() else 0
+    repo_q = quote(str(repo), safe="")
+    return {
+        "status": "created",
+        "repo_path": str(repo),
+        "run_id": run_key,
+        "run": run,
+        "includes": normalized_includes,
+        "history_event_count": len(run_events),
+        "bundle_name": bundle_name,
+        "bundle_path": str(bundle_path),
+        "bundle_size_bytes": int(size_bytes),
+        "entry_count": entry_count,
+        "created_at": created_at,
+        "download_url": (
+            f"/api/pipeline/run-comparison/export/{quote(bundle_name)}"
+            f"?repo_path={repo_q}"
+        ),
+    }
 
 
 def _resolve_pipeline_logs_repo_for_api(repo_hint: str = "") -> tuple[Path | None, str, int]:
@@ -10620,6 +10897,63 @@ def api_pipeline_log(filename: str):
             "repo_path": str(repo),
             "logs_dir": str(log_path.parent),
         }
+    )
+
+
+@app.route("/api/pipeline/run-comparison/export", methods=["POST"])
+def api_pipeline_run_comparison_export():
+    """Create a run-scoped artifact bundle zip for sharing/debugging."""
+    data = request.get_json(silent=True) or {}
+    repo, resolve_error, resolve_status = _resolve_pipeline_logs_repo_for_api(
+        str(data.get("repo_path") or "")
+    )
+    if repo is None:
+        return jsonify({"error": resolve_error or "Could not resolve repository path."}), resolve_status
+
+    run_id = str(data.get("run_id") or "").strip()
+    if not run_id:
+        return jsonify({"error": "run_id is required."}), 400
+
+    includes = _normalize_run_artifact_bundle_includes(data)
+    if not any(includes.values()):
+        return jsonify({"error": "Select at least one artifact category to export."}), 400
+
+    try:
+        payload = _create_run_artifact_bundle(repo, run_id=run_id, includes=includes)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # pragma: no cover - defensive safety net
+        logger.exception("Could not export run artifact bundle.")
+        return jsonify({"error": f"Could not create artifact bundle: {exc}"}), 500
+    return jsonify(payload)
+
+
+@app.route("/api/pipeline/run-comparison/export/<path:bundle_name>")
+def api_pipeline_run_comparison_export_download(bundle_name: str):
+    """Download a previously-created run artifact bundle zip."""
+    repo, resolve_error, resolve_status = _resolve_pipeline_logs_repo_for_api(
+        request.args.get("repo_path", "")
+    )
+    if repo is None:
+        return jsonify({"error": resolve_error or "Could not resolve repository path."}), resolve_status
+
+    safe_name = Path(bundle_name).name
+    if safe_name != bundle_name or not safe_name.lower().endswith(".zip"):
+        return jsonify({"error": "Invalid bundle name."}), 400
+
+    export_dir = _pipeline_artifact_bundle_dir(repo).resolve()
+    bundle_path = (export_dir / safe_name).resolve()
+    if bundle_path.parent != export_dir:
+        return jsonify({"error": "Invalid bundle name."}), 400
+    if not bundle_path.is_file():
+        return jsonify({"error": f"Artifact bundle not found: {safe_name}"}), 404
+    return send_file(
+        bundle_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=safe_name,
     )
 
 

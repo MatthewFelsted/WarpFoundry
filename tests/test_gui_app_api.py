@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -2858,6 +2859,187 @@ def test_pipeline_run_comparison_cost_analytics_flags_budget_outlier(
     assert high_run["estimated_cost_usd"] > 0.0
 
 
+def test_pipeline_run_comparison_export_bundle_creates_selected_artifacts(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    codex_dir = repo / ".codex_manager"
+    outputs_dir = codex_dir / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    (outputs_dir / "01-Plan.md").write_text("# Plan\n", encoding="utf-8")
+
+    history_outputs_dir = codex_dir / "output_history" / "20260222T000000Z"
+    history_outputs_dir.mkdir(parents=True, exist_ok=True)
+    (history_outputs_dir / "01-Plan.md").write_text("# Historical Plan\n", encoding="utf-8")
+    artifact_cache_dir = codex_dir / "output_history" / "artifact_bundles"
+    artifact_cache_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_cache_dir / "old-bundle.zip").write_bytes(b"OLDZIP")
+
+    logs_dir = codex_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "WISHLIST.md").write_text("# Wishlist\n", encoding="utf-8")
+    (codex_dir / "state.json").write_text('{"loop": 1}\n', encoding="utf-8")
+
+    history_path = logs_dir / "HISTORY.jsonl"
+    events = [
+        {
+            "id": "hist_export_start",
+            "timestamp": "2026-02-20T10:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {
+                "run_id": "run-export-001",
+                "mode": "apply",
+                "max_cycles": 1,
+                "config_snapshot": {
+                    "mode": "apply",
+                    "max_cycles": 1,
+                },
+            },
+        },
+        {
+            "id": "hist_export_phase",
+            "timestamp": "2026-02-20T10:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Implementation finished.",
+            "context": {
+                "test_outcome": "passed",
+                "input_tokens": 150,
+                "output_tokens": 75,
+                "total_tokens": 225,
+            },
+        },
+        {
+            "id": "hist_export_finish",
+            "timestamp": "2026-02-20T10:01:00+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {
+                "run_id": "run-export-001",
+                "stop_reason": "max_cycles_reached",
+                "elapsed_seconds": 60.0,
+            },
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.post(
+        "/api/pipeline/run-comparison/export",
+        json={
+            "repo_path": str(repo),
+            "run_id": "run-export-001",
+            "include_outputs": True,
+            "include_logs": False,
+            "include_config": True,
+            "include_history": True,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "created"
+    assert data["run_id"] == "run-export-001"
+    assert data["includes"]["outputs"] is True
+    assert data["includes"]["logs"] is False
+    assert data["includes"]["config"] is True
+    assert data["includes"]["history"] is True
+    assert data["history_event_count"] == 3
+    assert "/api/pipeline/run-comparison/export/" in data["download_url"]
+
+    bundle_path = Path(data["bundle_path"])
+    assert bundle_path.is_file()
+    assert bundle_path.name == data["bundle_name"]
+    assert data["bundle_size_bytes"] > 0
+
+    with zipfile.ZipFile(bundle_path) as archive:
+        names = archive.namelist()
+
+    assert "outputs/current/01-Plan.md" in names
+    assert "outputs/history/20260222T000000Z/01-Plan.md" in names
+    assert "history/HISTORY.jsonl" in names
+    assert "history/run-events.jsonl" in names
+    assert "config/state.json" in names
+    assert "config/run-summary.json" in names
+    assert "manifest.json" in names
+    assert not any(name.startswith("logs/") for name in names)
+    assert not any("artifact_bundles" in name for name in names)
+
+
+def test_pipeline_run_comparison_export_download_endpoint_serves_zip(client, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+    history_path.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in [
+                {
+                    "id": "hist_export_dl_start",
+                    "timestamp": "2026-02-20T11:00:00+00:00",
+                    "scope": "pipeline",
+                    "event": "run_started",
+                    "level": "info",
+                    "summary": "Pipeline run started.",
+                    "context": {"run_id": "run-export-002", "mode": "dry-run", "max_cycles": 1},
+                },
+                {
+                    "id": "hist_export_dl_finish",
+                    "timestamp": "2026-02-20T11:00:30+00:00",
+                    "scope": "pipeline",
+                    "event": "run_finished",
+                    "level": "info",
+                    "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+                    "context": {"run_id": "run-export-002", "stop_reason": "max_cycles_reached"},
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    create_resp = client.post(
+        "/api/pipeline/run-comparison/export",
+        json={
+            "repo_path": str(repo),
+            "run_id": "run-export-002",
+            "include_outputs": False,
+            "include_logs": False,
+            "include_config": False,
+            "include_history": True,
+        },
+    )
+    create_data = create_resp.get_json()
+    assert create_resp.status_code == 200
+    assert create_data
+    bundle_name = str(create_data["bundle_name"])
+
+    download_resp = client.get(
+        f"/api/pipeline/run-comparison/export/{bundle_name}",
+        query_string={"repo_path": str(repo)},
+    )
+    assert download_resp.status_code == 200
+    assert download_resp.mimetype == "application/zip"
+    assert download_resp.data.startswith(b"PK")
+
+    invalid_resp = client.get(
+        "/api/pipeline/run-comparison/export/../escape.zip",
+        query_string={"repo_path": str(repo)},
+    )
+    invalid_data = invalid_resp.get_json()
+    assert invalid_resp.status_code == 400
+    assert invalid_data
+    assert "Invalid bundle name" in invalid_data["error"]
+
+
 def test_pipeline_promote_last_dry_run_preview_requires_repo_hint(client, monkeypatch):
     monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
 
@@ -3574,7 +3756,10 @@ def test_index_includes_feature_dreams_workspace_controls(client):
     assert 'onclick="promoteLastDryRunToApply()"' in html
     assert "async function promoteLastDryRunToApply()" in html
     assert "async function refreshPipelineRunComparison" in html
+    assert "async function exportRunArtifactBundle(runId)" in html
+    assert "Export Bundle" in html
     assert "/api/pipeline/run-comparison?repo_path=" in html
+    assert "/api/pipeline/run-comparison/export" in html
     assert "/api/pipeline/promote-last-dry-run?repo_path=" in html
     assert "/api/pipeline/promote-last-dry-run/start" in html
     assert 'id="pipe-smoke-test-cmd"' in html

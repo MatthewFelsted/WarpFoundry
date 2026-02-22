@@ -2448,10 +2448,11 @@ body.mode-medium .easy-only{display:none}
             <th>Tests</th>
             <th>Stop Reason</th>
             <th>Commits</th>
+            <th>Artifacts</th>
           </tr>
         </thead>
         <tbody id="pipe-run-compare-body">
-          <tr><td colspan="9"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>
+          <tr><td colspan="10"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -10926,7 +10927,7 @@ function resetExecutionPanelsToDefaults() {
   document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card">Configure phases and click Start Pipeline...</div>';
   document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
   document.getElementById('pipe-run-compare-summary').textContent = 'Compare recent finished runs to identify the most effective configuration.';
-  document.getElementById('pipe-run-compare-body').innerHTML = '<tr><td colspan="9"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
+  document.getElementById('pipe-run-compare-body').innerHTML = '<tr><td colspan="10"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
   document.getElementById('pipe-show-debug-logs').checked = false;
 
   setLogContentState(document.getElementById('log-file-content'), 'Select a log file above to view its contents.');
@@ -12371,7 +12372,7 @@ function renderPipelineRunComparison(payload) {
   const runs = Array.isArray(data.runs) ? data.runs : [];
   if (!runs.length) {
     const msg = data.message || 'No completed runs were found in history yet.';
-    body.innerHTML = '<tr><td colspan="9"><div class="state-card">' + esc(msg) + '</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="10"><div class="state-card">' + esc(msg) + '</div></td></tr>';
     summaryEl.textContent = msg;
     return;
   }
@@ -12386,6 +12387,7 @@ function renderPipelineRunComparison(payload) {
   body.innerHTML = runs.map(run => {
     const scope = String(run.scope || '').trim().toLowerCase();
     const scopeLabel = scope === 'pipeline' ? 'Pipeline' : 'Chain';
+    const runId = String(run.run_id || '').trim();
     const mode = String(run.mode || 'unknown');
     const testsSummary = String(run.tests_summary || 'n/a');
     const stopReason = String(run.stop_reason || 'unknown');
@@ -12398,6 +12400,10 @@ function renderPipelineRunComparison(payload) {
       + '<span>' + esc(scopeLabel + ' / ' + mode) + '</span>'
       + _renderRunCompareBadges(run.badges)
       + '</div>';
+    const runIdArg = encodeURIComponent(runId);
+    const exportButton = runId
+      ? '<button class="btn" type="button" onclick="exportRunArtifactBundle(decodeURIComponent(\'' + escAttr(runIdArg) + '\'))">Export Bundle</button>'
+      : '<span class="file-changes-empty">n/a</span>';
     return '<tr>'
       + '<td>' + esc(_formatRunCompareTimestamp(run.finished_at)) + '</td>'
       + '<td>' + runLabel + '</td>'
@@ -12408,6 +12414,7 @@ function renderPipelineRunComparison(payload) {
       + '<td><span class="badge ' + _runCompareTestsBadgeClass(run) + '">' + esc(testsSummary) + '</span></td>'
       + '<td>' + esc(stopReason) + '</td>'
       + '<td>' + esc(String(Number.isFinite(commitCount) ? commitCount : 0)) + '</td>'
+      + '<td>' + exportButton + '</td>'
       + '</tr>';
   }).join('');
 }
@@ -12420,7 +12427,7 @@ async function refreshPipelineRunComparison(opts = {}) {
   ).trim();
   if (!repoPath) {
     if (body) {
-      body.innerHTML = '<tr><td colspan="9"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="10"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
     }
     if (summaryEl) {
       summaryEl.textContent = 'Compare recent finished runs to identify the most effective configuration.';
@@ -12429,7 +12436,7 @@ async function refreshPipelineRunComparison(opts = {}) {
   }
 
   if (body && opts.silent !== true) {
-    body.innerHTML = '<tr><td colspan="9"><div class="state-card loading">Loading recent runs...</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="10"><div class="state-card loading">Loading recent runs...</div></td></tr>';
   }
 
   try {
@@ -12453,6 +12460,63 @@ async function refreshPipelineRunComparison(opts = {}) {
       runs: [],
       message: 'Could not load run comparison metrics.',
     });
+  }
+}
+
+function _formatBundleSize(bytes) {
+  const size = Number(bytes || 0);
+  if (!Number.isFinite(size) || size <= 0) return '0 bytes';
+  if (size < 1024) return Math.round(size).toLocaleString() + ' bytes';
+  const kb = size / 1024;
+  if (kb < 1024) return kb.toFixed(kb >= 100 ? 0 : 1) + ' KB';
+  const mb = kb / 1024;
+  if (mb < 1024) return mb.toFixed(mb >= 100 ? 0 : 1) + ' MB';
+  const gb = mb / 1024;
+  return gb.toFixed(gb >= 100 ? 0 : 1) + ' GB';
+}
+
+async function exportRunArtifactBundle(runId) {
+  const runIdClean = String(runId || '').trim();
+  if (!runIdClean) {
+    toast('Run ID is missing for artifact export.', 'error');
+    return;
+  }
+  const repoPath = String(pipeConfig.repo_path || document.getElementById('pipe-repo-path').value || '').trim();
+  if (!repoPath) {
+    toast('Set a repository path first.', 'error');
+    return;
+  }
+
+  let resp;
+  try {
+    resp = await postJson('/api/pipeline/run-comparison/export', {
+      repo_path: repoPath,
+      run_id: runIdClean,
+      include_outputs: true,
+      include_logs: true,
+      include_config: true,
+      include_history: true,
+    });
+  } catch (_err) {
+    toast('Could not create run artifact bundle.', 'error');
+    return;
+  }
+  if (resp && resp.error) {
+    toast(String(resp.error || 'Could not create run artifact bundle.'), 'error');
+    return;
+  }
+
+  const bundleName = String((resp && resp.bundle_name) || 'run-artifacts.zip');
+  const bundleSize = _formatBundleSize(resp && resp.bundle_size_bytes);
+  const summaryEl = document.getElementById('pipe-run-compare-summary');
+  if (summaryEl) {
+    summaryEl.textContent = 'Exported run ' + runIdClean + ' bundle: ' + bundleName + ' (' + bundleSize + ').';
+  }
+  toast('Artifact bundle created: ' + bundleName + ' (' + bundleSize + ').', 'success');
+
+  const downloadUrl = String((resp && resp.download_url) || '').trim();
+  if (downloadUrl) {
+    window.open(downloadUrl, '_blank', 'noopener,noreferrer');
   }
 }
 
