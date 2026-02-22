@@ -1352,24 +1352,74 @@ def _zip_add_directory(
     source_dir: Path,
     archive_prefix: str,
     exclude_top_level: set[str] | None = None,
+    trusted_root: Path | None = None,
 ) -> int:
     """Recursively add files from *source_dir* under *archive_prefix*."""
     if not source_dir.is_dir():
         return 0
+    try:
+        source_root = source_dir.resolve()
+    except OSError:
+        return 0
+    trusted_root_resolved = source_root
+    if trusted_root is not None:
+        try:
+            trusted_root_resolved = trusted_root.resolve()
+        except OSError:
+            return 0
+        if not _is_within_directory(source_root, trusted_root_resolved):
+            logger.warning("Skipping archive source outside trusted root: %s", source_dir)
+            return 0
     excluded = {str(name or "").strip().lower() for name in (exclude_top_level or set())}
     added = 0
     prefix = str(archive_prefix or "").replace("\\", "/").strip("/")
     for path in sorted(source_dir.rglob("*")):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             continue
-        rel = path.relative_to(source_dir)
+        try:
+            resolved_file = path.resolve()
+        except OSError:
+            continue
+        if not _is_within_directory(resolved_file, source_root):
+            logger.warning("Skipping archive entry outside source root: %s", path)
+            continue
+        if trusted_root is not None and not _is_within_directory(
+            resolved_file,
+            trusted_root_resolved,
+        ):
+            logger.warning("Skipping archive entry outside trusted root: %s", path)
+            continue
+        rel = resolved_file.relative_to(source_root)
         if rel.parts and rel.parts[0].strip().lower() in excluded:
             continue
         rel_posix = rel.as_posix()
         arcname = f"{prefix}/{rel_posix}" if prefix else rel_posix
-        archive.write(path, arcname)
+        archive.write(resolved_file, arcname)
         added += 1
     return added
+
+
+def _zip_add_file(
+    archive: zipfile.ZipFile,
+    *,
+    source_path: Path,
+    arcname: str,
+    trusted_root: Path,
+) -> int:
+    """Add one file when it is a non-symlink path inside *trusted_root*."""
+    if source_path.is_symlink() or not source_path.is_file():
+        return 0
+    try:
+        resolved_file = source_path.resolve()
+        trusted_root_resolved = trusted_root.resolve()
+    except OSError:
+        return 0
+    if not _is_within_directory(resolved_file, trusted_root_resolved):
+        logger.warning("Skipping archive file outside trusted root: %s", source_path)
+        return 0
+    normalized_arcname = str(arcname or "").replace("\\", "/").strip("/") or source_path.name
+    archive.write(resolved_file, normalized_arcname)
+    return 1
 
 
 def _create_run_artifact_bundle(
@@ -1406,6 +1456,10 @@ def _create_run_artifact_bundle(
     start_context = start_context_obj if isinstance(start_context_obj, dict) else {}
     config_snapshot_obj = start_context.get("config_snapshot")
     config_snapshot = config_snapshot_obj if isinstance(config_snapshot_obj, dict) else {}
+    try:
+        repo_root = repo.resolve()
+    except OSError:
+        repo_root = repo
 
     export_dir = _pipeline_artifact_bundle_dir(repo)
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -1428,12 +1482,14 @@ def _create_run_artifact_bundle(
                 archive,
                 source_dir=_chain_output_dir(repo),
                 archive_prefix="outputs/current",
+                trusted_root=repo_root,
             )
             entry_count += _zip_add_directory(
                 archive,
                 source_dir=repo / ".codex_manager" / "output_history",
                 archive_prefix="outputs/history",
                 exclude_top_level={"artifact_bundles"},
+                trusted_root=repo_root,
             )
 
         if normalized_includes["logs"]:
@@ -1441,13 +1497,17 @@ def _create_run_artifact_bundle(
                 archive,
                 source_dir=_pipeline_logs_dir(repo),
                 archive_prefix="logs",
+                trusted_root=repo_root,
             )
 
         if normalized_includes["history"]:
             history_path = _history_jsonl_path(repo)
-            if history_path.is_file():
-                archive.write(history_path, "history/HISTORY.jsonl")
-                entry_count += 1
+            entry_count += _zip_add_file(
+                archive,
+                source_path=history_path,
+                arcname="history/HISTORY.jsonl",
+                trusted_root=repo_root,
+            )
             if run_events:
                 run_events_jsonl = "\n".join(
                     json.dumps(event, ensure_ascii=False) for event in run_events
@@ -1466,9 +1526,12 @@ def _create_run_artifact_bundle(
 
         if normalized_includes["config"]:
             state_path = repo / ".codex_manager" / "state.json"
-            if state_path.is_file():
-                archive.write(state_path, "config/state.json")
-                entry_count += 1
+            entry_count += _zip_add_file(
+                archive,
+                source_path=state_path,
+                arcname="config/state.json",
+                trusted_root=repo_root,
+            )
             _zip_add_text(
                 archive,
                 arcname="config/run-summary.json",

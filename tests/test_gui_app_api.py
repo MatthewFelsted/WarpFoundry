@@ -3167,6 +3167,149 @@ def test_pipeline_run_comparison_export_bundle_creates_selected_artifacts(client
     assert not any("artifact_bundles" in name for name in names)
 
 
+def test_pipeline_run_comparison_export_bundle_skips_symlinked_output_and_log_files(
+    client, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    codex_dir = repo / ".codex_manager"
+    outputs_dir = codex_dir / "outputs"
+    logs_dir = codex_dir / "logs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    (outputs_dir / "safe-output.md").write_text("safe output\n", encoding="utf-8")
+    (logs_dir / "safe-log.md").write_text("safe log\n", encoding="utf-8")
+
+    history_path = logs_dir / "HISTORY.jsonl"
+    events = [
+        {
+            "id": "hist_symlink_start",
+            "timestamp": "2026-02-20T13:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {"run_id": "run-symlink-001", "mode": "dry-run"},
+        },
+        {
+            "id": "hist_symlink_finish",
+            "timestamp": "2026-02-20T13:00:05+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {"run_id": "run-symlink-001", "stop_reason": "max_cycles_reached"},
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("TOP_SECRET\n", encoding="utf-8")
+    try:
+        (outputs_dir / "leak-output.md").symlink_to(outside)
+        (logs_dir / "leak-log.md").symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not supported in this environment")
+
+    resp = client.post(
+        "/api/pipeline/run-comparison/export",
+        json={
+            "repo_path": str(repo),
+            "run_id": "run-symlink-001",
+            "include_outputs": True,
+            "include_logs": True,
+            "include_config": False,
+            "include_history": False,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    bundle_path = Path(data["bundle_path"])
+    assert bundle_path.is_file()
+
+    with zipfile.ZipFile(bundle_path) as archive:
+        names = set(archive.namelist())
+        assert "outputs/current/safe-output.md" in names
+        assert "logs/safe-log.md" in names
+        assert "outputs/current/leak-output.md" not in names
+        assert "logs/leak-log.md" not in names
+        joined_contents = b"".join(archive.read(name) for name in names if name.endswith(".md"))
+        assert b"TOP_SECRET" not in joined_contents
+
+
+def test_pipeline_run_comparison_export_bundle_skips_symlinked_state_file(
+    client, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    codex_dir = repo / ".codex_manager"
+    logs_dir = codex_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    history_path = logs_dir / "HISTORY.jsonl"
+    history_path.write_text(
+        "\n".join(
+            json.dumps(event)
+            for event in [
+                {
+                    "id": "hist_state_start",
+                    "timestamp": "2026-02-20T14:00:00+00:00",
+                    "scope": "pipeline",
+                    "event": "run_started",
+                    "level": "info",
+                    "summary": "Pipeline run started.",
+                    "context": {"run_id": "run-state-001", "mode": "apply"},
+                },
+                {
+                    "id": "hist_state_finish",
+                    "timestamp": "2026-02-20T14:00:15+00:00",
+                    "scope": "pipeline",
+                    "event": "run_finished",
+                    "level": "info",
+                    "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+                    "context": {"run_id": "run-state-001", "stop_reason": "max_cycles_reached"},
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    outside_state = tmp_path / "outside-state.json"
+    outside_state.write_text('{"secret":"value"}\n', encoding="utf-8")
+    state_path = codex_dir / "state.json"
+    try:
+        state_path.symlink_to(outside_state)
+    except (OSError, NotImplementedError):
+        pytest.skip("Symlink creation not supported in this environment")
+
+    resp = client.post(
+        "/api/pipeline/run-comparison/export",
+        json={
+            "repo_path": str(repo),
+            "run_id": "run-state-001",
+            "include_outputs": False,
+            "include_logs": False,
+            "include_config": True,
+            "include_history": False,
+        },
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    bundle_path = Path(data["bundle_path"])
+    assert bundle_path.is_file()
+
+    with zipfile.ZipFile(bundle_path) as archive:
+        names = set(archive.namelist())
+        assert "config/run-summary.json" in names
+        assert "config/state.json" not in names
+
+
 def test_pipeline_run_comparison_export_bundle_history_restores_outer_run(
     client, tmp_path: Path
 ):
