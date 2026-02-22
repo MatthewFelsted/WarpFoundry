@@ -4345,9 +4345,16 @@ def test_index_includes_custom_recipe_editor_controls(client):
     assert 'id="custom-recipes-select"' in html
     assert 'id="custom-recipe-json"' in html
     assert 'id="custom-recipes-import-json"' in html
+    assert 'id="custom-recipes-save-btn"' in html
+    assert 'id="custom-recipes-delete-btn"' in html
+    assert 'id="custom-recipes-export-selected-btn"' in html
+    assert 'id="custom-recipes-working"' in html
+    assert 'id="custom-recipes-status"' in html
     assert "async function saveCustomRecipeFromEditor()" in html
     assert "async function importCustomRecipesFromJson()" in html
     assert "async function exportSelectedCustomRecipe()" in html
+    assert "async function _runCustomRecipesTask(message, fn, opts = {})" in html
+    assert "function initCustomRecipesKeyboardShortcuts()" in html
     assert "/api/recipes/custom/save" in html
     assert "/api/recipes/custom/import" in html
     assert "/api/recipes/custom/export?repo_path=" in html

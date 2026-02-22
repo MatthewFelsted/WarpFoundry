@@ -661,10 +661,22 @@ body.mode-medium .easy-only{display:none}
 .recipe-card .recipe-title{font-weight:600;font-size:13px;margin-bottom:4px;color:var(--text)}
 .recipe-card .recipe-desc{font-size:11px;color:var(--text2);line-height:1.4}
 .recipe-card .recipe-source{margin-top:8px;font-size:10px;color:var(--accent2);text-transform:uppercase;letter-spacing:.3px}
+.recipe-card .recipe-meta{margin-top:8px;font-size:10px;color:var(--text3)}
 .recipe-card.custom{border-style:dashed}
 .recipe-card.custom:hover{border-color:var(--accent2)}
+.recipe-card.recipe-card-empty{
+  cursor:default;
+  border-style:dashed;
+  border-color:rgba(160,190,228,.4);
+  background:linear-gradient(180deg, rgba(15,22,34,.86), rgba(9,14,23,.8));
+}
+.recipe-card.recipe-card-empty:hover{border-color:rgba(160,190,228,.4);background:linear-gradient(180deg, rgba(15,22,34,.86), rgba(9,14,23,.8))}
+.recipe-card.recipe-card-empty:focus-visible{box-shadow:none}
 .recipe-tools{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px}
 .recipe-tools .summary{font-size:11px;color:var(--text2)}
+.recipe-tools .summary[data-tone="ok"]{color:var(--success)}
+.recipe-tools .summary[data-tone="warn"]{color:var(--warning)}
+.recipe-tools .summary[data-tone="error"]{color:var(--danger)}
 .recipe-extra-cards{display:contents}
 
 /* -- Onboarding overlay ----------------------------------------- */
@@ -898,6 +910,83 @@ body.mode-medium .easy-only{display:none}
 .general-request-history-item h4{font-size:12px;margin:0 0 6px 0;color:var(--text)}
 .general-request-history-item .meta{font-size:11px;color:var(--text2);margin-bottom:6px}
 .general-request-history-item pre{white-space:pre-wrap;word-break:break-word;background:var(--surface2);border:1px solid var(--border);padding:8px;border-radius:8px;max-height:200px;overflow:auto}
+.custom-recipes-card{width:min(980px,100%);display:flex;flex-direction:column;gap:12px}
+.custom-recipes-layout{display:grid;grid-template-columns:minmax(280px,340px) minmax(0,1fr);gap:12px}
+.custom-recipes-pane{
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:rgba(15,22,34,.74);
+  padding:12px;
+}
+.custom-recipes-pane h3{
+  margin-bottom:8px;
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.28px;
+  color:var(--text3);
+}
+.custom-recipes-select-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  gap:8px;
+  align-items:end;
+}
+.custom-recipes-pane details{
+  margin-top:10px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:10px;
+  background:rgba(8,13,21,.5);
+}
+.custom-recipes-pane details summary{
+  cursor:pointer;
+  color:var(--text2);
+  font-size:12px;
+  font-weight:600;
+}
+.custom-recipes-editor textarea{min-height:290px}
+.custom-recipes-editor .field-help{margin-top:6px}
+.custom-recipes-import textarea{min-height:165px}
+.custom-recipes-actions{display:flex;gap:8px;flex-wrap:wrap}
+.custom-recipes-actions .btn{flex:1 1 168px}
+.custom-recipes-status-row{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  margin-top:2px;
+}
+.custom-recipes-card .status{
+  margin-top:0;
+  font-size:12px;
+  min-height:1.2em;
+}
+.custom-recipes-card .status[data-tone="ok"]{color:var(--success)}
+.custom-recipes-card .status[data-tone="warn"]{color:var(--warning)}
+.custom-recipes-card .status[data-tone="error"]{color:var(--danger)}
+.custom-recipes-working{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:11px;
+  color:var(--accent2);
+  white-space:nowrap;
+}
+.custom-recipes-working::before{
+  content:'';
+  width:12px;
+  height:12px;
+  border-radius:999px;
+  border:2px solid rgba(161,180,205,.46);
+  border-top-color:var(--accent2);
+  animation:spin .8s linear infinite;
+}
+.custom-recipes-card[data-busy="true"]{border-color:var(--border-soft)}
+.custom-recipes-card[data-busy="true"] .custom-recipes-pane{
+  border-color:rgba(110,199,255,.4);
+  box-shadow:inset 0 0 0 1px rgba(110,199,255,.18);
+}
 
 /* -- Help tooltip ------------------------------------------------ */
 .help-icon{display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;border-radius:50%;background:var(--border);color:var(--text2);font-size:10px;font-weight:700;cursor:help;margin-left:4px;vertical-align:middle}
@@ -1192,6 +1281,8 @@ body.mode-medium .easy-only{display:none}
   .git-signing-meta{grid-template-columns:1fr}
   .git-signing-form-grid{grid-template-columns:1fr}
   .git-remote-add-grid{grid-template-columns:1fr}
+  .custom-recipes-layout{grid-template-columns:1fr}
+  .custom-recipes-select-row{grid-template-columns:1fr}
   .workspace-repo-toolbar{align-items:stretch}
   .first-run-wizard-steps{grid-template-columns:repeat(2,minmax(0,1fr))}
   .first-run-wizard-grid{grid-template-columns:1fr}
@@ -1203,6 +1294,8 @@ body.mode-medium .easy-only{display:none}
   .panel,.pipeline-panel{padding:12px}
   .mode-toggle{width:100%;max-width:none}
   .mode-toggle button{padding:9px 8px;font-size:12px}
+  .custom-recipes-actions .btn{flex:1 1 100%}
+  .custom-recipes-status-row{align-items:flex-start}
   .repo-row{flex-wrap:wrap;align-items:stretch}
   .repo-row .btn{flex:1 1 130px}
   .repo-status{order:3;width:auto}
@@ -2779,60 +2872,73 @@ body.mode-medium .easy-only{display:none}
 
 <!-- Custom Recipes modal -->
 <div id="custom-recipes-overlay" class="hidden" onclick="if(event.target===this)hideCustomRecipesModal()">
-  <div class="custom-recipes-card" role="dialog" aria-modal="true" aria-labelledby="custom-recipes-title">
+  <div class="custom-recipes-card" role="dialog" aria-modal="true" aria-labelledby="custom-recipes-title" aria-describedby="custom-recipes-subtitle" data-busy="false">
     <h2 id="custom-recipes-title">Custom Autopilot Recipes</h2>
-    <p class="subtitle">Create, edit, delete, import, and export per-repository recipe JSON.</p>
+    <p class="subtitle" id="custom-recipes-subtitle">Create, edit, delete, import, and export per-repository recipe JSON.</p>
 
-    <div class="form-row">
-      <label>Repository Path</label>
-      <div class="repo-row">
-        <input type="text" id="custom-recipes-repo" placeholder="C:\path\to\your\repo">
-        <button class="btn" type="button" onclick="syncCustomRecipesRepoFromMain()">Use Current Repo</button>
-      </div>
+    <div class="custom-recipes-layout">
+      <section class="custom-recipes-pane" aria-label="Recipe catalog and import export controls">
+        <h3>Catalog</h3>
+        <div class="form-row">
+          <label>Repository Path</label>
+          <div class="repo-row">
+            <input type="text" id="custom-recipes-repo" placeholder="C:\path\to\your\repo">
+            <button class="btn" type="button" onclick="syncCustomRecipesRepoFromMain()">Use Current Repo</button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Saved Custom Recipes</label>
+          <div class="custom-recipes-select-row">
+            <select id="custom-recipes-select" onchange="loadSelectedCustomRecipeIntoEditor()">
+              <option value="">Select custom recipe...</option>
+            </select>
+            <button class="btn" id="custom-recipes-new-template-btn" type="button" onclick="newCustomRecipeTemplate()">New Template</button>
+            <button class="btn" id="custom-recipes-refresh-btn" type="button" onclick="refreshCustomRecipesModal()">Refresh</button>
+          </div>
+        </div>
+
+        <div class="field-help">Custom recipes are stored inside each repository, so each codebase can keep its own automation playbook.</div>
+
+        <details class="custom-recipes-import">
+          <summary>Import / Export Bundle</summary>
+          <div class="form-row" style="margin-top:8px">
+            <label>Import JSON (<code>{"recipes":[...]}</code>, list, or single recipe object)</label>
+            <textarea id="custom-recipes-import-json" rows="8" placeholder='{"recipes":[...]}'></textarea>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="custom-recipes-import-replace"> Replace existing custom recipes</label>
+          </div>
+          <div class="custom-recipes-actions">
+            <button class="btn" id="custom-recipes-import-btn" type="button" onclick="importCustomRecipesFromJson()">Import JSON</button>
+            <button class="btn" id="custom-recipes-export-all-btn" type="button" onclick="exportAllCustomRecipesToEditor()">Export All</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="custom-recipes-pane custom-recipes-editor" aria-label="Recipe editor">
+        <h3>Editor</h3>
+        <div class="form-row">
+          <label>Recipe JSON (single recipe object)</label>
+          <textarea id="custom-recipe-json" rows="12" placeholder='{"id":"my_recipe","name":"My Recipe","steps":[{"job_type":"implementation"}]}'></textarea>
+          <div class="field-help">Use one recipe object with keys like <code>id</code>, <code>name</code>, <code>description</code>, <code>sequence</code>, and <code>steps</code>. Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Enter</kbd> to save.</div>
+        </div>
+
+        <div class="custom-recipes-actions">
+          <button class="btn btn-primary" id="custom-recipes-save-btn" type="button" onclick="saveCustomRecipeFromEditor()">Save Recipe</button>
+          <button class="btn" id="custom-recipes-delete-btn" type="button" onclick="deleteSelectedCustomRecipe()">Delete Selected</button>
+          <button class="btn" id="custom-recipes-export-selected-btn" type="button" onclick="exportSelectedCustomRecipe()">Export Selected</button>
+        </div>
+      </section>
     </div>
 
-    <div class="form-row">
-      <label>Saved Custom Recipes</label>
-      <div class="repo-row">
-        <select id="custom-recipes-select" onchange="loadSelectedCustomRecipeIntoEditor()">
-          <option value="">Select custom recipe...</option>
-        </select>
-        <button class="btn" type="button" onclick="newCustomRecipeTemplate()">New Template</button>
-        <button class="btn" type="button" onclick="refreshCustomRecipesModal()">Refresh</button>
-      </div>
+    <div class="custom-recipes-status-row">
+      <div class="status" id="custom-recipes-status" role="status" aria-live="polite" aria-atomic="true" data-tone="muted"></div>
+      <div id="custom-recipes-working" class="custom-recipes-working" hidden>Working...</div>
     </div>
-
-    <div class="form-row">
-      <label>Recipe JSON (single recipe object)</label>
-      <textarea id="custom-recipe-json" rows="12" placeholder='{"id":"my_recipe","name":"My Recipe","steps":[{"job_type":"implementation"}]}'></textarea>
-      <div class="field-help">Use one recipe object with keys like <code>id</code>, <code>name</code>, <code>description</code>, <code>sequence</code>, and <code>steps</code>.</div>
-    </div>
-
-    <div class="inline-actions">
-      <button class="btn btn-primary" type="button" onclick="saveCustomRecipeFromEditor()">Save Recipe</button>
-      <button class="btn" type="button" onclick="deleteSelectedCustomRecipe()">Delete Selected</button>
-      <button class="btn" type="button" onclick="exportSelectedCustomRecipe()">Export Selected</button>
-    </div>
-
-    <details>
-      <summary>Import / Export Bundle</summary>
-      <div class="form-row" style="margin-top:8px">
-        <label>Import JSON (<code>{"recipes":[...]}</code>, list, or single recipe object)</label>
-        <textarea id="custom-recipes-import-json" rows="8" placeholder='{"recipes":[...]}'></textarea>
-      </div>
-      <div class="form-row">
-        <label><input type="checkbox" id="custom-recipes-import-replace"> Replace existing custom recipes</label>
-      </div>
-      <div class="inline-actions">
-        <button class="btn" type="button" onclick="importCustomRecipesFromJson()">Import JSON</button>
-        <button class="btn" type="button" onclick="exportAllCustomRecipesToEditor()">Export All</button>
-      </div>
-    </details>
-
-    <div class="status" id="custom-recipes-status"></div>
 
     <div class="actions">
-      <button class="btn" type="button" onclick="hideCustomRecipesModal()">Close</button>
+      <button class="btn" type="button" onclick="hideCustomRecipesModal()" data-allow-busy="true">Close</button>
     </div>
   </div>
 </div>
@@ -2865,9 +2971,9 @@ body.mode-medium .easy-only{display:none}
       <table class="git-commit-file-table">
         <thead>
           <tr>
-            <th style="width:46%">Path</th>
-            <th style="width:32%">State</th>
-            <th style="width:22%">Actions</th>
+            <th scope="col" style="width:46%">Path</th>
+            <th scope="col" style="width:32%">State</th>
+            <th scope="col" style="width:22%">Actions</th>
           </tr>
         </thead>
         <tbody id="git-commit-files-body">
@@ -2924,9 +3030,9 @@ body.mode-medium .easy-only{display:none}
       <table class="git-remote-table">
         <thead>
           <tr>
-            <th style="width:18%">Remote</th>
-            <th style="width:54%">URLs</th>
-            <th style="width:28%">Actions</th>
+            <th scope="col" style="width:18%">Remote</th>
+            <th scope="col" style="width:54%">URLs</th>
+            <th scope="col" style="width:28%">Actions</th>
           </tr>
         </thead>
         <tbody id="git-remote-body">
@@ -3388,6 +3494,8 @@ let recipeSummaries = [];
 let customRecipeSummaries = [];
 let recipeCatalogRepoPath = '';
 let recipeCatalogRefreshTimer = null;
+let customRecipesBusyDepth = 0;
+let customRecipesBusyMessage = '';
 const DEFAULT_EASY_RECIPE_ID = (RECIPES_PAYLOAD && RECIPES_PAYLOAD.default_recipe_id) || 'autopilot_default';
 const PROGRAM_DISPLAY_NAME = {{ project_display_name | tojson }};
 
@@ -4909,6 +5017,12 @@ function applyDefaultEasyRecipe() {
 
 function initRecipeCardKeyboardAccess() {
   document.querySelectorAll('.recipe-card').forEach(card => {
+    if (card.dataset.static === 'true') {
+      card.removeAttribute('role');
+      card.removeAttribute('tabindex');
+      card.setAttribute('aria-disabled', 'true');
+      return;
+    }
     card.setAttribute('role', 'button');
     card.setAttribute('tabindex', '0');
     if (!card.hasAttribute('aria-pressed')) card.setAttribute('aria-pressed', 'false');
@@ -4972,6 +5086,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   syncPipeTimeoutControlsFromConfig();
   initMainTabKeyboardNav();
   initRecipeCardKeyboardAccess();
+  initCustomRecipesKeyboardShortcuts();
   renderActivityHeartbeats();
   if (activityHeartbeatTimer) clearInterval(activityHeartbeatTimer);
   activityHeartbeatTimer = setInterval(renderActivityHeartbeats, 1000);
@@ -5461,15 +5576,8 @@ function _setCustomRecipesSummary(text, tone = 'muted') {
   const el = document.getElementById('custom-recipes-summary');
   if (!el) return;
   el.textContent = String(text || '');
-  if (tone === 'ok') {
-    el.style.color = 'var(--success)';
-  } else if (tone === 'warn') {
-    el.style.color = 'var(--warning)';
-  } else if (tone === 'error') {
-    el.style.color = 'var(--danger)';
-  } else {
-    el.style.color = 'var(--text2)';
-  }
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
 }
 
 function _renderCustomRecipeCards(rows) {
@@ -5477,7 +5585,12 @@ function _renderCustomRecipeCards(rows) {
   if (!container) return;
   const recipes = Array.isArray(rows) ? rows : [];
   if (!recipes.length) {
-    container.innerHTML = '';
+    container.innerHTML = ''
+      + '<div class="recipe-card recipe-card-empty" data-static="true">'
+      +   '<div class="recipe-title">No Custom Recipes Yet</div>'
+      +   '<div class="recipe-desc">Open <strong>Manage Custom Recipes</strong> to create repository-specific autopilot flows.</div>'
+      +   '<div class="recipe-source">Empty</div>'
+      + '</div>';
     initRecipeCardKeyboardAccess();
     return;
   }
@@ -5488,14 +5601,61 @@ function _renderCustomRecipeCards(rows) {
     const name = String(row && row.name || id).trim() || id;
     const desc = String(row && row.description || 'Custom recipe').trim() || 'Custom recipe';
     const title = String(row && row.sequence || desc).trim() || desc;
+    const stepCountRaw = Number(row && row.step_count);
+    const stepCount = Number.isFinite(stepCountRaw) && stepCountRaw > 0 ? Math.floor(stepCountRaw) : 0;
     const encodedId = encodeURIComponent(id);
     return '<div class="recipe-card custom" data-recipe="' + escAttr(id) + '" onclick="selectRecipe(decodeURIComponent(\'' + encodedId + '\'))" title="' + escAttr(title) + '">'
       + '<div class="recipe-title">' + esc(name) + '</div>'
       + '<div class="recipe-desc">' + esc(desc) + '</div>'
+      + '<div class="recipe-meta">' + (stepCount ? (stepCount + ' step' + (stepCount === 1 ? '' : 's')) : 'Custom sequence') + '</div>'
       + '<div class="recipe-source">Custom</div>'
       + '</div>';
   }).join('');
   initRecipeCardKeyboardAccess();
+}
+
+function _applyCustomRecipesBusyUi() {
+  const card = document.querySelector('#custom-recipes-overlay .custom-recipes-card');
+  if (!card) return;
+  const isBusy = customRecipesBusyDepth > 0;
+  card.dataset.busy = isBusy ? 'true' : 'false';
+  card.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+
+  card.querySelectorAll('button, input, select, textarea').forEach((el) => {
+    const allowBusy = el.dataset && el.dataset.allowBusy === 'true';
+    if (allowBusy) return;
+    el.disabled = isBusy;
+  });
+
+  const working = document.getElementById('custom-recipes-working');
+  if (working) {
+    if (isBusy && customRecipesBusyMessage) working.textContent = customRecipesBusyMessage;
+    working.hidden = !isBusy;
+  }
+}
+
+function _setCustomRecipesBusy(isBusy, message = 'Working...') {
+  if (isBusy) {
+    customRecipesBusyDepth += 1;
+    customRecipesBusyMessage = String(message || 'Working...').trim() || 'Working...';
+  } else {
+    customRecipesBusyDepth = Math.max(0, customRecipesBusyDepth - 1);
+    if (customRecipesBusyDepth === 0) customRecipesBusyMessage = '';
+  }
+  _applyCustomRecipesBusyUi();
+}
+
+async function _runCustomRecipesTask(message, fn, opts = {}) {
+  if (customRecipesBusyDepth > 0 && opts.allowWhenBusy !== true) {
+    _setCustomRecipesStatus('Please wait for the current recipe action to finish.', 'warn');
+    return null;
+  }
+  _setCustomRecipesBusy(true, message);
+  try {
+    return await fn();
+  } finally {
+    _setCustomRecipesBusy(false);
+  }
 }
 
 function _setRecipeCatalogFromPayload(payload, repoPath) {
@@ -5577,16 +5737,23 @@ function syncCustomRecipesRepoFromMain() {
 function _setCustomRecipesStatus(text, tone = 'muted') {
   const el = document.getElementById('custom-recipes-status');
   if (!el) return;
-  el.textContent = String(text || '');
-  if (tone === 'ok') {
-    el.style.color = 'var(--success)';
-  } else if (tone === 'warn') {
-    el.style.color = 'var(--warning)';
-  } else if (tone === 'error') {
-    el.style.color = 'var(--danger)';
-  } else {
-    el.style.color = 'var(--text2)';
-  }
+  const message = String(text || '');
+  const toneValue = ['ok', 'warn', 'error', 'muted'].includes(tone) ? tone : 'muted';
+  el.dataset.tone = toneValue;
+  el.textContent = message;
+  _announce(message);
+}
+
+function initCustomRecipesKeyboardShortcuts() {
+  const editor = document.getElementById('custom-recipe-json');
+  if (!editor || editor.dataset.keyboardBound === '1') return;
+  editor.dataset.keyboardBound = '1';
+  editor.addEventListener('keydown', (event) => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    saveCustomRecipeFromEditor();
+  });
 }
 
 function _defaultCustomRecipeTemplate() {
@@ -5681,213 +5848,231 @@ function newCustomRecipeTemplate() {
   _setCustomRecipesStatus('Loaded starter recipe template. Edit and click Save Recipe.', 'muted');
 }
 
-async function refreshCustomRecipesModal() {
-  const repoInput = document.getElementById('custom-recipes-repo');
-  const repo = String(repoInput && repoInput.value || '').trim() || syncCustomRecipesRepoFromMain();
-  if (repoInput) repoInput.value = repo;
-  if (!repo) {
-    _populateCustomRecipesSelector('');
-    newCustomRecipeTemplate();
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
-  _populateCustomRecipesSelector();
-  if (!customRecipeSummaries.length && !_editorRecipeJsonValue()) {
-    newCustomRecipeTemplate();
-  }
-  _setCustomRecipesStatus('Custom recipe catalog loaded.', 'ok');
+async function refreshCustomRecipesModal(opts = {}) {
+  return _runCustomRecipesTask('Loading custom recipe catalog...', async () => {
+    const repoInput = document.getElementById('custom-recipes-repo');
+    const repo = String(repoInput && repoInput.value || '').trim() || syncCustomRecipesRepoFromMain();
+    if (repoInput) repoInput.value = repo;
+    if (!repo) {
+      _populateCustomRecipesSelector('');
+      newCustomRecipeTemplate();
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+    _populateCustomRecipesSelector();
+    if (!customRecipeSummaries.length && !_editorRecipeJsonValue()) {
+      newCustomRecipeTemplate();
+    }
+    _setCustomRecipesStatus('Custom recipe catalog loaded.', 'ok');
+  }, { allowWhenBusy: opts.allowWhenBusy === true });
 }
 
 async function openCustomRecipesModal() {
+  customRecipesBusyDepth = 0;
+  customRecipesBusyMessage = '';
+  _applyCustomRecipesBusyUi();
   syncCustomRecipesRepoFromMain();
   _setCustomRecipesStatus('', 'muted');
   _openOverlay('custom-recipes-overlay', '#custom-recipes-repo');
-  await refreshCustomRecipesModal();
+  initCustomRecipesKeyboardShortcuts();
+  await refreshCustomRecipesModal({ allowWhenBusy: true });
 }
 
 function hideCustomRecipesModal() {
   _closeOverlay('custom-recipes-overlay');
 }
 
-async function loadSelectedCustomRecipeIntoEditor() {
-  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
-  const select = document.getElementById('custom-recipes-select');
-  const recipeId = String(select && select.value || '').trim();
-  if (!recipeId) {
-    _setCustomRecipesStatus('Select a custom recipe to load.', 'warn');
-    return;
-  }
-  if (!repo) {
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  const resp = await api('/api/recipes/' + encodeURIComponent(recipeId) + '?repo_path=' + encodeURIComponent(repo));
-  if (resp && resp.error) {
-    _setCustomRecipesStatus('Could not load recipe: ' + String(resp.error || 'Unknown error'), 'error');
-    return;
-  }
-  const payload = Object.assign({}, resp || {});
-  delete payload.source;
-  const editor = document.getElementById('custom-recipe-json');
-  if (editor) editor.value = JSON.stringify(payload, null, 2);
-  _setCustomRecipesStatus('Loaded recipe "' + recipeId + '".', 'ok');
+async function loadSelectedCustomRecipeIntoEditor(opts = {}) {
+  return _runCustomRecipesTask('Loading recipe details...', async () => {
+    const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+    const select = document.getElementById('custom-recipes-select');
+    const recipeId = String(select && select.value || '').trim();
+    if (!recipeId) {
+      _setCustomRecipesStatus('Select a custom recipe to load.', 'warn');
+      return;
+    }
+    if (!repo) {
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    const resp = await api('/api/recipes/' + encodeURIComponent(recipeId) + '?repo_path=' + encodeURIComponent(repo));
+    if (resp && resp.error) {
+      _setCustomRecipesStatus('Could not load recipe: ' + String(resp.error || 'Unknown error'), 'error');
+      return;
+    }
+    const payload = Object.assign({}, resp || {});
+    delete payload.source;
+    const editor = document.getElementById('custom-recipe-json');
+    if (editor) editor.value = JSON.stringify(payload, null, 2);
+    _setCustomRecipesStatus('Loaded recipe "' + recipeId + '".', 'ok');
+  }, { allowWhenBusy: opts.allowWhenBusy === true });
 }
 
 async function saveCustomRecipeFromEditor() {
-  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
-  if (!repo) {
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  const payload = _readCustomRecipeEditorPayload();
-  if (!payload) return;
-  const resp = await postJson('/api/recipes/custom/save', {
-    repo_path: repo,
-    recipe: payload,
+  return _runCustomRecipesTask('Saving custom recipe...', async () => {
+    const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+    if (!repo) {
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    const payload = _readCustomRecipeEditorPayload();
+    if (!payload) return;
+    const resp = await postJson('/api/recipes/custom/save', {
+      repo_path: repo,
+      recipe: payload,
+    });
+    if (resp.error) {
+      _setCustomRecipesStatus(String(resp.error || 'Could not save custom recipe.'), 'error');
+      return;
+    }
+    await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+    _populateCustomRecipesSelector(String(resp.recipe && resp.recipe.id || '').trim());
+    const editorPayload = Object.assign({}, resp.recipe || payload);
+    delete editorPayload.source;
+    const editor = document.getElementById('custom-recipe-json');
+    if (editor) editor.value = JSON.stringify(editorPayload, null, 2);
+    const verb = resp.created ? 'Created' : 'Updated';
+    _setCustomRecipesStatus(verb + ' custom recipe "' + String(resp.recipe && resp.recipe.id || '').trim() + '".', 'ok');
+    toast(verb + ' custom recipe.', 'success');
   });
-  if (resp.error) {
-    _setCustomRecipesStatus(String(resp.error || 'Could not save custom recipe.'), 'error');
-    return;
-  }
-  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
-  _populateCustomRecipesSelector(String(resp.recipe && resp.recipe.id || '').trim());
-  const editorPayload = Object.assign({}, resp.recipe || payload);
-  delete editorPayload.source;
-  const editor = document.getElementById('custom-recipe-json');
-  if (editor) editor.value = JSON.stringify(editorPayload, null, 2);
-  const verb = resp.created ? 'Created' : 'Updated';
-  _setCustomRecipesStatus(verb + ' custom recipe "' + String(resp.recipe && resp.recipe.id || '').trim() + '".', 'ok');
-  toast(verb + ' custom recipe.', 'success');
 }
 
 async function deleteSelectedCustomRecipe() {
-  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
-  if (!repo) {
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  const select = document.getElementById('custom-recipes-select');
-  let recipeId = String(select && select.value || '').trim();
-  if (!recipeId) {
-    const payload = _readCustomRecipeEditorPayload();
-    recipeId = String(payload && payload.id || '').trim();
-  }
-  if (!recipeId) {
-    _setCustomRecipesStatus('Select or define a recipe id first.', 'warn');
-    return;
-  }
-  if (!confirm('Delete custom recipe "' + recipeId + '"?')) return;
+  return _runCustomRecipesTask('Deleting custom recipe...', async () => {
+    const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+    if (!repo) {
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    const select = document.getElementById('custom-recipes-select');
+    let recipeId = String(select && select.value || '').trim();
+    if (!recipeId) {
+      const payload = _readCustomRecipeEditorPayload();
+      recipeId = String(payload && payload.id || '').trim();
+    }
+    if (!recipeId) {
+      _setCustomRecipesStatus('Select or define a recipe id first.', 'warn');
+      return;
+    }
+    if (!confirm('Delete custom recipe "' + recipeId + '"?')) return;
 
-  const resp = await postJson('/api/recipes/custom/delete', {
-    repo_path: repo,
-    recipe_id: recipeId,
+    const resp = await postJson('/api/recipes/custom/delete', {
+      repo_path: repo,
+      recipe_id: recipeId,
+    });
+    if (resp.error) {
+      _setCustomRecipesStatus(String(resp.error || 'Could not delete custom recipe.'), 'error');
+      return;
+    }
+
+    await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+    _populateCustomRecipesSelector('');
+    newCustomRecipeTemplate();
+    _setCustomRecipesStatus('Deleted custom recipe "' + recipeId + '".', 'ok');
+    toast('Deleted custom recipe.', 'success');
   });
-  if (resp.error) {
-    _setCustomRecipesStatus(String(resp.error || 'Could not delete custom recipe.'), 'error');
-    return;
-  }
-
-  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
-  _populateCustomRecipesSelector('');
-  newCustomRecipeTemplate();
-  _setCustomRecipesStatus('Deleted custom recipe "' + recipeId + '".', 'ok');
-  toast('Deleted custom recipe.', 'success');
 }
 
 async function exportSelectedCustomRecipe() {
-  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
-  if (!repo) {
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  const select = document.getElementById('custom-recipes-select');
-  let recipeId = String(select && select.value || '').trim();
-  if (!recipeId) {
-    const payload = _readCustomRecipeEditorPayload();
-    recipeId = String(payload && payload.id || '').trim();
-  }
-  if (!recipeId) {
-    _setCustomRecipesStatus('Select or define a recipe id first.', 'warn');
-    return;
-  }
-  const resp = await api('/api/recipes/custom/export?repo_path=' + encodeURIComponent(repo) + '&recipe_id=' + encodeURIComponent(recipeId));
-  if (resp && resp.error) {
-    _setCustomRecipesStatus(String(resp.error || 'Could not export recipe.'), 'error');
-    return;
-  }
-  const payload = resp && resp.payload ? resp.payload : { recipes: [] };
-  const importEl = document.getElementById('custom-recipes-import-json');
-  if (importEl) importEl.value = JSON.stringify(payload, null, 2);
-  const rows = Array.isArray(payload && payload.recipes) ? payload.recipes : [];
-  if (rows.length) {
-    const editor = document.getElementById('custom-recipe-json');
-    if (editor) editor.value = JSON.stringify(rows[0], null, 2);
-  }
-  _setCustomRecipesStatus('Exported recipe "' + recipeId + '" to Import/Export editor.', 'ok');
+  return _runCustomRecipesTask('Exporting selected recipe...', async () => {
+    const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+    if (!repo) {
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    const select = document.getElementById('custom-recipes-select');
+    let recipeId = String(select && select.value || '').trim();
+    if (!recipeId) {
+      const payload = _readCustomRecipeEditorPayload();
+      recipeId = String(payload && payload.id || '').trim();
+    }
+    if (!recipeId) {
+      _setCustomRecipesStatus('Select or define a recipe id first.', 'warn');
+      return;
+    }
+    const resp = await api('/api/recipes/custom/export?repo_path=' + encodeURIComponent(repo) + '&recipe_id=' + encodeURIComponent(recipeId));
+    if (resp && resp.error) {
+      _setCustomRecipesStatus(String(resp.error || 'Could not export recipe.'), 'error');
+      return;
+    }
+    const payload = resp && resp.payload ? resp.payload : { recipes: [] };
+    const importEl = document.getElementById('custom-recipes-import-json');
+    if (importEl) importEl.value = JSON.stringify(payload, null, 2);
+    const rows = Array.isArray(payload && payload.recipes) ? payload.recipes : [];
+    if (rows.length) {
+      const editor = document.getElementById('custom-recipe-json');
+      if (editor) editor.value = JSON.stringify(rows[0], null, 2);
+    }
+    _setCustomRecipesStatus('Exported recipe "' + recipeId + '" to Import/Export editor.', 'ok');
+  });
 }
 
 async function exportAllCustomRecipesToEditor() {
-  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
-  if (!repo) {
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  const resp = await api('/api/recipes/custom/export?repo_path=' + encodeURIComponent(repo));
-  if (resp && resp.error) {
-    _setCustomRecipesStatus(String(resp.error || 'Could not export recipes.'), 'error');
-    return;
-  }
-  const payload = resp && resp.payload ? resp.payload : { recipes: [] };
-  const importEl = document.getElementById('custom-recipes-import-json');
-  if (importEl) importEl.value = JSON.stringify(payload, null, 2);
-  _setCustomRecipesStatus('Exported all custom recipes to Import/Export editor.', 'ok');
+  return _runCustomRecipesTask('Exporting all custom recipes...', async () => {
+    const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+    if (!repo) {
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    const resp = await api('/api/recipes/custom/export?repo_path=' + encodeURIComponent(repo));
+    if (resp && resp.error) {
+      _setCustomRecipesStatus(String(resp.error || 'Could not export recipes.'), 'error');
+      return;
+    }
+    const payload = resp && resp.payload ? resp.payload : { recipes: [] };
+    const importEl = document.getElementById('custom-recipes-import-json');
+    if (importEl) importEl.value = JSON.stringify(payload, null, 2);
+    _setCustomRecipesStatus('Exported all custom recipes to Import/Export editor.', 'ok');
+  });
 }
 
 async function importCustomRecipesFromJson() {
-  const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
-  if (!repo) {
-    _setCustomRecipesStatus('Set a repository path first.', 'warn');
-    return;
-  }
-  const importEl = document.getElementById('custom-recipes-import-json');
-  const raw = String(importEl && importEl.value || '').trim();
-  if (!raw) {
-    _setCustomRecipesStatus('Paste recipe JSON into the Import/Export editor first.', 'warn');
-    return;
-  }
+  return _runCustomRecipesTask('Importing custom recipes...', async () => {
+    const repo = String(document.getElementById('custom-recipes-repo').value || '').trim() || _activeRepoPath();
+    if (!repo) {
+      _setCustomRecipesStatus('Set a repository path first.', 'warn');
+      return;
+    }
+    const importEl = document.getElementById('custom-recipes-import-json');
+    const raw = String(importEl && importEl.value || '').trim();
+    if (!raw) {
+      _setCustomRecipesStatus('Paste recipe JSON into the Import/Export editor first.', 'warn');
+      return;
+    }
 
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch (e) {
-    _setCustomRecipesStatus('Import JSON parse error: ' + String(e), 'error');
-    return;
-  }
-  const replace = !!(document.getElementById('custom-recipes-import-replace') && document.getElementById('custom-recipes-import-replace').checked);
-  const resp = await postJson('/api/recipes/custom/import', {
-    repo_path: repo,
-    payload: payload,
-    replace: replace,
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (e) {
+      _setCustomRecipesStatus('Import JSON parse error: ' + String(e), 'error');
+      return;
+    }
+    const replace = !!(document.getElementById('custom-recipes-import-replace') && document.getElementById('custom-recipes-import-replace').checked);
+    const resp = await postJson('/api/recipes/custom/import', {
+      repo_path: repo,
+      payload: payload,
+      replace: replace,
+    });
+    if (resp.error) {
+      _setCustomRecipesStatus(String(resp.error || 'Could not import recipes.'), 'error');
+      return;
+    }
+
+    await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
+    const first = customRecipeSummaries.length ? String(customRecipeSummaries[0].id || '').trim() : '';
+    _populateCustomRecipesSelector(first);
+    if (first) {
+      await loadSelectedCustomRecipeIntoEditor({ allowWhenBusy: true });
+    } else {
+      newCustomRecipeTemplate();
+    }
+    _setCustomRecipesStatus(
+      'Imported ' + Number(resp.imported || 0) + ' recipe(s): ' + Number(resp.created || 0) + ' created, ' + Number(resp.updated || 0) + ' updated.',
+      'ok',
+    );
+    toast('Imported custom recipes.', 'success');
   });
-  if (resp.error) {
-    _setCustomRecipesStatus(String(resp.error || 'Could not import recipes.'), 'error');
-    return;
-  }
-
-  await refreshRecipeCatalogForActiveRepo({ repoPath: repo, silent: true });
-  const first = customRecipeSummaries.length ? String(customRecipeSummaries[0].id || '').trim() : '';
-  _populateCustomRecipesSelector(first);
-  if (first) {
-    await loadSelectedCustomRecipeIntoEditor();
-  } else {
-    newCustomRecipeTemplate();
-  }
-  _setCustomRecipesStatus(
-    'Imported ' + Number(resp.imported || 0) + ' recipe(s): ' + Number(resp.created || 0) + ' created, ' + Number(resp.updated || 0) + ' updated.',
-    'ok',
-  );
-  toast('Imported custom recipes.', 'success');
 }
 
 function resetCustomRecipesForm() {
@@ -5902,6 +6087,9 @@ function resetCustomRecipesForm() {
   if (importEl) importEl.value = '';
   const replaceEl = document.getElementById('custom-recipes-import-replace');
   if (replaceEl) replaceEl.checked = false;
+  customRecipesBusyDepth = 0;
+  customRecipesBusyMessage = '';
+  _applyCustomRecipesBusyUi();
   _setCustomRecipesStatus('', 'muted');
   hideCustomRecipesModal();
 }
