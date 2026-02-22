@@ -152,3 +152,71 @@ def test_fetch_xai_models_supports_grok_api_key_alias(monkeypatch, tmp_path: Pat
 
     assert models == ["grok-test-model"]
     assert captured["auth"] == "Bearer xai-real-secret"
+
+
+def test_watchdog_fetch_failure_does_not_report_false_model_removals(tmp_path: Path) -> None:
+    state: dict[str, object] = {"openai": ["gpt-alpha", "gpt-beta"]}
+
+    def _fetch_openai(_timeout: int) -> list[str]:
+        value = state["openai"]
+        if isinstance(value, Exception):
+            raise value
+        if not isinstance(value, list):
+            raise TypeError("openai state must be a list")
+        return [str(item) for item in value]
+
+    watchdog = ModelCatalogWatchdog(
+        root_dir=tmp_path / "watchdog",
+        provider_fetchers={"openai": _fetch_openai},
+        dependency_packages=(),
+        default_interval_hours=24,
+    )
+    watchdog.update_config({"providers": ["openai"], "history_limit": 50})
+
+    first = watchdog.run_once(force=True, reason="manual")
+    assert first["status"] == "ok"
+
+    state["openai"] = RuntimeError("network timeout while refreshing catalog")
+    second = watchdog.run_once(force=True, reason="manual")
+
+    assert second["status"] == "error"
+    assert second["catalog_changed"] is False
+    diff = second["diff"]["providers"]["openai"]
+    assert diff["removed_count"] == 0
+    assert diff["added_count"] == 0
+    assert diff["compared_models"] is False
+    assert second["failed_providers"] == ["openai"]
+
+    alerts = watchdog.latest_alerts()
+    assert alerts["has_alerts"] is True
+    assert any(
+        "catalog refresh failed" in str(alert.get("title") or "").lower()
+        for alert in alerts["alerts"]
+    )
+
+
+def test_watchdog_partial_provider_failure_reports_degraded_status(tmp_path: Path) -> None:
+    def _fetch_openai(_timeout: int) -> list[str]:
+        return ["gpt-alpha"]
+
+    def _fetch_xai(_timeout: int) -> list[str]:
+        raise RuntimeError("xai endpoint temporarily unavailable")
+
+    watchdog = ModelCatalogWatchdog(
+        root_dir=tmp_path / "watchdog",
+        provider_fetchers={"openai": _fetch_openai, "xai": _fetch_xai},
+        dependency_packages=(),
+        default_interval_hours=24,
+    )
+    watchdog.update_config({"providers": ["openai", "xai"], "history_limit": 50})
+
+    result = watchdog.run_once(force=True, reason="manual")
+
+    assert result["status"] == "degraded"
+    assert result["successful_providers"] == ["openai"]
+    assert result["failed_providers"] == ["xai"]
+    assert "xai" in result["provider_errors"]
+
+    status = watchdog.status()
+    assert status["state"]["last_status"] == "degraded"
+    assert "xai" in str(status["state"]["last_error"] or "")

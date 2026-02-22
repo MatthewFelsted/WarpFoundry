@@ -301,6 +301,31 @@ class ModelCatalogWatchdog:
             }
 
         alerts: list[dict[str, Any]] = []
+        providers_snapshot_raw = latest_row.get("providers")
+        providers_snapshot = (
+            providers_snapshot_raw if isinstance(providers_snapshot_raw, dict) else {}
+        )
+        for provider, details in providers_snapshot.items():
+            if not isinstance(details, dict):
+                continue
+            if self._provider_fetch_state(details) is not False:
+                continue
+            error_text = str(details.get("error") or "").strip()
+            detail = "Latest provider catalog refresh failed."
+            if error_text:
+                detail = f"{detail} {error_text[:220]}"
+            alerts.append(
+                {
+                    "severity": "warn",
+                    "title": f"{provider} catalog refresh failed",
+                    "detail": detail,
+                    "provider": str(provider),
+                    "action": (
+                        "Verify provider credentials/network connectivity and rerun the watchdog."
+                    ),
+                }
+            )
+
         diff = latest_row.get("diff")
         if not isinstance(diff, dict):
             diff = {}
@@ -323,9 +348,7 @@ class ModelCatalogWatchdog:
                 ]
                 current_models = [
                     str(item or "").strip()
-                    for item in dict(latest_row.get("providers", {}))
-                    .get(str(provider), {})
-                    .get("models", [])
+                    for item in dict(providers_snapshot.get(str(provider), {})).get("models", [])
                     if str(item or "").strip()
                 ]
                 playbook = self._build_model_migration_playbook(
@@ -576,15 +599,30 @@ class ModelCatalogWatchdog:
             failed_providers = [
                 p for p, details in snapshot.get("providers", {}).items() if not details.get("ok")
             ]
+            provider_errors = {
+                str(provider): str(details.get("error") or "").strip()
+                for provider, details in snapshot.get("providers", {}).items()
+                if isinstance(details, dict) and not details.get("ok")
+            }
+            failed_summary = "; ".join(
+                f"{provider}: {error or 'unknown provider refresh failure'}"
+                for provider, error in sorted(provider_errors.items())
+            ).strip()
+            if failed_providers and success_providers:
+                run_status = "degraded"
+            elif failed_providers:
+                run_status = "error"
+            else:
+                run_status = "ok"
 
             with self._lock:
                 self._state.update(
                     {
-                        "last_status": "ok",
+                        "last_status": run_status,
                         "last_started_at": started_at,
                         "last_finished_at": finished_at,
                         "last_reason": reason,
-                        "last_error": "",
+                        "last_error": failed_summary if run_status != "ok" else "",
                         "catalog_changed": bool(diff.get("catalog_changed")),
                     }
                 )
@@ -592,13 +630,15 @@ class ModelCatalogWatchdog:
                 state_out = dict(self._state)
 
             return {
-                "status": "ok",
+                "status": run_status,
                 "reason": reason,
                 "started_at": started_at,
                 "finished_at": finished_at,
                 "catalog_changed": bool(diff.get("catalog_changed")),
                 "successful_providers": success_providers,
                 "failed_providers": failed_providers,
+                "provider_errors": provider_errors,
+                "error": failed_summary if run_status != "ok" else "",
                 "snapshot_path": str(self.latest_snapshot_path),
                 "history_path": str(self.history_path),
                 "next_due_at": self._compute_next_due_at(config, state_out),
@@ -714,22 +754,63 @@ class ModelCatalogWatchdog:
                 versions[package] = "unknown"
         return versions
 
+    @staticmethod
+    def _provider_fetch_state(details: Mapping[str, Any] | object) -> bool | None:
+        """Return provider fetch state (True/False) or None when unavailable."""
+        if not isinstance(details, Mapping):
+            return None
+        if "ok" in details:
+            raw_ok = details.get("ok")
+            if isinstance(raw_ok, bool):
+                return raw_ok
+            if raw_ok is None:
+                return None
+            return bool(raw_ok)
+        error_text = str(details.get("error") or "").strip()
+        if error_text:
+            return False
+        return None
+
+    @staticmethod
+    def _provider_models(details: Mapping[str, Any] | object) -> set[str]:
+        if not isinstance(details, Mapping):
+            return set()
+        rows = details.get("models")
+        if not isinstance(rows, list):
+            return set()
+        return {str(item or "").strip() for item in rows if str(item or "").strip()}
+
     def _compute_diff(
         self,
         previous_snapshot: Mapping[str, Any],
         current_snapshot: Mapping[str, Any],
     ) -> dict[str, Any]:
-        previous_providers = dict(previous_snapshot.get("providers", {}))
-        current_providers = dict(current_snapshot.get("providers", {}))
+        previous_providers_raw = previous_snapshot.get("providers")
+        current_providers_raw = current_snapshot.get("providers")
+        previous_providers = (
+            previous_providers_raw if isinstance(previous_providers_raw, Mapping) else {}
+        )
+        current_providers = current_providers_raw if isinstance(current_providers_raw, Mapping) else {}
         provider_keys = sorted(set(previous_providers) | set(current_providers))
 
         provider_changes: dict[str, Any] = {}
         changed = False
         for provider in provider_keys:
-            prev_models = set(previous_providers.get(provider, {}).get("models", []))
-            cur_models = set(current_providers.get(provider, {}).get("models", []))
-            added = sorted(cur_models - prev_models)
-            removed = sorted(prev_models - cur_models)
+            previous_details = previous_providers.get(provider, {})
+            current_details = current_providers.get(provider, {})
+            previous_state = self._provider_fetch_state(previous_details)
+            current_state = self._provider_fetch_state(current_details)
+
+            # Do not treat transient fetch failures as provider catalog removals.
+            compare_models = previous_state is not False and current_state is not False
+            if compare_models:
+                prev_models = self._provider_models(previous_details)
+                cur_models = self._provider_models(current_details)
+                added = sorted(cur_models - prev_models)
+                removed = sorted(prev_models - cur_models)
+            else:
+                added = []
+                removed = []
             provider_changed = bool(added or removed)
             changed = changed or provider_changed
             provider_changes[provider] = {
@@ -737,16 +818,29 @@ class ModelCatalogWatchdog:
                 "removed_count": len(removed),
                 "added": added,
                 "removed": removed,
+                "previous_ok": previous_state,
+                "current_ok": current_state,
+                "compared_models": compare_models,
             }
 
+        previous_dependencies_raw = previous_snapshot.get("dependencies")
+        current_dependencies_raw = current_snapshot.get("dependencies")
         prev_deps = {
             str(k): str(v)
-            for k, v in dict(previous_snapshot.get("dependencies", {})).items()
+            for k, v in (
+                previous_dependencies_raw.items()
+                if isinstance(previous_dependencies_raw, Mapping)
+                else []
+            )
             if str(k).strip()
         }
         cur_deps = {
             str(k): str(v)
-            for k, v in dict(current_snapshot.get("dependencies", {})).items()
+            for k, v in (
+                current_dependencies_raw.items()
+                if isinstance(current_dependencies_raw, Mapping)
+                else []
+            )
             if str(k).strip()
         }
         dep_keys = sorted(set(prev_deps) | set(cur_deps))
