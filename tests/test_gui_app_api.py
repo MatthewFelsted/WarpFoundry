@@ -127,6 +127,7 @@ def _pipeline_payload(repo_path: Path, **overrides):
                 "iterations": 1,
                 "agent": "codex",
                 "on_failure": "skip",
+                "max_retries": 1,
                 "test_policy": "skip",
                 "custom_prompt": "",
             }
@@ -955,6 +956,18 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
 
     payload = _pipeline_payload(
         repo,
+        phases=[
+            {
+                "phase": "ideation",
+                "enabled": True,
+                "iterations": 1,
+                "agent": "codex",
+                "on_failure": "retry",
+                "max_retries": 4,
+                "test_policy": "skip",
+                "custom_prompt": "",
+            }
+        ],
         smoke_test_cmd="python -m pytest -q -m smoke",
         allow_path_creation=False,
         dependency_install_policy="allow_system",
@@ -1021,6 +1034,8 @@ def test_pipeline_start_maps_capability_and_self_improvement_fields(
     assert config.pr_auto_push is True
     assert config.pr_sync_description is True
     assert config.phases
+    assert config.phases[0].on_failure == "retry"
+    assert config.phases[0].max_retries == 4
     assert config.phases[0].test_policy == "skip"
 
 
@@ -3741,6 +3756,7 @@ def test_pipeline_promote_last_dry_run_start_runs_apply_pipeline(
                             "iterations": 1,
                             "agent": "codex",
                             "on_failure": "skip",
+                            "max_retries": 1,
                             "test_policy": "skip",
                             "custom_prompt": "",
                         },
@@ -3750,6 +3766,7 @@ def test_pipeline_promote_last_dry_run_start_runs_apply_pipeline(
                             "iterations": 2,
                             "agent": "codex",
                             "on_failure": "retry",
+                            "max_retries": 3,
                             "test_policy": "smoke",
                             "custom_prompt": "Use smallest safe patch.",
                         },
@@ -3816,6 +3833,7 @@ def test_pipeline_promote_last_dry_run_start_runs_apply_pipeline(
     assert config.phases[1].phase.value == "implementation"
     assert config.phases[1].iterations == 2
     assert config.phases[1].on_failure == "retry"
+    assert config.phases[1].max_retries == 3
 
 
 def test_pipeline_science_dashboard_returns_structured_payload(

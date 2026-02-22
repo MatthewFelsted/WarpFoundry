@@ -12397,6 +12397,13 @@ function renderPipelinePhases() {
   const selfImprovementEnabled = document.getElementById('pipe-self-improvement-enabled')
     ? document.getElementById('pipe-self-improvement-enabled').checked
     : false;
+  const configuredPhaseRows = Array.isArray(pipeConfig.phases) ? pipeConfig.phases : [];
+  const configuredPhaseByKey = {};
+  configuredPhaseRows.forEach(row => {
+    const key = String(row && row.phase || '').trim();
+    if (!key) return;
+    configuredPhaseByKey[key] = row || {};
+  });
 
   list.innerHTML = pipelinePhases.map(p => {
     const isScience = p.is_science;
@@ -12410,9 +12417,31 @@ function renderPipelinePhases() {
     if (hidden) return '';
     const icon = PHASE_ICONS[p.key] || '\u2699\uFE0F';
     const desc = p.description || '';
+    const configured = configuredPhaseByKey[p.key] || {};
     const prompt = _phasePromptOverrides[p.key] || p.prompt || '';
     const isCustom = !!_phasePromptOverrides[p.key];
     const defaultTestPolicy = (p.default_test_policy || 'skip');
+    const enabled = configured.enabled !== false;
+    const configuredIterations = Number(configured.iterations);
+    const iterations = Number.isFinite(configuredIterations)
+      ? Math.max(1, Math.min(50, Math.round(configuredIterations)))
+      : Math.max(1, Number(p.default_iterations) || 1);
+    const configuredAgent = String(configured.agent || '').trim();
+    const phaseAgent = (configuredAgent === 'codex' || configuredAgent === 'claude_code')
+      ? configuredAgent
+      : (pipeConfig.agent || 'codex');
+    const configuredFailure = String(configured.on_failure || '').trim().toLowerCase();
+    const onFailure = (configuredFailure === 'skip' || configuredFailure === 'retry' || configuredFailure === 'abort')
+      ? configuredFailure
+      : 'skip';
+    const configuredPolicy = String(configured.test_policy || '').trim().toLowerCase();
+    const testPolicy = (configuredPolicy === 'skip' || configuredPolicy === 'smoke' || configuredPolicy === 'full')
+      ? configuredPolicy
+      : defaultTestPolicy;
+    const configuredRetries = Number(configured.max_retries);
+    const maxRetries = Number.isFinite(configuredRetries)
+      ? Math.max(0, Math.min(10, Math.round(configuredRetries)))
+      : 1;
 
     return '<div class="phase-item" data-phase="' + p.key + '">'
       // Header row (clickable to expand)
@@ -12420,10 +12449,10 @@ function renderPipelinePhases() {
       + ' onclick="togglePhaseExpand(this.parentElement)"'
       + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();togglePhaseExpand(this.parentElement)}">'
       +   '<span class="phase-expand-arrow">\u25B6</span>'
-      +   '<input type="checkbox" checked data-phase-enabled="' + p.key + '" style="accent-color:var(--accent)" onclick="event.stopPropagation()" onchange="scheduleDiagnosticsRefresh(\'pipeline\')">'
+      +   '<input type="checkbox"' + (enabled ? ' checked' : '') + ' data-phase-enabled="' + p.key + '" style="accent-color:var(--accent)" onclick="event.stopPropagation()" onchange="scheduleDiagnosticsRefresh(\'pipeline\')">'
       +   '<span class="phase-icon">' + icon + '</span>'
       +   '<span class="phase-name">' + esc(p.name) + '</span>'
-      +   '<input type="number" class="phase-iter" value="' + p.default_iterations + '" min="1" max="50" data-phase-iter="' + p.key + '" title="Iterations" onclick="event.stopPropagation()">'
+      +   '<input type="number" class="phase-iter" value="' + iterations + '" min="1" max="50" data-phase-iter="' + p.key + '" title="Iterations" onclick="event.stopPropagation()">'
       +   '<span style="font-size:10px;color:var(--text2);width:60px;text-align:right">' + (p.log_file || '') + '</span>'
       + '</div>'
       // Expandable details
@@ -12449,24 +12478,28 @@ function renderPipelinePhases() {
       +     '<div class="form-row">'
       +       '<label>Agent</label>'
       +       '<select data-phase-agent="' + p.key + '" onchange="scheduleDiagnosticsRefresh(\'pipeline\')">'
-      +         '<option value="codex">Codex</option>'
-      +         '<option value="claude_code">Claude Code</option>'
+      +         '<option value="codex"' + (phaseAgent === 'codex' ? ' selected' : '') + '>Codex</option>'
+      +         '<option value="claude_code"' + (phaseAgent === 'claude_code' ? ' selected' : '') + '>Claude Code</option>'
       +       '</select>'
       +     '</div>'
       +     '<div class="form-row">'
       +       '<label>On Failure</label>'
       +       '<select data-phase-on-failure="' + p.key + '">'
-      +         '<option value="skip">Skip</option>'
-      +         '<option value="retry">Retry</option>'
-      +         '<option value="abort">Abort</option>'
+      +         '<option value="skip"' + (onFailure === 'skip' ? ' selected' : '') + '>Skip</option>'
+      +         '<option value="retry"' + (onFailure === 'retry' ? ' selected' : '') + '>Retry</option>'
+      +         '<option value="abort"' + (onFailure === 'abort' ? ' selected' : '') + '>Abort</option>'
       +       '</select>'
+      +     '</div>'
+      +     '<div class="form-row">'
+      +       '<label>Retry Attempts</label>'
+      +       '<input type="number" min="0" max="10" value="' + maxRetries + '" data-phase-max-retries="' + p.key + '" title="Used only when On Failure is set to Retry">'
       +     '</div>'
       +     '<div class="form-row">'
       +       '<label>Tests</label>'
       +       '<select data-phase-test-policy="' + p.key + '">'
-      +         '<option value="skip"' + (defaultTestPolicy === 'skip' ? ' selected' : '') + '>Skip</option>'
-      +         '<option value="smoke"' + (defaultTestPolicy === 'smoke' ? ' selected' : '') + '>Smoke</option>'
-      +         '<option value="full"' + (defaultTestPolicy === 'full' ? ' selected' : '') + '>Full</option>'
+      +         '<option value="skip"' + (testPolicy === 'skip' ? ' selected' : '') + '>Skip</option>'
+      +         '<option value="smoke"' + (testPolicy === 'smoke' ? ' selected' : '') + '>Smoke</option>'
+      +         '<option value="full"' + (testPolicy === 'full' ? ' selected' : '') + '>Full</option>'
       +       '</select>'
       +     '</div>'
       +     '<div class="form-row">'
@@ -12990,12 +13023,25 @@ async function startPipeline() {
     const iter = parseInt(el.querySelector('.phase-iter').value) || 1;
     const agentSel = el.querySelector('[data-phase-agent]');
     const failSel = el.querySelector('[data-phase-on-failure]');
+    const retrySel = el.querySelector('[data-phase-max-retries]');
     const testPolicySel = el.querySelector('[data-phase-test-policy]');
     const agent = agentSel ? agentSel.value : pipeConfig.agent;
     const on_failure = failSel ? failSel.value : 'skip';
+    const max_retries = retrySel
+      ? Math.max(0, Math.min(10, parseInt(retrySel.value, 10) || 0))
+      : 1;
     const test_policy = testPolicySel ? testPolicySel.value : 'skip';
     const custom_prompt = _phasePromptOverrides[key] || '';
-    phases.push({ phase: key, enabled, iterations: iter, agent, on_failure, test_policy, custom_prompt });
+    phases.push({
+      phase: key,
+      enabled,
+      iterations: iter,
+      agent,
+      on_failure,
+      max_retries,
+      test_policy,
+      custom_prompt,
+    });
   });
   pipeConfig.phases = phases;
 

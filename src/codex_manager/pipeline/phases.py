@@ -23,6 +23,7 @@ ImageProvider = Literal["openai", "google"]
 VectorMemoryBackend = Literal["chroma"]
 DeepResearchProviders = Literal["openai", "google", "both"]
 TestPolicy = Literal["skip", "smoke", "full"]
+PhaseFailurePolicy = Literal["skip", "retry", "abort"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -160,9 +161,9 @@ class PhaseConfig(BaseModel):
     enabled: bool = True
     iterations: int = 1
     agent: str = "codex"  # "codex" | "claude_code" | "auto"
-    on_failure: str = "skip"  # "skip" | "retry" | "abort"
+    on_failure: PhaseFailurePolicy = "skip"
     test_policy: TestPolicy | None = None  # "skip" | "smoke" | "full"
-    max_retries: int = 2
+    max_retries: int = Field(default=2, ge=0, le=10)
     custom_prompt: str = ""  # if non-empty, overrides catalog prompt for this phase
 
     @model_validator(mode="after")

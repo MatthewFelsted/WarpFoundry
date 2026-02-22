@@ -3542,7 +3542,17 @@ class PipelineOrchestrator:
                         f"| test policy: {phase_test_policy}",
                     )
 
-                    for iteration in range(1, phase_cfg.iterations + 1):
+                    phase_failure_policy = str(getattr(phase_cfg, "on_failure", "skip") or "skip")
+                    phase_failure_policy = phase_failure_policy.strip().lower()
+                    retry_limit = (
+                        max(0, int(getattr(phase_cfg, "max_retries", 0)))
+                        if phase_failure_policy == "retry"
+                        else 0
+                    )
+                    max_attempts = retry_limit + 1
+                    iteration = 1
+                    retry_attempt = 0
+                    while iteration <= phase_cfg.iterations:
                         self._pause_event.wait()
                         if self._stop_event.is_set():
                             self.state.stop_reason = "user_stopped"
@@ -3551,9 +3561,12 @@ class PipelineOrchestrator:
 
                         self.state.current_iteration = iteration
                         self.state.current_phase_started_at_epoch_ms = int(time.time() * 1000)
+                        attempt_number = retry_attempt + 1
 
                         if phase_cfg.iterations > 1:
                             self._log("info", f"  Iteration {iteration}/{phase_cfg.iterations}")
+                        if max_attempts > 1:
+                            self._log("info", f"  Attempt {attempt_number}/{max_attempts}")
 
                         science_baseline_eval: EvalResult | None = None
                         science_baseline_clean = False
@@ -3744,11 +3757,16 @@ class PipelineOrchestrator:
                             )
 
                         # Log to tracker
+                        attempt_prefix = (
+                            f"[Attempt {attempt_number}/{max_attempts}] "
+                            if max_attempts > 1
+                            else ""
+                        )
                         self.tracker.log_phase_result(
                             phase.value,
                             iteration,
                             result.success,
-                            f"Files: {result.files_changed}, "
+                            f"{attempt_prefix}Files: {result.files_changed}, "
                             f"Lines: {result.net_lines_changed:+d}, "
                             f"Tests: {result.test_outcome}",
                         )
@@ -3791,7 +3809,9 @@ class PipelineOrchestrator:
                             "phase_result",
                             (
                                 f"Cycle {cycle_num}, phase '{phase.value}' "
-                                f"(iteration {iteration}) finished with "
+                                f"(iteration {iteration}"
+                                f"{f', attempt {attempt_number}/{max_attempts}' if max_attempts > 1 else ''}) "
+                                f"finished with "
                                 f"status={'ok' if result.success else 'failed'} "
                                 f"and tests={result.test_outcome}."
                             ),
@@ -3800,6 +3820,8 @@ class PipelineOrchestrator:
                                 "cycle": cycle_num,
                                 "phase": phase.value,
                                 "iteration": iteration,
+                                "attempt": attempt_number,
+                                "max_attempts": max_attempts,
                                 "mode": config.mode,
                                 "agent_used": result.agent_used,
                                 "model": str(result.model or "").strip(),
@@ -3962,7 +3984,7 @@ class PipelineOrchestrator:
                                         phase.value,
                                         iteration,
                                         followup_result.success,
-                                        "[Brain follow-up] "
+                                        f"{attempt_prefix}[Brain follow-up] "
                                         f"Files: {followup_result.files_changed}, "
                                         f"Lines: {followup_result.net_lines_changed:+d}, "
                                         f"Tests: {followup_result.test_outcome}",
@@ -3971,7 +3993,9 @@ class PipelineOrchestrator:
                                         "phase_result",
                                         (
                                             f"Cycle {cycle_num}, phase '{phase.value}' "
-                                            f"(iteration {iteration}, brain follow-up) finished with "
+                                            f"(iteration {iteration}"
+                                            f"{f', attempt {attempt_number}/{max_attempts}' if max_attempts > 1 else ''}, "
+                                            "brain follow-up) finished with "
                                             f"status={'ok' if followup_result.success else 'failed'} "
                                             f"and tests={followup_result.test_outcome}."
                                         ),
@@ -3980,6 +4004,8 @@ class PipelineOrchestrator:
                                             "cycle": cycle_num,
                                             "phase": phase.value,
                                             "iteration": iteration,
+                                            "attempt": attempt_number,
+                                            "max_attempts": max_attempts,
                                             "mode": config.mode,
                                             "agent_used": followup_result.agent_used,
                                             "model": str(followup_result.model or "").strip(),
@@ -4061,7 +4087,26 @@ class PipelineOrchestrator:
                                 break
 
                         # Handle failures
-                        if not control_result.success and phase_cfg.on_failure == "abort":
+                        if not control_result.success and phase_failure_policy == "retry":
+                            if retry_attempt < retry_limit:
+                                self._log(
+                                    "warn",
+                                    (
+                                        f"  Phase {phase.value} iteration {iteration} failed "
+                                        f"(attempt {attempt_number}/{max_attempts}); retrying."
+                                    ),
+                                )
+                                retry_attempt += 1
+                                continue
+                            self._log(
+                                "warn",
+                                (
+                                    f"  Phase {phase.value} iteration {iteration} exhausted "
+                                    f"{max_attempts} attempt(s); continuing to next phase."
+                                ),
+                            )
+
+                        if not control_result.success and phase_failure_policy == "abort":
                             self._log("error", f"Phase {phase.value} failed - aborting")
                             self.state.stop_reason = "phase_failed_abort"
                             cycle_aborted = True
@@ -4078,6 +4123,9 @@ class PipelineOrchestrator:
                                 f"skipping {remaining} remaining iteration(s).",
                             )
                             break
+
+                        retry_attempt = 0
+                        iteration += 1
 
                     if cycle_aborted:
                         break

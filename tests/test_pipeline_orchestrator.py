@@ -1092,6 +1092,189 @@ def test_pipeline_phase_marks_failed_tests_as_failure(monkeypatch, tmp_path: Pat
     assert "tests=failed" in result.error_message
 
 
+def test_pipeline_phase_retry_retries_until_success(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    call_count = {"count": 0}
+
+    def _stub_execute_phase(self, runner, evaluator, repo_path, config, phase, cycle, iteration, prompt):
+        call_count["count"] += 1
+        success = call_count["count"] >= 2
+        return PhaseResult(
+            cycle=cycle,
+            phase=phase.value,
+            iteration=iteration,
+            agent_success=True,
+            validation_success=success,
+            tests_passed=success,
+            success=success,
+            test_outcome="passed" if success else "failed",
+            test_summary="ok" if success else "failed",
+            test_exit_code=0 if success else 1,
+            files_changed=1 if success else 0,
+            net_lines_changed=1 if success else 0,
+            error_message="" if success else "Validation failed: tests=failed",
+            input_tokens=1,
+            output_tokens=1,
+        )
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(PipelineOrchestrator, "_execute_phase", _stub_execute_phase)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                on_failure="retry",
+                max_retries=2,
+                custom_prompt="Implement and validate.",
+            )
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    state = orch.run()
+
+    assert call_count["count"] == 2
+    assert state.stop_reason == "max_cycles_reached"
+    assert state.results
+    assert state.results[-1].success is True
+    events, _ = orch.get_log_events_since(0, limit=2000)
+    messages = [str(item.get("message") or "") for item in events]
+    assert any("Attempt 1/3" in msg for msg in messages)
+    assert any("failed (attempt 1/3); retrying." in msg for msg in messages)
+
+
+def test_pipeline_phase_retry_exhaustion_continues_to_next_phase(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    calls_by_phase: dict[str, int] = {"ideation": 0, "prioritization": 0}
+
+    def _stub_execute_phase(self, runner, evaluator, repo_path, config, phase, cycle, iteration, prompt):
+        phase_key = phase.value
+        calls_by_phase[phase_key] = calls_by_phase.get(phase_key, 0) + 1
+        success = phase_key == "prioritization"
+        return PhaseResult(
+            cycle=cycle,
+            phase=phase_key,
+            iteration=iteration,
+            agent_success=True,
+            validation_success=success,
+            tests_passed=success,
+            success=success,
+            test_outcome="passed" if success else "failed",
+            test_summary="ok" if success else "failed",
+            test_exit_code=0 if success else 1,
+            files_changed=1 if success else 0,
+            net_lines_changed=1 if success else 0,
+            error_message="" if success else "Validation failed: tests=failed",
+            input_tokens=1,
+            output_tokens=1,
+        )
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(PipelineOrchestrator, "_execute_phase", _stub_execute_phase)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                on_failure="retry",
+                max_retries=1,
+                custom_prompt="First phase fails twice.",
+            ),
+            PhaseConfig(
+                phase=PipelinePhase.PRIORITIZATION,
+                iterations=1,
+                on_failure="skip",
+                custom_prompt="Second phase should still run.",
+            ),
+        ],
+    )
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    state = orch.run()
+
+    assert calls_by_phase["ideation"] == 2
+    assert calls_by_phase["prioritization"] == 1
+    assert state.stop_reason == "max_cycles_reached"
+    events, _ = orch.get_log_events_since(0, limit=2000)
+    messages = [str(item.get("message") or "") for item in events]
+    assert any("exhausted 2 attempt(s); continuing to next phase." in msg for msg in messages)
+
+
+def test_pipeline_phase_abort_stops_without_retry_attempts(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    call_count = {"count": 0}
+
+    def _stub_execute_phase(self, runner, evaluator, repo_path, config, phase, cycle, iteration, prompt):
+        call_count["count"] += 1
+        return PhaseResult(
+            cycle=cycle,
+            phase=phase.value,
+            iteration=iteration,
+            agent_success=True,
+            validation_success=False,
+            tests_passed=False,
+            success=False,
+            test_outcome="failed",
+            test_summary="failed",
+            test_exit_code=1,
+            files_changed=0,
+            net_lines_changed=0,
+            error_message="Validation failed: tests=failed",
+            input_tokens=1,
+            output_tokens=1,
+        )
+
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _NoopRunner)
+    monkeypatch.setattr(PipelineOrchestrator, "_execute_phase", _stub_execute_phase)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IMPLEMENTATION,
+                iterations=1,
+                on_failure="abort",
+                max_retries=5,
+                custom_prompt="Abort after first failed attempt.",
+            )
+        ],
+    )
+    state = PipelineOrchestrator(repo_path=repo, config=cfg).run()
+
+    assert call_count["count"] == 1
+    assert state.stop_reason == "phase_failed_abort"
+
+
 def test_pipeline_phase_execution_is_non_interactive(monkeypatch, tmp_path: Path):
     repo = tmp_path / "repo"
     _init_git_repo(repo)

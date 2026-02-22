@@ -2598,6 +2598,7 @@ def _phase_row_from_key(phase_key: str, *, default_agent: str) -> dict[str, obje
         "iterations": 1,
         "agent": agent,
         "on_failure": "skip",
+        "max_retries": 1,
         "test_policy": _default_test_policy_for_phase_key(phase_value),
         "custom_prompt": "",
     }
@@ -2625,6 +2626,7 @@ def _normalize_pipeline_phase_rows(
         row["agent"] = str(item.get("agent") or default_agent or "codex").strip() or "codex"
         on_failure = str(item.get("on_failure") or "skip").strip().lower()
         row["on_failure"] = on_failure if on_failure in {"skip", "retry", "abort"} else "skip"
+        row["max_retries"] = min(10, max(0, _safe_int(item.get("max_retries"), 1)))
         test_policy = str(item.get("test_policy") or "").strip().lower()
         if test_policy not in {"skip", "smoke", "full"}:
             test_policy = _default_test_policy_for_phase_key(str(row.get("phase") or ""))
@@ -11380,6 +11382,7 @@ def _start_pipeline_from_gui_config(gui_config: PipelineGUIConfig) -> tuple[dict
                     iterations=pg.iterations,
                     agent=pg.agent,
                     on_failure=pg.on_failure,
+                    max_retries=pg.max_retries,
                     test_policy=pg.test_policy,
                     custom_prompt=pg.custom_prompt,
                 )

@@ -16,6 +16,7 @@ ImageProvider = Literal["openai", "google"]
 VectorMemoryBackend = Literal["chroma"]
 DeepResearchProviders = Literal["openai", "google", "both"]
 TestPolicy = Literal["skip", "smoke", "full"]
+PhaseFailurePolicy = Literal["skip", "retry", "abort"]
 DANGER_CONFIRMATION_PHRASE = "I UNDERSTAND"
 
 
@@ -193,7 +194,8 @@ class PipelinePhaseGUI(BaseModel):
     enabled: bool = True
     iterations: int = 1
     agent: str = "codex"
-    on_failure: str = "skip"  # "skip" | "retry" | "abort"
+    on_failure: PhaseFailurePolicy = "skip"
+    max_retries: int = Field(default=1, ge=0, le=10)
     test_policy: TestPolicy | None = None  # "skip" | "smoke" | "full"
     custom_prompt: str = ""  # if non-empty, overrides catalog prompt for this phase
 
