@@ -13,9 +13,10 @@ import codex_manager.runner_common as runner_common_module
 from codex_manager.runner_common import (
     coerce_int,
     execute_streaming_json_command,
+    execute_with_prompt_transport_fallback,
     resolve_binary,
 )
-from codex_manager.schemas import CodexEvent, EventKind
+from codex_manager.schemas import CodexEvent, EventKind, RunResult
 
 
 def _make_executable(tmp_path: Path, name: str) -> Path:
@@ -135,3 +136,57 @@ def test_execute_streaming_json_command_writes_stdin_text(tmp_path: Path) -> Non
     assert result.timed_out is False
     assert len(result.events) == 1
     assert result.events[0].text == "hello from stdin"
+
+
+def test_execute_with_prompt_transport_fallback_retries_with_stdin(tmp_path: Path) -> None:
+    prompt = "very long prompt payload"
+    captured: list[tuple[list[str], Path, str | None]] = []
+
+    def _build_command(prompt_arg: str) -> list[str]:
+        return ["runner", prompt_arg]
+
+    def _execute(command: list[str], cwd: Path, stdin_text: str | None) -> RunResult:
+        captured.append((list(command), cwd, stdin_text))
+        if len(captured) == 1:
+            raise OSError("The command line is too long.")
+        return RunResult(success=True, exit_code=0, final_message="ok")
+
+    outcome = execute_with_prompt_transport_fallback(
+        cwd=tmp_path,
+        prompt=prompt,
+        use_stdin_prompt=False,
+        process_name="Test Runner",
+        build_command=_build_command,
+        execute=_execute,
+    )
+
+    assert outcome.error is None
+    assert outcome.used_stdin_prompt is True
+    assert outcome.result is not None
+    assert outcome.result.success is True
+    assert len(captured) == 2
+    assert captured[0][0][-1] == prompt
+    assert captured[0][2] is None
+    assert captured[1][0][-1] == "-"
+    assert captured[1][2] == prompt
+
+
+def test_execute_with_prompt_transport_fallback_returns_non_overflow_errors(tmp_path: Path) -> None:
+    def _build_command(prompt_arg: str) -> list[str]:
+        return ["runner", prompt_arg]
+
+    def _execute(command: list[str], cwd: Path, stdin_text: str | None) -> RunResult:
+        raise OSError("permission denied")
+
+    outcome = execute_with_prompt_transport_fallback(
+        cwd=tmp_path,
+        prompt="hello",
+        use_stdin_prompt=False,
+        process_name="Test Runner",
+        build_command=_build_command,
+        execute=_execute,
+    )
+
+    assert outcome.result is None
+    assert isinstance(outcome.error, OSError)
+    assert outcome.used_stdin_prompt is False

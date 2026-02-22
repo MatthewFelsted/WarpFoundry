@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from codex_manager.schemas import CodexEvent
+from codex_manager.schemas import CodexEvent, RunResult
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,68 @@ class StreamExecutionResult:
     @property
     def stderr_text(self) -> str:
         return "\n".join(self.stderr_lines).strip()
+
+
+@dataclass(slots=True)
+class PromptExecutionOutcome:
+    """Outcome of one runner attempt including stdin fallback state."""
+
+    result: RunResult | None
+    used_stdin_prompt: bool
+    error: Exception | None
+
+
+def execute_with_prompt_transport_fallback(
+    *,
+    cwd: Path,
+    prompt: str,
+    use_stdin_prompt: bool,
+    process_name: str,
+    build_command: Callable[[str], list[str]],
+    execute: Callable[[list[str], Path, str | None], RunResult],
+) -> PromptExecutionOutcome:
+    """Execute a command and retry once with stdin when argv is too long."""
+    prompt_arg = "-" if use_stdin_prompt else prompt
+    stdin_text = prompt if use_stdin_prompt else None
+    cmd = build_command(prompt_arg)
+
+    try:
+        result = execute(cmd, cwd, stdin_text)
+        return PromptExecutionOutcome(
+            result=result,
+            used_stdin_prompt=use_stdin_prompt,
+            error=None,
+        )
+    except OSError as exc:
+        if not use_stdin_prompt and is_command_line_too_long_error(exc):
+            logger.warning(
+                "%s argv exceeded command-line limits; retrying with stdin prompt transport.",
+                process_name,
+            )
+            try:
+                result = execute(build_command("-"), cwd, prompt)
+                return PromptExecutionOutcome(
+                    result=result,
+                    used_stdin_prompt=True,
+                    error=None,
+                )
+            except Exception as retry_exc:  # pragma: no cover - caller handles surfaced failures
+                return PromptExecutionOutcome(
+                    result=None,
+                    used_stdin_prompt=True,
+                    error=retry_exc,
+                )
+        return PromptExecutionOutcome(
+            result=None,
+            used_stdin_prompt=use_stdin_prompt,
+            error=exc,
+        )
+    except Exception as exc:  # pragma: no cover - caller handles surfaced failures
+        return PromptExecutionOutcome(
+            result=None,
+            used_stdin_prompt=use_stdin_prompt,
+            error=exc,
+        )
 
 
 def execute_streaming_json_command(

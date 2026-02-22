@@ -19,10 +19,17 @@ class RetentionPolicy:
     max_output_history_runs: int = 30
 
 
+@dataclass(frozen=True, slots=True)
+class _FileCandidate:
+    path: Path
+    mtime: float
+    size: int
+
+
 def _is_within(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
-    except ValueError:
+    except (ValueError, OSError):
         return False
     return True
 
@@ -45,7 +52,7 @@ def _prune_empty_dirs(root: Path, active_roots: list[Path]) -> int:
     removed = 0
     if not root.exists():
         return removed
-    for directory in sorted((p for p in root.rglob("*") if p.is_dir()), reverse=True):
+    for directory in sorted((p for p in root.rglob("*") if _safe_is_dir(p)), reverse=True):
         if _is_active_path(directory, active_roots):
             continue
         try:
@@ -53,9 +60,30 @@ def _prune_empty_dirs(root: Path, active_roots: list[Path]) -> int:
         except StopIteration:
             directory.rmdir()
             removed += 1
-        except Exception:
+        except OSError:
             continue
     return removed
+
+
+def _safe_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _safe_file_mtime(path: Path) -> float:
+    try:
+        return float(path.stat().st_mtime)
+    except OSError:
+        return 0.0
+
+
+def _safe_file_size(path: Path) -> int:
+    try:
+        return max(0, int(path.stat().st_size))
+    except OSError:
+        return 0
 
 
 def _prune_output_history_runs(
@@ -70,21 +98,105 @@ def _prune_output_history_runs(
         return removed_runs, removed_bytes
     runs = sorted(
         (path for path in output_history_root.iterdir() if path.is_dir()),
-        key=lambda path: path.stat().st_mtime,
+        key=_safe_file_mtime,
         reverse=True,
     )
     for run_dir in runs[max_runs:]:
         if _is_active_path(run_dir, active_roots):
             continue
-        size = sum(
-            file_path.stat().st_size
-            for file_path in run_dir.rglob("*")
-            if file_path.is_file()
-        )
+        size = sum(_safe_file_size(file_path) for file_path in run_dir.rglob("*") if file_path.is_file())
         shutil.rmtree(run_dir, ignore_errors=True)
         removed_runs += 1
         removed_bytes += int(size)
     return removed_runs, removed_bytes
+
+
+def _file_candidate(path: Path) -> _FileCandidate | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _FileCandidate(
+        path=path,
+        mtime=float(stat.st_mtime),
+        size=max(0, int(stat.st_size)),
+    )
+
+
+def _collect_file_candidates(manager_root: Path, active_roots: list[Path]) -> list[_FileCandidate]:
+    candidates: list[_FileCandidate] = []
+    for root in _candidate_roots(manager_root):
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            try:
+                is_file = path.is_file()
+            except OSError:
+                continue
+            if not is_file or _is_active_path(path, active_roots):
+                continue
+            candidate = _file_candidate(path)
+            if candidate is not None:
+                candidates.append(candidate)
+    return candidates
+
+
+def _unlink_file(path: Path) -> bool:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def _prune_candidates_by_age(
+    candidates: list[_FileCandidate],
+    *,
+    cutoff: float,
+) -> tuple[list[_FileCandidate], int, int]:
+    kept: list[_FileCandidate] = []
+    removed_files = 0
+    removed_bytes = 0
+    for candidate in candidates:
+        if candidate.mtime >= cutoff:
+            kept.append(candidate)
+            continue
+        if _unlink_file(candidate.path):
+            removed_files += 1
+            removed_bytes += candidate.size
+        else:
+            kept.append(candidate)
+    return kept, removed_files, removed_bytes
+
+
+def _prune_candidates_by_limits(
+    candidates: list[_FileCandidate],
+    *,
+    max_files: int,
+    max_bytes: int,
+) -> tuple[list[_FileCandidate], int, int]:
+    ordered = sorted(candidates, key=lambda candidate: candidate.mtime)
+    removed_paths: set[Path] = set()
+    removed_files = 0
+    removed_bytes = 0
+    remaining_files = len(ordered)
+    remaining_bytes = sum(candidate.size for candidate in ordered)
+
+    for candidate in ordered:
+        if remaining_files <= max_files and remaining_bytes <= max_bytes:
+            break
+        if not _unlink_file(candidate.path):
+            continue
+        removed_paths.add(candidate.path)
+        removed_files += 1
+        removed_bytes += candidate.size
+        remaining_files -= 1
+        remaining_bytes = max(0, remaining_bytes - candidate.size)
+
+    if not removed_paths:
+        return ordered, 0, 0
+    kept = [candidate for candidate in ordered if candidate.path not in removed_paths]
+    return kept, removed_files, removed_bytes
 
 
 def cleanup_runtime_artifacts(
@@ -129,58 +241,21 @@ def cleanup_runtime_artifacts(
 
     now = time.time()
     cutoff = now - max(1, int(policy.max_age_days)) * 86_400
-
-    files: list[Path] = []
-    for root in _candidate_roots(manager_root):
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            if _is_active_path(path, active_roots):
-                continue
-            files.append(path)
-
-    # Age-based pruning.
-    for path in list(files):
-        try:
-            if path.stat().st_mtime >= cutoff:
-                continue
-            size = int(path.stat().st_size)
-            path.unlink(missing_ok=True)
-            freed_bytes += size
-            removed_files += 1
-            files.remove(path)
-        except Exception:
-            continue
+    files = _collect_file_candidates(manager_root, active_roots)
+    files, removed_by_age, bytes_by_age = _prune_candidates_by_age(files, cutoff=cutoff)
+    removed_files += removed_by_age
+    freed_bytes += bytes_by_age
 
     # Count/size caps prune oldest first.
-    files.sort(key=lambda path: path.stat().st_mtime)
     max_files = max(1, int(policy.max_files))
     max_bytes = max(1, int(policy.max_bytes))
-    total_bytes = sum(path.stat().st_size for path in files if path.exists())
-
-    while len(files) > max_files:
-        path = files.pop(0)
-        try:
-            size = int(path.stat().st_size)
-            path.unlink(missing_ok=True)
-            removed_files += 1
-            freed_bytes += size
-            total_bytes -= size
-        except Exception:
-            continue
-
-    while files and total_bytes > max_bytes:
-        path = files.pop(0)
-        try:
-            size = int(path.stat().st_size)
-            path.unlink(missing_ok=True)
-            removed_files += 1
-            freed_bytes += size
-            total_bytes -= size
-        except Exception:
-            continue
+    files, removed_by_limit, bytes_by_limit = _prune_candidates_by_limits(
+        files,
+        max_files=max_files,
+        max_bytes=max_bytes,
+    )
+    removed_files += removed_by_limit
+    freed_bytes += bytes_by_limit
 
     for root in _candidate_roots(manager_root):
         removed_dirs += _prune_empty_dirs(root, active_roots)

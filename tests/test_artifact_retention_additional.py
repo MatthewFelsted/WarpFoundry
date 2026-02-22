@@ -131,3 +131,44 @@ def test_cleanup_runtime_artifacts_continues_when_file_unlink_fails(
     assert protected.exists()
     assert not removable.exists()
     assert result["removed_files"] == 1
+
+
+def test_cleanup_runtime_artifacts_skips_unstatable_files_without_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    archive = repo / ".codex_manager" / "logs" / "archive"
+    broken = archive / "broken.log"
+    removable = archive / "removable.log"
+
+    _write_bytes(broken, size=4)
+    _write_bytes(removable, size=4)
+    _set_age_seconds(broken, seconds_ago=30)
+    _set_age_seconds(removable, seconds_ago=30)
+
+    broken_str = str(broken)
+    original_stat = Path.stat
+
+    def flaky_stat(self: Path, *args: object, **kwargs: object):  # type: ignore[override]
+        if str(self) == broken_str:
+            raise OSError("stat failure")
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+
+    result = cleanup_runtime_artifacts(
+        repo,
+        policy=RetentionPolicy(
+            enabled=True,
+            max_age_days=365,
+            max_files=100,
+            max_bytes=1,
+            max_output_history_runs=10,
+        ),
+    )
+    monkeypatch.setattr(Path, "stat", original_stat)
+
+    assert broken.exists()
+    assert not removable.exists()
+    assert result["removed_files"] == 1
