@@ -2548,6 +2548,111 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
     assert pipeline_only["runs"][0]["scope"] == "pipeline"
 
 
+def test_pipeline_run_comparison_handles_interleaved_same_scope_runs(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "run_a_start",
+            "timestamp": "2026-02-18T09:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Run A started.",
+            "context": {"run_id": "run-a", "mode": "apply", "phase_order": ["implementation"]},
+        },
+        {
+            "id": "run_b_start",
+            "timestamp": "2026-02-18T09:00:10+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Run B started.",
+            "context": {"run_id": "run-b", "mode": "apply", "phase_order": ["implementation"]},
+        },
+        {
+            "id": "run_a_phase",
+            "timestamp": "2026-02-18T09:00:20+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Run A phase result.",
+            "context": {
+                "run_id": "run-a",
+                "test_outcome": "passed",
+                "input_tokens": 120,
+                "output_tokens": 40,
+                "total_tokens": 160,
+                "commit_sha": "a123",
+            },
+        },
+        {
+            "id": "run_b_phase",
+            "timestamp": "2026-02-18T09:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "warn",
+            "summary": "Run B phase result.",
+            "context": {
+                "run_id": "run-b",
+                "test_outcome": "failed",
+                "input_tokens": 60,
+                "output_tokens": 20,
+                "total_tokens": 80,
+                "commit_sha": "b123",
+            },
+        },
+        {
+            "id": "run_a_finish",
+            "timestamp": "2026-02-18T09:00:40+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Run A finished with stop_reason='max_cycles_reached'.",
+            "context": {"run_id": "run-a", "stop_reason": "max_cycles_reached", "total_tokens": 160},
+        },
+        {
+            "id": "run_b_finish",
+            "timestamp": "2026-02-18T09:00:50+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "warn",
+            "summary": "Run B finished with stop_reason='tests_failed'.",
+            "context": {"run_id": "run-b", "stop_reason": "tests_failed", "total_tokens": 80},
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/run-comparison",
+        query_string={"repo_path": str(repo), "scope": "pipeline", "limit": "10"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is True
+    assert len(data["runs"]) == 2
+
+    runs_by_id = {str(run.get("run_id")): run for run in data["runs"]}
+    assert set(runs_by_id) == {"run-a", "run-b"}
+    assert runs_by_id["run-a"]["tests"]["passed"] == 1
+    assert runs_by_id["run-a"]["tests"]["failed"] == 0
+    assert runs_by_id["run-a"]["commit_count"] == 1
+    assert runs_by_id["run-b"]["tests"]["passed"] == 0
+    assert runs_by_id["run-b"]["tests"]["failed"] == 1
+    assert runs_by_id["run-b"]["commit_count"] == 1
+
+
 def test_pipeline_run_comparison_skips_trivial_runs_for_best_badges(
     client, monkeypatch, tmp_path: Path
 ):
@@ -2971,6 +3076,99 @@ def test_pipeline_run_comparison_export_bundle_creates_selected_artifacts(client
     assert "manifest.json" in names
     assert not any(name.startswith("logs/") for name in names)
     assert not any("artifact_bundles" in name for name in names)
+
+
+def test_pipeline_run_comparison_export_bundle_history_restores_outer_run(
+    client, tmp_path: Path
+):
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "run_a_start",
+            "timestamp": "2026-02-20T12:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Run A started.",
+            "context": {"run_id": "run-a", "mode": "apply"},
+        },
+        {
+            "id": "run_b_start",
+            "timestamp": "2026-02-20T12:00:05+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Run B started.",
+            "context": {"run_id": "run-b", "mode": "apply"},
+        },
+        {
+            "id": "run_b_phase",
+            "timestamp": "2026-02-20T12:00:10+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Run B phase.",
+            "context": {"test_outcome": "passed", "total_tokens": 20},
+        },
+        {
+            "id": "run_b_finish",
+            "timestamp": "2026-02-20T12:00:20+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Run B finished.",
+            "context": {"run_id": "run-b", "stop_reason": "max_cycles_reached"},
+        },
+        {
+            "id": "run_a_phase_after_b",
+            "timestamp": "2026-02-20T12:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Run A resumed.",
+            "context": {"test_outcome": "failed", "total_tokens": 10},
+        },
+        {
+            "id": "run_a_finish",
+            "timestamp": "2026-02-20T12:00:40+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "warn",
+            "summary": "Run A finished.",
+            "context": {"run_id": "run-a", "stop_reason": "tests_failed"},
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.post(
+        "/api/pipeline/run-comparison/export",
+        json={
+            "repo_path": str(repo),
+            "run_id": "run-a",
+            "include_outputs": False,
+            "include_logs": False,
+            "include_config": False,
+            "include_history": True,
+        },
+    )
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data
+
+    bundle_path = Path(data["bundle_path"])
+    assert bundle_path.is_file()
+
+    with zipfile.ZipFile(bundle_path) as archive:
+        run_events = json.loads(archive.read("history/run-events.json").decode("utf-8"))
+    event_ids = {str(event.get("id")) for event in run_events if isinstance(event, dict)}
+    assert event_ids == {"run_a_start", "run_a_phase_after_b", "run_a_finish"}
 
 
 def test_pipeline_run_comparison_export_download_endpoint_serves_zip(client, tmp_path: Path):

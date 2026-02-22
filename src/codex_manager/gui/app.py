@@ -977,6 +977,187 @@ def _history_jsonl_path(repo: Path) -> Path:
     return _pipeline_logs_dir(repo) / "HISTORY.jsonl"
 
 
+def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[str, object]]:
+    """Return parsed JSON-object rows from a JSONL file."""
+    if not path.is_file():
+        return []
+    try:
+        raw = _read_text_utf8_resilient(path)
+    except Exception as exc:
+        if warn_context:
+            logger.warning("Could not read %s (%s): %s", warn_context, path, exc)
+        return []
+    rows: list[dict[str, object]] = []
+    invalid_rows = 0
+    for line in raw.splitlines():
+        item = line.strip()
+        if not item:
+            continue
+        try:
+            payload = json.loads(item)
+        except json.JSONDecodeError:
+            invalid_rows += 1
+            continue
+        if not isinstance(payload, dict):
+            invalid_rows += 1
+            continue
+        rows.append(payload)
+    if invalid_rows and warn_context:
+        logger.warning(
+            "Ignored %s malformed JSONL row(s) while reading %s (%s).",
+            invalid_rows,
+            warn_context,
+            path,
+        )
+    return rows
+
+
+def _history_context_payload(event: dict[str, object]) -> dict[str, object]:
+    """Return a normalized context payload from a history event row."""
+    context_obj = event.get("context")
+    return context_obj if isinstance(context_obj, dict) else {}
+
+
+def _scope_run_id_stack(
+    open_run_ids_by_scope: dict[str, list[str]],
+    scope: str,
+) -> list[str]:
+    """Return mutable run-id stack for one scope."""
+    stack = open_run_ids_by_scope.get(scope)
+    if stack is None:
+        stack = []
+        open_run_ids_by_scope[scope] = stack
+    return stack
+
+
+def _context_run_id(context: dict[str, object]) -> str:
+    """Return explicit context run id when present."""
+    return str(context.get("run_id") or "").strip()
+
+
+def _register_scope_run_start(
+    open_run_ids_by_scope: dict[str, list[str]],
+    *,
+    scope: str,
+    context: dict[str, object],
+    fallback_event_id: str,
+) -> str:
+    """Register a run start and return the resolved run id."""
+    run_id = _context_run_id(context) or str(fallback_event_id or "").strip()
+    if not run_id:
+        return ""
+    _scope_run_id_stack(open_run_ids_by_scope, scope).append(run_id)
+    return run_id
+
+
+def _resolve_scope_run_id(
+    open_run_ids_by_scope: dict[str, list[str]],
+    *,
+    scope: str,
+    context: dict[str, object],
+) -> str:
+    """Resolve run id for a non-start history event."""
+    context_id = _context_run_id(context)
+    if context_id:
+        return context_id
+    stack = open_run_ids_by_scope.get(scope)
+    if stack:
+        return stack[-1]
+    return ""
+
+
+def _pop_scope_run_id(
+    open_run_ids_by_scope: dict[str, list[str]],
+    *,
+    scope: str,
+    context: dict[str, object],
+) -> str:
+    """Resolve and remove one scope run id for a finished event."""
+    stack = open_run_ids_by_scope.get(scope)
+    context_id = _context_run_id(context)
+    if not stack:
+        return context_id
+    if context_id:
+        for idx in range(len(stack) - 1, -1, -1):
+            if stack[idx] == context_id:
+                removed = stack.pop(idx)
+                if not stack:
+                    open_run_ids_by_scope.pop(scope, None)
+                return removed
+        return context_id
+    removed = stack.pop()
+    if not stack:
+        open_run_ids_by_scope.pop(scope, None)
+    return removed
+
+
+def _scope_open_run_stack(
+    open_runs_by_scope: dict[str, list[dict[str, object]]],
+    scope: str,
+) -> list[dict[str, object]]:
+    """Return mutable open-run aggregate stack for one scope."""
+    stack = open_runs_by_scope.get(scope)
+    if stack is None:
+        stack = []
+        open_runs_by_scope[scope] = stack
+    return stack
+
+
+def _find_scope_open_run_by_id(
+    scope_runs: list[dict[str, object]],
+    run_id: str,
+) -> dict[str, object] | None:
+    """Return a matching open run aggregate by run id from newest to oldest."""
+    target = str(run_id or "").strip()
+    if not target:
+        return None
+    for candidate in reversed(scope_runs):
+        if str(candidate.get("run_id") or "").strip() == target:
+            return candidate
+    return None
+
+
+def _resolve_scope_open_run(
+    open_runs_by_scope: dict[str, list[dict[str, object]]],
+    *,
+    scope: str,
+    context: dict[str, object],
+) -> dict[str, object] | None:
+    """Return the best matching open aggregate for a scope event."""
+    scope_runs = open_runs_by_scope.get(scope) or []
+    if not scope_runs:
+        return None
+    match = _find_scope_open_run_by_id(scope_runs, _context_run_id(context))
+    if match is not None:
+        return match
+    return scope_runs[-1]
+
+
+def _pop_scope_open_run(
+    open_runs_by_scope: dict[str, list[dict[str, object]]],
+    *,
+    scope: str,
+    context: dict[str, object],
+) -> dict[str, object] | None:
+    """Remove and return the best matching open aggregate for a finished event."""
+    scope_runs = open_runs_by_scope.get(scope)
+    if not scope_runs:
+        return None
+    context_id = _context_run_id(context)
+    if context_id:
+        for idx in range(len(scope_runs) - 1, -1, -1):
+            candidate = scope_runs[idx]
+            if str(candidate.get("run_id") or "").strip() == context_id:
+                removed = scope_runs.pop(idx)
+                if not scope_runs:
+                    open_runs_by_scope.pop(scope, None)
+                return removed
+    removed = scope_runs.pop()
+    if not scope_runs:
+        open_runs_by_scope.pop(scope, None)
+    return removed
+
+
 def _pipeline_artifact_bundle_dir(repo: Path) -> Path:
     """Return the run-artifact bundle directory under ``.codex_manager/output_history``."""
     return repo / ".codex_manager" / "output_history" / "artifact_bundles"
@@ -1017,51 +1198,47 @@ def _history_events_for_run(repo: Path, run_id: str) -> list[dict[str, object]]:
     if not target:
         return []
     history_path = _history_jsonl_path(repo)
-    if not history_path.is_file():
-        return []
-    try:
-        raw = _read_text_utf8_resilient(history_path)
-    except Exception:
+    rows = _read_jsonl_dict_rows(history_path)
+    if not rows:
         return []
 
     events: list[dict[str, object]] = []
-    open_run_by_scope: dict[str, str] = {}
-    for line in raw.splitlines():
-        row = line.strip()
-        if not row:
-            continue
-        try:
-            event = json.loads(row)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
+    open_run_ids_by_scope: dict[str, list[str]] = {}
+    for event in rows:
         scope = str(event.get("scope") or "").strip().lower()
         if scope not in {"chain", "pipeline"}:
             continue
         event_name = str(event.get("event") or "").strip().lower()
         event_id = str(event.get("id") or "").strip()
-        context_obj = event.get("context")
-        context = context_obj if isinstance(context_obj, dict) else {}
-        context_run_id = str(context.get("run_id") or "").strip()
+        context = _history_context_payload(event)
 
         if event_name == "run_started":
-            derived_run_id = context_run_id or event_id
-            if derived_run_id:
-                open_run_by_scope[scope] = derived_run_id
+            derived_run_id = _register_scope_run_start(
+                open_run_ids_by_scope,
+                scope=scope,
+                context=context,
+                fallback_event_id=event_id,
+            )
+        elif event_name == "run_finished":
+            derived_run_id = _pop_scope_run_id(
+                open_run_ids_by_scope,
+                scope=scope,
+                context=context,
+            )
         else:
-            derived_run_id = context_run_id or open_run_by_scope.get(scope, "")
+            derived_run_id = _resolve_scope_run_id(
+                open_run_ids_by_scope,
+                scope=scope,
+                context=context,
+            )
 
         if derived_run_id == target:
             enriched = dict(event)
             patched_context = dict(context)
-            if target and not str(patched_context.get("run_id") or "").strip():
+            if target and not _context_run_id(patched_context):
                 patched_context["run_id"] = target
             enriched["context"] = patched_context
             events.append(enriched)
-
-        if event_name == "run_finished":
-            open_run_by_scope.pop(scope, None)
     return events
 
 
@@ -1350,6 +1527,16 @@ def _run_comparison_limit(value: object) -> int:
     return max(1, min(50, parsed))
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    """Coerce *value* to int where possible."""
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        return int(str(value).strip())
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _safe_float(value: object, default: float = 0.0) -> float:
     """Coerce *value* to float where possible."""
     try:
@@ -1367,9 +1554,9 @@ def _safe_bool(value: object, default: bool = False) -> bool:
     if value is None:
         return default
     raw = str(value).strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
+    if raw in {"1", "true", "yes", "y", "on"}:
         return True
-    if raw in {"0", "false", "no", "off"}:
+    if raw in {"0", "false", "no", "n", "off"}:
         return False
     return default
 
@@ -1864,34 +2051,15 @@ def _pipeline_run_comparison(
             message="Run history is not available yet for this repository.",
         )
 
-    try:
-        raw = _read_text_utf8_resilient(history_path)
-    except Exception as exc:
-        return _empty_run_comparison_payload(
-            repo=repo,
-            scope=scope,
-            limit=limit,
-            message=f"Could not read run history: {exc}",
-        )
-
-    open_runs: dict[str, dict[str, object]] = {}
+    rows = _read_jsonl_dict_rows(history_path, warn_context="pipeline run history")
+    open_runs: dict[str, list[dict[str, object]]] = {}
     finished_runs: list[dict[str, object]] = []
     result_event_by_scope = {
         "chain": "step_result",
         "pipeline": "phase_result",
     }
 
-    for line in raw.splitlines():
-        row = line.strip()
-        if not row:
-            continue
-        try:
-            event = json.loads(row)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-
+    for event in rows:
         scope_key = str(event.get("scope") or "").strip().lower()
         if scope_key not in {"chain", "pipeline"}:
             continue
@@ -1900,32 +2068,41 @@ def _pipeline_run_comparison(
         timestamp = str(event.get("timestamp") or "").strip()
         event_id = str(event.get("id") or "").strip()
         summary = str(event.get("summary") or "").strip()
-        context_obj = event.get("context")
-        context = context_obj if isinstance(context_obj, dict) else {}
+        context = _history_context_payload(event)
 
         if event_name == "run_started":
-            open_runs[scope_key] = _new_run_aggregate(
-                scope=scope_key,
-                event_id=event_id,
-                timestamp=timestamp,
-                context=context,
+            _scope_open_run_stack(open_runs, scope_key).append(
+                _new_run_aggregate(
+                    scope=scope_key,
+                    event_id=event_id,
+                    timestamp=timestamp,
+                    context=context,
+                )
             )
             continue
 
         if event_name == result_event_by_scope[scope_key]:
-            run = open_runs.get(scope_key)
+            run = _resolve_scope_open_run(
+                open_runs,
+                scope=scope_key,
+                context=context,
+            )
             if run is not None:
                 _record_run_result_event(run, context)
             continue
 
         if event_name == "run_finished":
-            run = open_runs.pop(scope_key, None)
+            run = _pop_scope_open_run(
+                open_runs,
+                scope=scope_key,
+                context=context,
+            )
             if run is None:
                 run = _new_run_aggregate(
                     scope=scope_key,
                     event_id=event_id,
                     timestamp=timestamp,
-                    context={},
+                    context=context,
                 )
             finalized = _finalize_run_aggregate(
                 run,
@@ -3322,23 +3499,8 @@ def _append_general_request_history(
 
 def _read_general_request_history(repo: Path, *, limit: int = 25) -> list[dict[str, object]]:
     path = _general_request_history_path(repo)
-    if not path.is_file():
-        return []
-    try:
-        raw = _read_text_utf8_resilient(path)
-    except Exception:
-        return []
     rows: list[dict[str, object]] = []
-    for line in raw.splitlines():
-        item = line.strip()
-        if not item:
-            continue
-        try:
-            parsed = json.loads(item)
-        except Exception:
-            continue
-        if not isinstance(parsed, dict):
-            continue
+    for parsed in _read_jsonl_dict_rows(path):
         rows.append(
             {
                 "id": str(parsed.get("id") or "").strip(),
@@ -3568,36 +3730,12 @@ def _save_decision_board(repo: Path, payload: dict[str, object]) -> dict[str, ob
     return out
 
 
-def _safe_int(value: object, default: int = 0) -> int:
-    """Coerce *value* to int where possible."""
-    try:
-        if isinstance(value, bool):
-            return int(value)
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return default
-
-
 def _safe_str(value: object, default: str = "") -> str:
     """Coerce *value* to a trimmed string, with fallback for empty values."""
     if value is None:
         return default
     text = str(value).strip()
     return text if text else default
-
-
-def _safe_bool(value: object, default: bool = False) -> bool:
-    """Coerce common boolean-like values."""
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    text = str(value).strip().lower()
-    if text in {"1", "true", "yes", "y", "on"}:
-        return True
-    if text in {"0", "false", "no", "n", "off"}:
-        return False
-    return default
 
 
 def _parse_domain_list(value: object) -> list[str]:
@@ -5297,14 +5435,6 @@ def _runtime_state_value(state: object, key: str, default: object = None) -> obj
     if state is None:
         return default
     return getattr(state, key, default)
-
-
-def _safe_int(value: object, default: int = 0) -> int:
-    """Best-effort int conversion used by runtime session payloads."""
-    try:
-        return int(value)
-    except Exception:
-        return default
 
 
 def _chain_runtime_snapshot() -> dict[str, object]:
@@ -11027,21 +11157,7 @@ def api_pipeline_science_dashboard():
     trial_tokens = 0
 
     if trials_path.is_file():
-        try:
-            raw = _read_text_utf8_resilient(trials_path)
-        except Exception as exc:
-            logger.warning("Could not read science trials file %s: %s", trials_path, exc)
-            raw = ""
-
-        for line in raw.splitlines():
-            row = line.strip()
-            if not row:
-                continue
-            try:
-                payload = json.loads(row)
-            except json.JSONDecodeError:
-                continue
-
+        for payload in _read_jsonl_dict_rows(trials_path, warn_context="science trials"):
             hypothesis = payload.get("hypothesis") or {}
             baseline = payload.get("baseline") or {}
             post = payload.get("post") or {}
