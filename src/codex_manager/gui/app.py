@@ -3541,7 +3541,9 @@ def _suggest_feature_dreams_markdown(
     model: str,
     owner_context: str,
     existing_markdown: str,
+    context_files: list[dict[str, str]] | None = None,
 ) -> tuple[str, str]:
+    context_file_rows = context_files or []
     prompt = (
         "You are helping an owner dream up high-value product features for a software repository.\n"
         "Return only markdown.\n\n"
@@ -3554,6 +3556,7 @@ def _suggest_feature_dreams_markdown(
         "- Keep execution order top to bottom.\n\n"
         f"Repository: {repo.name}\n"
         f"Owner context: {owner_context or '(none)'}\n\n"
+        f"{_owner_context_files_prompt_section(context_file_rows)}"
         "Existing feature dreams (for dedupe context):\n"
         f"{existing_markdown[:4000]}"
     )
@@ -6668,6 +6671,7 @@ def api_owner_feature_dreams_suggest():
     repo_raw = str(data.get("repo_path") or "").strip()
     owner_context = str(data.get("owner_context") or "").strip()
     existing_markdown = str(data.get("existing_markdown") or "").strip()
+    context_files = _normalize_owner_context_files(data.get("context_files"))
     model = str(data.get("model") or "gpt-5.2").strip() or "gpt-5.2"
     if not repo_raw:
         return jsonify({"error": "repo_path is required."}), 400
@@ -6682,6 +6686,7 @@ def api_owner_feature_dreams_suggest():
         model=model,
         owner_context=owner_context,
         existing_markdown=existing_markdown,
+        context_files=context_files,
     )
     return jsonify(
         {
@@ -6689,6 +6694,7 @@ def api_owner_feature_dreams_suggest():
             "model": model,
             "content": suggested,
             "has_open_items": _feature_dreams_has_open_items(suggested),
+            "context_files_used": len(context_files),
             "warning": warning,
         }
     )

@@ -16,7 +16,7 @@ Execution order: top to bottom. Keep this list feature-only and implementation-r
 - [ ] [M] Add custom Autopilot recipe editor: create/save/edit/delete per-repo recipes and import/export recipe JSON for sharing.
 - [x] [S] Add one-click artifact bundle export: zip selected outputs/logs/config/history for a run and expose download path in GUI plus API. (Completed: added run-comparison artifact bundle export/download APIs with include toggles, run-scoped history/config capture, zip bundles under `.codex_manager/output_history/artifact_bundles`, and per-run "Export Bundle" UI action.)
 - [ ] [M] Add scheduled pipeline runs per workspace repo (daily/weekly plus branch/mode/cycles) with next-run visibility and skip-on-dirty guardrails.
-- [ ] [M] Add Feature Dreams suggestion context upload (parity with TODO Wishlist): allow optional context files and include "files scanned/context used" transparency in results.
+- [x] [M] Add Feature Dreams suggestion context upload (parity with TODO Wishlist): allow optional context files and include "files scanned/context used" transparency in results. (Completed: Feature Dreams modal now supports context-file uploads with client-side limits, suggestion API normalizes and passes context files into prompt context, and responses report `context_files_used` for transparency.)
 
 ## P2 - Advanced Features
 

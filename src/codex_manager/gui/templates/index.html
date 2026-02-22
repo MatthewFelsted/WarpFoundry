@@ -2682,6 +2682,12 @@ body.mode-medium .easy-only{display:none}
           <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast</option>
         </select>
       </div>
+      <div class="form-row">
+        <label>Context Files (optional)</label>
+        <input type="file" id="feature-dreams-context-files" multiple onchange="onFeatureDreamsContextFilesChanged(this)">
+        <div class="field-help">Attach text-like files for feature prioritization context (plain text, markdown, code, config).</div>
+        <div class="context-file-list" id="feature-dreams-context-files-list">No context files selected.</div>
+      </div>
       <div class="inline-actions">
         <button class="btn" type="button" onclick="suggestFeatureDreams()">Suggest with AI</button>
         <button class="btn" type="button" onclick="appendFeatureDreamsSuggestion()">Append Suggestion</button>
@@ -7962,6 +7968,7 @@ async function startTodoWishlistAutopilot() {
 /* -- New Project ------------------------------------------------ */
 /* -- Feature Dreams workspace -- */
 let lastFeatureDreamsSuggestion = '';
+let featureDreamsContextFiles = [];
 
 function syncFeatureDreamsRepoFromMain() {
   const repo = _activeRepoPath();
@@ -7985,10 +7992,91 @@ function _setFeatureDreamsStatus(text, tone = 'muted') {
   }
 }
 
+function _renderFeatureDreamsContextFilesList() {
+  const el = document.getElementById('feature-dreams-context-files-list');
+  if (!el) return;
+  if (!featureDreamsContextFiles.length) {
+    el.textContent = 'No context files selected.';
+    return;
+  }
+  const labels = featureDreamsContextFiles.map(row => {
+    const name = String(row && row.name || '').trim() || 'context.txt';
+    const content = String(row && row.content || '');
+    return name + ' (' + content.length + ' chars)';
+  });
+  el.textContent = labels.join(' | ');
+}
+
+async function onFeatureDreamsContextFilesChanged(inputEl) {
+  const files = Array.from((inputEl && inputEl.files) ? inputEl.files : []);
+  featureDreamsContextFiles = [];
+  if (!files.length) {
+    _renderFeatureDreamsContextFilesList();
+    _setFeatureDreamsStatus('Cleared context files.', 'muted');
+    return;
+  }
+
+  const maxFiles = 6;
+  const maxCharsPerFile = 6000;
+  const maxTotalChars = 24000;
+  const accepted = [];
+  const warnings = [];
+  let totalChars = 0;
+
+  for (const file of files) {
+    if (accepted.length >= maxFiles) {
+      warnings.push('Only the first ' + maxFiles + ' files are used.');
+      break;
+    }
+    let text = '';
+    try {
+      text = String(await file.text());
+    } catch (_err) {
+      warnings.push('Could not read file: ' + file.name);
+      continue;
+    }
+    text = text.replace(/\r\n/g, '\n').trim();
+    if (!text) {
+      warnings.push('Skipped empty file: ' + file.name);
+      continue;
+    }
+    if (text.length > maxCharsPerFile) {
+      text = text.slice(0, maxCharsPerFile);
+      warnings.push('Trimmed large file: ' + file.name);
+    }
+    const remaining = maxTotalChars - totalChars;
+    if (remaining <= 0) {
+      warnings.push('Reached total context size limit.');
+      break;
+    }
+    if (text.length > remaining) {
+      text = text.slice(0, remaining);
+      warnings.push('Trimmed context to fit total size limit.');
+    }
+    totalChars += text.length;
+    accepted.push({
+      name: String(file.name || 'context.txt').trim() || 'context.txt',
+      content: text,
+    });
+  }
+
+  featureDreamsContextFiles = accepted;
+  _renderFeatureDreamsContextFilesList();
+  if (warnings.length) {
+    _setFeatureDreamsStatus(warnings.join(' '), 'warn');
+  } else {
+    _setFeatureDreamsStatus('Loaded ' + accepted.length + ' context file(s).', 'ok');
+  }
+}
+
 async function showFeatureDreamsModal() {
   syncFeatureDreamsRepoFromMain();
   const area = document.getElementById('feature-dreams-content');
   if (area) area.value = '';
+  const filesEl = document.getElementById('feature-dreams-context-files');
+  if (filesEl) filesEl.value = '';
+  featureDreamsContextFiles = [];
+  _renderFeatureDreamsContextFilesList();
   lastFeatureDreamsSuggestion = '';
   _setFeatureDreamsStatus('');
   _openOverlay('feature-dreams-overlay', '#feature-dreams-repo');
@@ -8061,6 +8149,7 @@ async function suggestFeatureDreams() {
       existing_markdown: existing,
       owner_context: ownerContext,
       model: model,
+      context_files: featureDreamsContextFiles,
     });
     if (resp.error) {
       _setFeatureDreamsStatus(resp.error, 'error');
@@ -8077,7 +8166,12 @@ async function suggestFeatureDreams() {
       _setFeatureDreamsStatus(warning, 'warn');
       toast(warning, 'info');
     } else {
-      _setFeatureDreamsStatus('AI suggestion applied to the editor.', 'ok');
+      const contextCount = Number(resp.context_files_used || 0);
+      if (contextCount > 0) {
+        _setFeatureDreamsStatus('AI suggestion applied using ' + contextCount + ' context file(s).', 'ok');
+      } else {
+        _setFeatureDreamsStatus('AI suggestion applied to the editor.', 'ok');
+      }
     }
   } catch (e) {
     _setFeatureDreamsStatus('AI suggestion failed.', 'error');
@@ -11176,6 +11270,10 @@ function resetFeatureDreamsForm() {
   document.getElementById('feature-dreams-content').value = '';
   document.getElementById('feature-dreams-context').value = '';
   document.getElementById('feature-dreams-model').value = 'gpt-5.2';
+  const filesEl = document.getElementById('feature-dreams-context-files');
+  if (filesEl) filesEl.value = '';
+  featureDreamsContextFiles = [];
+  _renderFeatureDreamsContextFilesList();
   lastFeatureDreamsSuggestion = '';
   _setFeatureDreamsStatus('', 'muted');
   hideFeatureDreamsModal();
