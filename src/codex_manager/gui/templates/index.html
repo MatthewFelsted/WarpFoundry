@@ -6250,7 +6250,8 @@ async function refreshGitSyncStatus(opts = {}) {
     return;
   }
 
-  const response = await api('/api/git/sync/branches?repo_path=' + encodeURIComponent(repoPath));
+  const forceParam = opts.force ? '&force=1' : '';
+  const response = await api('/api/git/sync/branches?repo_path=' + encodeURIComponent(repoPath) + forceParam);
   const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
   if (repoPath !== currentRepoPath) {
     return;
@@ -6301,7 +6302,8 @@ async function refreshGitSyncBranches(opts = {}) {
     return;
   }
 
-  const response = await api('/api/git/sync/branches?repo_path=' + encodeURIComponent(repoPath));
+  const forceParam = opts.force ? '&force=1' : '';
+  const response = await api('/api/git/sync/branches?repo_path=' + encodeURIComponent(repoPath) + forceParam);
   const currentRepoPath = String(opts.repoPath || _activeRepoPathForGitSync()).trim();
   if (repoPath !== currentRepoPath) {
     return;
@@ -9372,20 +9374,24 @@ function _activityColor(idleSeconds, timeoutSeconds) {
   return 'var(--success)';
 }
 
+function _setActivityHeartbeatView(el, text, color) {
+  const nextText = String(text || '');
+  const nextColor = String(color || '');
+  if (el.textContent !== nextText) el.textContent = nextText;
+  if (el.style.color !== nextColor) el.style.color = nextColor;
+}
+
 function _renderActivityHeartbeat(elId, running, paused, lastActivityMs, timeoutSeconds) {
   const el = document.getElementById(elId);
   if (!el) return;
 
   if (!lastActivityMs) {
     if (running && !paused) {
-      el.textContent = 'Activity: waiting for first output...';
-      el.style.color = 'var(--text2)';
+      _setActivityHeartbeatView(el, 'Activity: waiting for first output...', 'var(--text2)');
     } else if (running && paused) {
-      el.textContent = 'Activity: paused (no output yet)';
-      el.style.color = 'var(--warning)';
+      _setActivityHeartbeatView(el, 'Activity: paused (no output yet)', 'var(--warning)');
     } else {
-      el.textContent = 'Activity: idle';
-      el.style.color = 'var(--text2)';
+      _setActivityHeartbeatView(el, 'Activity: idle', 'var(--text2)');
     }
     return;
   }
@@ -9394,24 +9400,32 @@ function _renderActivityHeartbeat(elId, running, paused, lastActivityMs, timeout
   const at = new Date(lastActivityMs).toLocaleTimeString();
 
   if (!running) {
-    el.textContent = 'Last output: ' + idleSeconds + 's ago at ' + at;
-    el.style.color = 'var(--text2)';
+    _setActivityHeartbeatView(el, 'Last output: ' + idleSeconds + 's ago at ' + at, 'var(--text2)');
     return;
   }
 
   if (paused) {
-    el.textContent = 'Paused - last output ' + idleSeconds + 's ago at ' + at;
-    el.style.color = 'var(--warning)';
+    _setActivityHeartbeatView(
+      el,
+      'Paused - last output ' + idleSeconds + 's ago at ' + at,
+      'var(--warning'),
+    );
     return;
   }
 
+  let message = '';
   if (timeoutSeconds > 0) {
-    el.textContent =
-      'Output activity: ' + idleSeconds + 's idle (timeout ' + timeoutSeconds + 's inactivity, last at ' + at + ')';
+    message = 'Output activity: '
+      + idleSeconds
+      + 's idle (timeout '
+      + timeoutSeconds
+      + 's inactivity, last at '
+      + at
+      + ')';
   } else {
-    el.textContent = 'Output activity: ' + idleSeconds + 's idle (timeout disabled, last at ' + at + ')';
+    message = 'Output activity: ' + idleSeconds + 's idle (timeout disabled, last at ' + at + ')';
   }
-  el.style.color = _activityColor(idleSeconds, timeoutSeconds);
+  _setActivityHeartbeatView(el, message, _activityColor(idleSeconds, timeoutSeconds));
 }
 
 function renderActivityHeartbeats() {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import faulthandler
 import gzip
+import hashlib
 import json
 import logging
 import os
@@ -285,6 +286,7 @@ _OWNER_REPO_IDEAS_EXCLUDED_FILENAMES = frozenset(
 _GENERAL_REQUEST_HISTORY_MAX_ITEMS = 200
 _HTTP_COMPRESSION_MIN_BYTES = 1024
 _HTTP_COMPRESSION_LEVEL = 6
+_INDEX_CACHE_MAX_AGE_SECONDS = 60
 _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
     {
         "text/html",
@@ -297,6 +299,9 @@ _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
     }
 )
 _SSE_REPLAY_BATCH_LIMIT = 500
+_JSONL_ROWS_CACHE_MAX_ENTRIES = 64
+_RUN_COMPARISON_CACHE_MAX_ENTRIES = 64
+_GIT_SYNC_BRANCH_CHOICES_CACHE_TTL_SECONDS = 1.5
 
 def _subprocess_isolation_kwargs() -> dict[str, object]:
     """Return kwargs that prevent child console events from reaching the GUI server."""
@@ -320,10 +325,35 @@ _github_repo_metadata_cache: dict[str, tuple[float, dict[str, object] | None, st
 _github_repo_metadata_cache_lock = threading.Lock()
 _diagnostics_report_cache: dict[str, tuple[float, dict[str, object]]] = {}
 _diagnostics_report_cache_lock = threading.Lock()
+_jsonl_rows_cache: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
+_jsonl_rows_cache_lock = threading.Lock()
+_run_comparison_cache: dict[tuple[str, int, int, str, int], dict[str, object]] = {}
+_run_comparison_cache_lock = threading.Lock()
+_git_sync_branch_choices_cache: dict[str, tuple[float, dict[str, object]]] = {}
+_git_sync_branch_choices_cache_lock = threading.Lock()
 _gui_runtime_hooks_installed = False
 _gui_expected_restart_exit = False
 _gui_faulthandler_enabled = False
 _gui_faulthandler_stream: object | None = None
+
+
+def _path_stat_signature(path: Path) -> tuple[int, int] | None:
+    """Return ``(mtime_ns, size)`` for *path* when available."""
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+    return int(stat_result.st_mtime_ns), int(stat_result.st_size)
+
+
+def _bounded_cache_set(cache: dict[object, object], key: object, value: object, *, max_entries: int) -> None:
+    """Insert one cache entry and evict oldest entries when cache grows past cap."""
+    if key in cache:
+        cache.pop(key, None)
+    cache[key] = value
+    while len(cache) > max(1, int(max_entries)):
+        oldest_key = next(iter(cache))
+        cache.pop(oldest_key, None)
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -977,10 +1007,70 @@ def _history_jsonl_path(repo: Path) -> Path:
     return _pipeline_logs_dir(repo) / "HISTORY.jsonl"
 
 
+def _run_comparison_cache_key(
+    history_path: Path,
+    *,
+    scope: str,
+    limit: int,
+) -> tuple[str, int, int, str, int] | None:
+    """Build a cache key for run-comparison payloads from history file metadata."""
+    signature = _path_stat_signature(history_path)
+    if signature is None:
+        return None
+    return (
+        str(history_path.resolve()),
+        signature[0],
+        signature[1],
+        str(scope or "all"),
+        int(limit),
+    )
+
+
+def _run_comparison_cache_get(
+    cache_key: tuple[str, int, int, str, int] | None,
+) -> dict[str, object] | None:
+    """Return cached run-comparison payload when present."""
+    if cache_key is None:
+        return None
+    with _run_comparison_cache_lock:
+        return _run_comparison_cache.get(cache_key)
+
+
+def _run_comparison_cache_set(
+    cache_key: tuple[str, int, int, str, int] | None,
+    payload: dict[str, object],
+) -> None:
+    """Persist one run-comparison payload and evict stale entries for same file."""
+    if cache_key is None:
+        return
+    history_key = cache_key[0]
+    history_signature = (cache_key[1], cache_key[2])
+    with _run_comparison_cache_lock:
+        stale_keys = [
+            key
+            for key in _run_comparison_cache
+            if key[0] == history_key and (key[1], key[2]) != history_signature
+        ]
+        for stale_key in stale_keys:
+            _run_comparison_cache.pop(stale_key, None)
+        _bounded_cache_set(
+            _run_comparison_cache, cache_key, payload, max_entries=_RUN_COMPARISON_CACHE_MAX_ENTRIES
+        )
+
+
 def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[str, object]]:
     """Return parsed JSON-object rows from a JSONL file."""
     if not path.is_file():
         return []
+    cache_key = str(path.resolve())
+    signature = _path_stat_signature(path)
+    if signature is not None:
+        with _jsonl_rows_cache_lock:
+            cached = _jsonl_rows_cache.get(cache_key)
+            if cached is not None:
+                cached_mtime_ns, cached_size, cached_rows = cached
+                if (cached_mtime_ns, cached_size) == signature:
+                    return cached_rows
     try:
         raw = _read_text_utf8_resilient(path)
     except Exception as exc:
@@ -1009,6 +1099,14 @@ def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[st
             warn_context,
             path,
         )
+    if signature is not None:
+        with _jsonl_rows_cache_lock:
+            _bounded_cache_set(
+                _jsonl_rows_cache,
+                cache_key,
+                (signature[0], signature[1], rows),
+                max_entries=_JSONL_ROWS_CACHE_MAX_ENTRIES,
+            )
     return rows
 
 
@@ -2050,6 +2148,10 @@ def _pipeline_run_comparison(
             limit=limit,
             message="Run history is not available yet for this repository.",
         )
+    cache_key = _run_comparison_cache_key(history_path, scope=scope, limit=limit)
+    cached_payload = _run_comparison_cache_get(cache_key)
+    if cached_payload is not None:
+        return cached_payload
 
     rows = _read_jsonl_dict_rows(history_path, warn_context="pipeline run history")
     open_runs: dict[str, list[dict[str, object]]] = {}
@@ -2125,12 +2227,14 @@ def _pipeline_run_comparison(
     )
     runs = finished_runs[:limit]
     if not runs:
-        return _empty_run_comparison_payload(
+        empty_payload = _empty_run_comparison_payload(
             repo=repo,
             scope=scope,
             limit=limit,
             message="No completed runs were found in history yet.",
         )
+        _run_comparison_cache_set(cache_key, empty_payload)
+        return empty_payload
 
     meaningful_candidates = [run for run in runs if _run_has_meaningful_activity(run)]
     best_overall = (
@@ -2228,7 +2332,7 @@ def _pipeline_run_comparison(
         run["badges"] = badges
 
     budget_outlier_count = sum(1 for run in runs if bool(run.get("budget_outlier")))
-    return {
+    payload = {
         "available": True,
         "repo_path": str(repo),
         "history_path": str(history_path.resolve()),
@@ -2253,6 +2357,8 @@ def _pipeline_run_comparison(
         "budget_outlier_count": budget_outlier_count,
         "message": "",
     }
+    _run_comparison_cache_set(cache_key, payload)
+    return payload
 
 
 def _default_test_policy_for_phase_key(phase_key: str) -> str:
@@ -5367,6 +5473,24 @@ def _project_display_name() -> str:
 # â”€â”€ Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
+def _index_response_etag(
+    *,
+    project_display_name: str,
+    recipes_payload: dict[str, object],
+) -> str:
+    """Return a weak-etag token for index response variants."""
+    template_path = Path(_TEMPLATE_DIR) / "index.html"
+    template_signature = _path_stat_signature(template_path) or (0, 0)
+    stable_payload = json.dumps(recipes_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    digest = hashlib.sha256(
+        (
+            f"{__version__}|{template_signature[0]}:{template_signature[1]}|"
+            f"{project_display_name}|{stable_payload}"
+        ).encode("utf-8")
+    ).hexdigest()
+    return digest[:24]
+
+
 def _request_accepts_gzip() -> bool:
     """Return True when the incoming request supports gzip."""
     return "gzip" in str(request.headers.get("Accept-Encoding") or "").lower()
@@ -5412,11 +5536,28 @@ def _maybe_compress_response(response: Response) -> Response:
 @app.route("/")
 def index():
     project_display_name = _project_display_name()
-    return render_template(
-        "index.html",
-        recipes_payload=_recipe_template_payload(),
+    recipes_payload = _recipe_template_payload()
+    etag = _index_response_etag(
         project_display_name=project_display_name,
+        recipes_payload=recipes_payload,
     )
+    if request.if_none_match.contains_weak(etag):
+        response = Response(status=304)
+    else:
+        response = Response(
+            render_template(
+                "index.html",
+                recipes_payload=recipes_payload,
+                project_display_name=project_display_name,
+            ),
+            mimetype="text/html",
+        )
+    response.set_etag(etag, weak=True)
+    response.headers["Cache-Control"] = (
+        f"private, max-age={_INDEX_CACHE_MAX_AGE_SECONDS}, must-revalidate"
+    )
+    response.headers["Vary"] = "Accept-Encoding"
+    return response
 
 
 def _runtime_bool(value: object) -> bool:
@@ -7968,8 +8109,9 @@ def _git_sync_status_core_payload(repo: Path) -> dict[str, object]:
     }
 
 
-def _git_sync_status_payload(repo: Path) -> dict[str, object]:
+def _git_sync_status_payload(repo: Path, *, force_refresh: bool = False) -> dict[str, object]:
     """Return branch/tracking/ahead-behind/dirty metadata for a repository."""
+    _ = force_refresh
     payload = _git_sync_status_core_payload(repo)
     payload["github_repo"] = _git_sync_github_repo_payload(repo, payload)
     return payload
@@ -7981,9 +8123,22 @@ def _git_ref_exists(repo: Path, ref_name: str) -> bool:
     return probe.returncode == 0
 
 
-def _git_sync_branch_choices_payload(repo: Path) -> dict[str, object]:
+def _git_sync_branch_choices_payload(
+    repo: Path,
+    *,
+    force_refresh: bool = False,
+) -> dict[str, object]:
     """Return local/remote branch choices plus current branch metadata."""
-    status = _git_sync_status_payload(repo)
+    cache_key = str(repo.resolve())
+    if not force_refresh:
+        with _git_sync_branch_choices_cache_lock:
+            cached = _git_sync_branch_choices_cache.get(cache_key)
+        if cached is not None:
+            cached_at, cached_payload = cached
+            if (time.monotonic() - cached_at) <= _GIT_SYNC_BRANCH_CHOICES_CACHE_TTL_SECONDS:
+                return cached_payload
+
+    status = _git_sync_status_payload(repo, force_refresh=force_refresh)
     current_branch = str(status.get("branch") or "").strip() or "HEAD"
 
     local_result = _run_git_sync_command(
@@ -8023,7 +8178,7 @@ def _git_sync_branch_choices_payload(repo: Path) -> dict[str, object]:
         remote_seen.add(branch)
     remote_branches = sorted(remote_seen, key=lambda item: item.casefold())
 
-    return {
+    payload = {
         "repo_path": str(repo),
         "current_branch": current_branch,
         "detached_head": current_branch == "HEAD",
@@ -8032,6 +8187,14 @@ def _git_sync_branch_choices_payload(repo: Path) -> dict[str, object]:
         "sync": status,
         "checked_at_epoch_ms": int(time.time() * 1000),
     }
+    with _git_sync_branch_choices_cache_lock:
+        _bounded_cache_set(
+            _git_sync_branch_choices_cache,
+            cache_key,
+            (time.monotonic(), payload),
+            max_entries=64,
+        )
+    return payload
 
 
 def _git_sync_dirty_recovery_steps(*, action: str) -> list[str]:
@@ -8591,9 +8754,10 @@ def api_git_sync_status():
     repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
     if repo is None:
         return jsonify({"error": error}), status
+    force_refresh = _safe_bool(request.args.get("force"), default=False)
 
     try:
-        return jsonify(_git_sync_status_payload(repo))
+        return jsonify(_git_sync_status_payload(repo, force_refresh=force_refresh))
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Git sync status timed out."}), 504
     except RuntimeError as exc:
@@ -8608,9 +8772,10 @@ def api_git_sync_branches():
     repo, error, status = _resolve_git_sync_repo(request.args.get("repo_path"))
     if repo is None:
         return jsonify({"error": error}), status
+    force_refresh = _safe_bool(request.args.get("force"), default=False)
 
     try:
-        return jsonify(_git_sync_branch_choices_payload(repo))
+        return jsonify(_git_sync_branch_choices_payload(repo, force_refresh=force_refresh))
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Git branch query timed out."}), 504
     except RuntimeError as exc:
@@ -9057,7 +9222,7 @@ def api_git_sync_checkout():
             return jsonify({"error": f"Git checkout failed: {detail}"}), 502
 
         status_after = _git_sync_status_payload(repo)
-        branches = _git_sync_branch_choices_payload(repo)
+        branches = _git_sync_branch_choices_payload(repo, force_refresh=True)
         active_branch = str(status_after.get("branch") or "").strip() or effective_branch
         if branch_type == "remote" and created_tracking_branch:
             message = f"Checked out remote branch {requested_branch} as local {active_branch}."
@@ -9131,7 +9296,7 @@ def api_git_sync_branch_create():
             return jsonify({"error": f"Git branch creation failed: {detail}"}), 502
 
         status_after = _git_sync_status_payload(repo)
-        branches = _git_sync_branch_choices_payload(repo)
+        branches = _git_sync_branch_choices_payload(repo, force_refresh=True)
         message = (
             f"Created and switched to branch {branch_name} from {start_point}."
             if start_point

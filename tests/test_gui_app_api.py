@@ -680,6 +680,19 @@ def test_index_route_applies_gzip_when_requested(client):
     assert "Accept-Encoding" in vary
 
 
+def test_index_route_uses_etag_conditional_get(client):
+    first = client.get("/")
+    assert first.status_code == 200
+    etag = str(first.headers.get("ETag") or "")
+    assert etag
+    assert "max-age=" in str(first.headers.get("Cache-Control") or "")
+
+    second = client.get("/", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert second.get_data() == b""
+    assert str(second.headers.get("ETag") or "") == etag
+
+
 def test_small_json_payload_is_not_compressed(client):
     resp = client.get("/api/health", headers={"Accept-Encoding": "gzip"})
 
@@ -2546,6 +2559,82 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
     assert pipeline_only["available"] is True
     assert len(pipeline_only["runs"]) == 1
     assert pipeline_only["runs"][0]["scope"] == "pipeline"
+
+
+def test_read_jsonl_dict_rows_caches_unchanged_files(monkeypatch, tmp_path: Path):
+    path = tmp_path / "rows.jsonl"
+    path.write_text('{"row":1}\n', encoding="utf-8")
+    gui_app_module._jsonl_rows_cache.clear()
+
+    call_counter = {"count": 0}
+    real_reader = gui_app_module._read_text_utf8_resilient
+
+    def _counting_reader(file_path: Path) -> str:
+        call_counter["count"] += 1
+        return real_reader(file_path)
+
+    monkeypatch.setattr(gui_app_module, "_read_text_utf8_resilient", _counting_reader)
+
+    first = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+    second = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+    assert first == [{"row": 1}]
+    assert second == [{"row": 1}]
+    assert call_counter["count"] == 1
+
+    time.sleep(0.01)
+    path.write_text('{"row":1}\n{"row":2}\n', encoding="utf-8")
+    os.utime(path, None)
+    third = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+    assert third == [{"row": 1}, {"row": 2}]
+    assert call_counter["count"] == 2
+
+
+def test_pipeline_run_comparison_cache_invalidates_on_history_change(monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+    history_path.write_text("{}\n", encoding="utf-8")
+    gui_app_module._run_comparison_cache.clear()
+
+    rows = [
+        {
+            "id": "start-1",
+            "timestamp": "2026-02-20T12:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "context": {"run_id": "run-1", "mode": "apply"},
+        },
+        {
+            "id": "finish-1",
+            "timestamp": "2026-02-20T12:00:10+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "summary": "done",
+            "context": {"run_id": "run-1", "elapsed_seconds": 10.0, "total_tokens": 50},
+        },
+    ]
+    call_counter = {"count": 0}
+
+    def _fake_read_jsonl(_path: Path, *, warn_context: str = "") -> list[dict[str, object]]:
+        _ = warn_context
+        call_counter["count"] += 1
+        return rows
+
+    monkeypatch.setattr(gui_app_module, "_read_jsonl_dict_rows", _fake_read_jsonl)
+
+    first = gui_app_module._pipeline_run_comparison(repo, scope="pipeline", limit=12)
+    second = gui_app_module._pipeline_run_comparison(repo, scope="pipeline", limit=12)
+    assert first["available"] is True
+    assert second["available"] is True
+    assert call_counter["count"] == 1
+
+    time.sleep(0.01)
+    history_path.write_text("{}\n{}\n", encoding="utf-8")
+    os.utime(history_path, None)
+    third = gui_app_module._pipeline_run_comparison(repo, scope="pipeline", limit=12)
+    assert third["available"] is True
+    assert call_counter["count"] == 2
 
 
 def test_pipeline_run_comparison_handles_interleaved_same_scope_runs(
@@ -4787,6 +4876,71 @@ def test_git_sync_branches_lists_local_and_remote_choices(client, tmp_path: Path
     assert "origin/main" in data["remote_branches"]
     assert "origin/dev" in data["remote_branches"]
     assert not any(branch.endswith("/HEAD") for branch in data["remote_branches"])
+
+
+def test_git_sync_branch_choices_cache_respects_force_refresh(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo-cache"
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / ".git").mkdir(exist_ok=True)
+    gui_app_module._git_sync_branch_choices_cache.clear()
+
+    call_counter = {"count": 0}
+
+    def _fake_run_git_sync(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        call_counter["count"] += 1
+        cmd = tuple(args)
+        if cmd == ("rev-parse", "--abbrev-ref", "HEAD"):
+            return subprocess.CompletedProcess(["git", *args], 0, stdout="main\n", stderr="")
+        if cmd == ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"):
+            return subprocess.CompletedProcess(["git", *args], 0, stdout="origin/main\n", stderr="")
+        if cmd == ("rev-list", "--left-right", "--count", "@{upstream}...HEAD"):
+            return subprocess.CompletedProcess(["git", *args], 0, stdout="0 0\n", stderr="")
+        if cmd == ("status", "--porcelain"):
+            return subprocess.CompletedProcess(["git", *args], 0, stdout="", stderr="")
+        if cmd == ("rev-parse", "--absolute-git-dir"):
+            return subprocess.CompletedProcess(
+                ["git", *args], 0, stdout=f"{(repo / '.git').resolve()}\n", stderr=""
+            )
+        if cmd == ("rev-parse", "--git-path", "FETCH_HEAD"):
+            return subprocess.CompletedProcess(
+                ["git", *args], 0, stdout=f"{(repo / '.git' / 'FETCH_HEAD').resolve()}\n", stderr=""
+            )
+        if cmd == ("for-each-ref", "--format=%(refname:short)", "refs/heads"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                0,
+                stdout="main\nfeature/cache-test\n",
+                stderr="",
+            )
+        if cmd == ("for-each-ref", "--format=%(refname:short)", "refs/remotes"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                0,
+                stdout="origin/main\norigin/feature/cache-test\norigin/HEAD\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(["git", *args], 1, stdout="", stderr="unexpected")
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run_git_sync)
+    monkeypatch.setattr(
+        gui_app_module,
+        "_git_sync_github_repo_payload",
+        lambda _repo, _status: {"provider": "github", "detected": False, "available": False},
+    )
+
+    first = gui_app_module._git_sync_branch_choices_payload(repo, force_refresh=False)
+    calls_after_first = call_counter["count"]
+    second = gui_app_module._git_sync_branch_choices_payload(repo, force_refresh=False)
+    calls_after_second = call_counter["count"]
+    third = gui_app_module._git_sync_branch_choices_payload(repo, force_refresh=True)
+
+    assert first["current_branch"] == "main"
+    assert second["current_branch"] == "main"
+    assert third["current_branch"] == "main"
+    assert calls_after_first > 0
+    assert calls_after_second == calls_after_first
+    assert call_counter["count"] > calls_after_second
 
 
 def test_git_sync_checkout_remote_branch_creates_tracking_branch(client, tmp_path: Path):
