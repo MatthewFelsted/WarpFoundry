@@ -24,6 +24,7 @@ import webbrowser
 import zipfile
 from collections import Counter
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Timer
@@ -294,7 +295,9 @@ _OWNER_REPO_IDEAS_EXCLUDED_FILENAMES = frozenset(
 _GENERAL_REQUEST_HISTORY_MAX_ITEMS = 200
 _HTTP_COMPRESSION_MIN_BYTES = 1024
 _HTTP_COMPRESSION_LEVEL = 6
+_HTTP_COMPRESSION_CACHE_MAX_ENTRIES = 48
 _INDEX_CACHE_MAX_AGE_SECONDS = 60
+_INDEX_RESPONSE_CACHE_MAX_ENTRIES = 8
 _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
     {
         "text/html",
@@ -308,6 +311,7 @@ _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
 )
 _SSE_REPLAY_BATCH_LIMIT = 500
 _JSONL_ROWS_CACHE_MAX_ENTRIES = 64
+_JSONL_CACHE_HEAD_SAMPLE_BYTES = 256
 _RUN_COMPARISON_CACHE_MAX_ENTRIES = 64
 _GIT_SYNC_BRANCH_CHOICES_CACHE_TTL_SECONDS = 1.5
 
@@ -333,7 +337,11 @@ _github_repo_metadata_cache: dict[str, tuple[float, dict[str, object] | None, st
 _github_repo_metadata_cache_lock = threading.Lock()
 _diagnostics_report_cache: dict[str, tuple[float, dict[str, object]]] = {}
 _diagnostics_report_cache_lock = threading.Lock()
-_jsonl_rows_cache: dict[str, tuple[int, int, list[dict[str, object]]]] = {}
+_index_response_cache: dict[str, str] = {}
+_index_response_cache_lock = threading.Lock()
+_compressed_response_cache: dict[str, bytes] = {}
+_compressed_response_cache_lock = threading.Lock()
+_jsonl_rows_cache: dict[str, _JsonlRowsCacheEntry] = {}
 _jsonl_rows_cache_lock = threading.Lock()
 _run_comparison_cache: dict[tuple[str, int, int, str, int], dict[str, object]] = {}
 _run_comparison_cache_lock = threading.Lock()
@@ -343,6 +351,17 @@ _gui_runtime_hooks_installed = False
 _gui_expected_restart_exit = False
 _gui_faulthandler_enabled = False
 _gui_faulthandler_stream: object | None = None
+
+
+@dataclass(slots=True)
+class _JsonlRowsCacheEntry:
+    """Cache one parsed JSONL file with metadata needed for append fast-paths."""
+
+    mtime_ns: int
+    size: int
+    rows: list[dict[str, object]]
+    trailing_line: str
+    head_digest: str
 
 
 def _path_stat_signature(path: Path) -> tuple[int, int] | None:
@@ -1066,28 +1085,40 @@ def _run_comparison_cache_set(
         )
 
 
-def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[str, object]]:
-    """Return parsed JSON-object rows from a JSONL file."""
-    if not path.is_file():
-        return []
-    cache_key = str(path.resolve())
-    signature = _path_stat_signature(path)
-    if signature is not None:
-        with _jsonl_rows_cache_lock:
-            cached = _jsonl_rows_cache.get(cache_key)
-            if cached is not None:
-                cached_mtime_ns, cached_size, cached_rows = cached
-                if (cached_mtime_ns, cached_size) == signature:
-                    return cached_rows
+def _jsonl_head_digest(path: Path) -> str:
+    """Return a short digest of the first bytes of a JSONL file."""
+    sample_bytes = max(1, int(_JSONL_CACHE_HEAD_SAMPLE_BYTES))
     try:
-        raw = _read_text_utf8_resilient(path)
-    except Exception as exc:
-        if warn_context:
-            logger.warning("Could not read %s (%s): %s", warn_context, path, exc)
-        return []
-    rows: list[dict[str, object]] = []
+        with path.open("rb") as handle:
+            sample = handle.read(sample_bytes)
+    except OSError:
+        return ""
+    if not sample:
+        return "empty"
+    return hashlib.sha256(sample).hexdigest()[:16]
+
+
+def _parse_jsonl_text_rows(
+    raw_text: str,
+    *,
+    base_rows: list[dict[str, object]] | None = None,
+) -> tuple[list[dict[str, object]], int, str]:
+    """Parse JSON-object rows from text and preserve one trailing partial line."""
+    rows = list(base_rows) if base_rows is not None else []
+    text = str(raw_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not text:
+        return rows, 0, ""
+
+    trailing_line = ""
+    if not text.endswith("\n"):
+        split_index = text.rfind("\n")
+        if split_index < 0:
+            return rows, 0, text
+        trailing_line = text[split_index + 1 :]
+        text = text[: split_index + 1]
+
     invalid_rows = 0
-    for line in raw.splitlines():
+    for line in text.split("\n"):
         item = line.strip()
         if not item:
             continue
@@ -1100,6 +1131,94 @@ def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[st
             invalid_rows += 1
             continue
         rows.append(payload)
+    return rows, invalid_rows, trailing_line
+
+
+def _try_append_jsonl_cache_rows(
+    *,
+    path: Path,
+    signature: tuple[int, int],
+    cached: _JsonlRowsCacheEntry,
+) -> tuple[_JsonlRowsCacheEntry | None, int]:
+    """Return an incrementally-updated cache entry when the JSONL file was append-only."""
+    mtime_ns, size = signature
+    if size < cached.size:
+        return None, 0
+    try:
+        with path.open("rb") as handle:
+            sample = handle.read(max(1, int(_JSONL_CACHE_HEAD_SAMPLE_BYTES)))
+            current_head = (
+                hashlib.sha256(sample).hexdigest()[:16] if sample else "empty"
+            )
+            if cached.head_digest and current_head != cached.head_digest:
+                return None, 0
+            handle.seek(cached.size)
+            delta_bytes = handle.read()
+    except OSError:
+        return None, 0
+
+    delta_text = delta_bytes.decode("utf-8", errors="replace") if delta_bytes else ""
+    rows, invalid_rows, trailing_line = _parse_jsonl_text_rows(
+        cached.trailing_line + delta_text,
+        base_rows=cached.rows,
+    )
+    return (
+        _JsonlRowsCacheEntry(
+            mtime_ns=mtime_ns,
+            size=size,
+            rows=rows,
+            trailing_line=trailing_line,
+            head_digest=current_head,
+        ),
+        invalid_rows,
+    )
+
+
+def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[str, object]]:
+    """Return parsed JSON-object rows from a JSONL file."""
+    if not path.is_file():
+        return []
+    cache_key = str(path.resolve())
+    signature = _path_stat_signature(path)
+    cached_entry: _JsonlRowsCacheEntry | None = None
+    if signature is not None:
+        with _jsonl_rows_cache_lock:
+            cached_entry = _jsonl_rows_cache.get(cache_key)
+            if cached_entry is not None and (cached_entry.mtime_ns, cached_entry.size) == signature:
+                return cached_entry.rows
+        if (
+            cached_entry is not None
+            and signature[1] >= cached_entry.size
+            and signature[0] >= cached_entry.mtime_ns
+        ):
+            incremental_entry, invalid_rows = _try_append_jsonl_cache_rows(
+                path=path,
+                signature=signature,
+                cached=cached_entry,
+            )
+            if incremental_entry is not None:
+                if invalid_rows and warn_context:
+                    logger.warning(
+                        "Ignored %s malformed JSONL row(s) while reading %s (%s).",
+                        invalid_rows,
+                        warn_context,
+                        path,
+                    )
+                with _jsonl_rows_cache_lock:
+                    _bounded_cache_set(
+                        _jsonl_rows_cache,
+                        cache_key,
+                        incremental_entry,
+                        max_entries=_JSONL_ROWS_CACHE_MAX_ENTRIES,
+                    )
+                return incremental_entry.rows
+    try:
+        raw = _read_text_utf8_resilient(path)
+    except Exception as exc:
+        if warn_context:
+            logger.warning("Could not read %s (%s): %s", warn_context, path, exc)
+        return []
+    rows, invalid_rows, trailing_line = _parse_jsonl_text_rows(raw)
     if invalid_rows and warn_context:
         logger.warning(
             "Ignored %s malformed JSONL row(s) while reading %s (%s).",
@@ -1112,7 +1231,13 @@ def _read_jsonl_dict_rows(path: Path, *, warn_context: str = "") -> list[dict[st
             _bounded_cache_set(
                 _jsonl_rows_cache,
                 cache_key,
-                (signature[0], signature[1], rows),
+                _JsonlRowsCacheEntry(
+                    mtime_ns=signature[0],
+                    size=signature[1],
+                    rows=rows,
+                    trailing_line=trailing_line,
+                    head_digest=_jsonl_head_digest(path),
+                ),
                 max_entries=_JSONL_ROWS_CACHE_MAX_ENTRIES,
             )
     return rows
@@ -1963,6 +2088,7 @@ def _new_run_aggregate(
         "_files_changed_total": 0,
         "_net_lines_changed_total": 0,
         "_changed_path_set": set(),
+        "_changed_path_samples": [],
         "_start_context": dict(context),
     }
 
@@ -2043,14 +2169,20 @@ def _record_run_result_event(run: dict[str, object], context: dict[str, object])
     ) + _safe_int(context.get("net_lines_changed"), 0)
 
     changed_paths = run.get("_changed_path_set")
+    changed_samples = run.get("_changed_path_samples")
+    if not isinstance(changed_samples, list):
+        changed_samples = []
+        run["_changed_path_samples"] = changed_samples
     changed_payload = context.get("changed_files")
     if isinstance(changed_paths, set) and isinstance(changed_payload, list):
         for item in changed_payload:
             if not isinstance(item, dict):
                 continue
             raw_path = str(item.get("path") or "").strip()
-            if raw_path:
+            if raw_path and raw_path not in changed_paths:
                 changed_paths.add(raw_path)
+                if len(changed_samples) < 120:
+                    changed_samples.append(raw_path)
 
 
 def _finalize_run_aggregate(
@@ -2149,15 +2281,18 @@ def _finalize_run_aggregate(
         "commit_count": commit_count,
     }
     changed_paths = run.get("_changed_path_set")
-    changed_list = (
-        sorted(str(item) for item in changed_paths if str(item).strip())
-        if isinstance(changed_paths, set)
-        else []
-    )
+    changed_path_count = len(changed_paths) if isinstance(changed_paths, set) else 0
+    changed_samples = run.get("_changed_path_samples")
+    changed_list: list[str] = []
+    if isinstance(changed_samples, list):
+        for item in changed_samples:
+            path_value = str(item or "").strip()
+            if path_value:
+                changed_list.append(path_value)
     finalized["diff_summary"] = {
         "files_changed_total": _safe_int(run.get("_files_changed_total"), 0),
         "net_lines_changed_total": _safe_int(run.get("_net_lines_changed_total"), 0),
-        "changed_paths_count": len(changed_list),
+        "changed_paths_count": changed_path_count,
         "changed_paths": changed_list[:120],
     }
     start_context = run.get("_start_context")
@@ -5570,6 +5705,14 @@ def _request_accepts_gzip() -> bool:
     return "gzip" in str(request.headers.get("Accept-Encoding") or "").lower()
 
 
+def _set_response_vary_accept_encoding(response: Response) -> None:
+    """Ensure ``Vary`` contains ``Accept-Encoding`` exactly once."""
+    vary_raw = str(response.headers.get("Vary") or "")
+    vary_tokens = {token.strip() for token in vary_raw.split(",") if token.strip()}
+    vary_tokens.add("Accept-Encoding")
+    response.headers["Vary"] = ", ".join(sorted(vary_tokens, key=str.lower))
+
+
 @app.after_request
 def _maybe_compress_response(response: Response) -> Response:
     """Gzip large text responses to reduce transfer size and initial-load latency."""
@@ -5592,18 +5735,36 @@ def _maybe_compress_response(response: Response) -> Response:
     if len(payload) < _HTTP_COMPRESSION_MIN_BYTES:
         return response
 
+    compressed_cache_key = ""
+    etag = str(response.headers.get("ETag") or "").strip()
+    if etag:
+        compressed_cache_key = f"{response.mimetype}|{etag}|{len(payload)}"
+        with _compressed_response_cache_lock:
+            cached_compressed = _compressed_response_cache.get(compressed_cache_key)
+        if isinstance(cached_compressed, bytes) and cached_compressed:
+            response.set_data(cached_compressed)
+            response.headers["Content-Encoding"] = "gzip"
+            response.headers["Content-Length"] = str(len(cached_compressed))
+            _set_response_vary_accept_encoding(response)
+            return response
+
     compressed = gzip.compress(payload, compresslevel=_HTTP_COMPRESSION_LEVEL)
     if len(compressed) >= len(payload):
         return response
 
+    if compressed_cache_key:
+        with _compressed_response_cache_lock:
+            _bounded_cache_set(
+                _compressed_response_cache,
+                compressed_cache_key,
+                compressed,
+                max_entries=_HTTP_COMPRESSION_CACHE_MAX_ENTRIES,
+            )
+
     response.set_data(compressed)
     response.headers["Content-Encoding"] = "gzip"
     response.headers["Content-Length"] = str(len(compressed))
-
-    vary_raw = str(response.headers.get("Vary") or "")
-    vary_tokens = {token.strip() for token in vary_raw.split(",") if token.strip()}
-    vary_tokens.add("Accept-Encoding")
-    response.headers["Vary"] = ", ".join(sorted(vary_tokens, key=str.lower))
+    _set_response_vary_accept_encoding(response)
     return response
 
 
@@ -5618,19 +5779,31 @@ def index():
     if request.if_none_match.contains_weak(etag):
         response = Response(status=304)
     else:
-        response = Response(
-            render_template(
+        rendered_index = ""
+        with _index_response_cache_lock:
+            rendered_index = _index_response_cache.get(etag, "")
+        if not rendered_index:
+            rendered_index = render_template(
                 "index.html",
                 recipes_payload=recipes_payload,
                 project_display_name=project_display_name,
-            ),
+            )
+            with _index_response_cache_lock:
+                _bounded_cache_set(
+                    _index_response_cache,
+                    etag,
+                    rendered_index,
+                    max_entries=_INDEX_RESPONSE_CACHE_MAX_ENTRIES,
+                )
+        response = Response(
+            rendered_index,
             mimetype="text/html",
         )
     response.set_etag(etag, weak=True)
     response.headers["Cache-Control"] = (
         f"private, max-age={_INDEX_CACHE_MAX_AGE_SECONDS}, must-revalidate"
     )
-    response.headers["Vary"] = "Accept-Encoding"
+    _set_response_vary_accept_encoding(response)
     return response
 
 

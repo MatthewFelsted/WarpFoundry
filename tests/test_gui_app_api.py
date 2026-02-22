@@ -693,6 +693,50 @@ def test_index_route_uses_etag_conditional_get(client):
     assert str(second.headers.get("ETag") or "") == etag
 
 
+def test_index_route_reuses_cached_rendered_html(client, monkeypatch):
+    gui_app_module._index_response_cache.clear()
+
+    real_render = gui_app_module.render_template
+    calls = {"count": 0}
+
+    def _counting_render(*args, **kwargs):
+        calls["count"] += 1
+        return real_render(*args, **kwargs)
+
+    monkeypatch.setattr(gui_app_module, "render_template", _counting_render)
+
+    first = client.get("/")
+    second = client.get("/")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls["count"] == 1
+    assert first.get_data() == second.get_data()
+
+
+def test_index_route_reuses_cached_gzip_payload(client, monkeypatch):
+    gui_app_module._index_response_cache.clear()
+    gui_app_module._compressed_response_cache.clear()
+
+    real_compress = gui_app_module.gzip.compress
+    calls = {"count": 0}
+
+    def _counting_compress(payload: bytes, *, compresslevel: int = 9) -> bytes:
+        calls["count"] += 1
+        return real_compress(payload, compresslevel=compresslevel)
+
+    monkeypatch.setattr(gui_app_module.gzip, "compress", _counting_compress)
+
+    first = client.get("/", headers={"Accept-Encoding": "gzip"})
+    second = client.get("/", headers={"Accept-Encoding": "gzip"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.headers.get("Content-Encoding") == "gzip"
+    assert second.headers.get("Content-Encoding") == "gzip"
+    assert calls["count"] == 1
+
+
 def test_small_json_payload_is_not_compressed(client):
     resp = client.get("/api/health", headers={"Accept-Encoding": "gzip"})
 
@@ -2567,13 +2611,13 @@ def test_read_jsonl_dict_rows_caches_unchanged_files(monkeypatch, tmp_path: Path
     gui_app_module._jsonl_rows_cache.clear()
 
     call_counter = {"count": 0}
-    real_reader = gui_app_module._read_text_utf8_resilient
+    real_loads = gui_app_module.json.loads
 
-    def _counting_reader(file_path: Path) -> str:
+    def _counting_loads(raw: str, *args, **kwargs):
         call_counter["count"] += 1
-        return real_reader(file_path)
+        return real_loads(raw, *args, **kwargs)
 
-    monkeypatch.setattr(gui_app_module, "_read_text_utf8_resilient", _counting_reader)
+    monkeypatch.setattr(gui_app_module.json, "loads", _counting_loads)
 
     first = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
     second = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
@@ -2581,11 +2625,60 @@ def test_read_jsonl_dict_rows_caches_unchanged_files(monkeypatch, tmp_path: Path
     assert second == [{"row": 1}]
     assert call_counter["count"] == 1
 
+
+def test_read_jsonl_dict_rows_append_only_parses_delta(monkeypatch, tmp_path: Path):
+    path = tmp_path / "rows.jsonl"
+    path.write_text("\n".join(f'{{"row":{idx}}}' for idx in range(2000)) + "\n", encoding="utf-8")
+    gui_app_module._jsonl_rows_cache.clear()
+
+    call_counter = {"count": 0}
+    real_loads = gui_app_module.json.loads
+
+    def _counting_loads(raw: str, *args, **kwargs):
+        call_counter["count"] += 1
+        return real_loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr(gui_app_module.json, "loads", _counting_loads)
+
+    first = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+    first_count = call_counter["count"]
+    assert len(first) == 2000
+
     time.sleep(0.01)
-    path.write_text('{"row":1}\n{"row":2}\n', encoding="utf-8")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"row":2000}\n')
     os.utime(path, None)
-    third = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
-    assert third == [{"row": 1}, {"row": 2}]
+    second = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+    append_parse_count = call_counter["count"] - first_count
+
+    assert len(second) == 2001
+    assert second[-1] == {"row": 2000}
+    assert append_parse_count == 1
+
+
+def test_read_jsonl_dict_rows_rewrite_falls_back_to_full_read(monkeypatch, tmp_path: Path):
+    path = tmp_path / "rows.jsonl"
+    path.write_text('{"row":"old"}\n', encoding="utf-8")
+    gui_app_module._jsonl_rows_cache.clear()
+
+    call_counter = {"count": 0}
+    real_loads = gui_app_module.json.loads
+
+    def _counting_loads(raw: str, *args, **kwargs):
+        call_counter["count"] += 1
+        return real_loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr(gui_app_module.json, "loads", _counting_loads)
+
+    first = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+    assert first == [{"row": "old"}]
+
+    time.sleep(0.01)
+    path.write_text('{"row":"new"}\n', encoding="utf-8")
+    os.utime(path, None)
+    second = gui_app_module._read_jsonl_dict_rows(path, warn_context="unit test")
+
+    assert second == [{"row": "new"}]
     assert call_counter["count"] == 2
 
 
