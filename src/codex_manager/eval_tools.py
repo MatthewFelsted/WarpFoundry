@@ -10,6 +10,16 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
+
+def _eval_subprocess_isolation_kwargs() -> dict[str, object]:
+    """Return kwargs that prevent child console events from reaching the parent on Windows."""
+    if os.name != "nt":
+        return {}
+    new_pg = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    no_win = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    flags = new_pg | no_win
+    return {"creationflags": flags} if flags else {}
+
 from codex_manager.git_tools import (
     diff_stat,
     pending_numstat_entries,
@@ -143,6 +153,7 @@ class RepoEvaluator:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                **_eval_subprocess_isolation_kwargs(),
             )
         except FileNotFoundError as exc:
             return TestOutcome.ERROR, f"Test command not found: {exc}", -1

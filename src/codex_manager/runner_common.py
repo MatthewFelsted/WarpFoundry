@@ -29,12 +29,18 @@ _DEFAULT_MAX_CAPTURED_STDERR_LINES = 10_000
 def _streaming_process_isolation_kwargs() -> dict[str, object]:
     """Return subprocess kwargs that isolate child signal/control handling.
 
-    On Windows, running each agent command in a new process group prevents
-    console Ctrl+C events from propagating back to the GUI server process.
+    On Windows we combine CREATE_NEW_PROCESS_GROUP (prevents the child from
+    receiving Ctrl+C aimed at the parent's group) **and** CREATE_NO_WINDOW
+    (detaches the child from the parent's console entirely).  Without the
+    latter, a terminating child can send CTRL_C_EVENT back through the
+    shared console, killing the GUI server with an unexpected SIGINT.
+
     On POSIX, using a new session provides equivalent isolation.
     """
     if os.name == "nt":
-        flags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        new_pg = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        no_win = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        flags = new_pg | no_win
         return {"creationflags": flags} if flags else {}
     return {"start_new_session": True}
 

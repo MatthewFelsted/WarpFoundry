@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import logging
+import os
 import re
 import subprocess
 from collections.abc import Sequence
@@ -12,6 +13,16 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _git_subprocess_isolation_kwargs() -> dict[str, object]:
+    """Return kwargs that prevent child console events from reaching the parent on Windows."""
+    if os.name != "nt":
+        return {}
+    new_pg = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    no_win = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    flags = new_pg | no_win
+    return {"creationflags": flags} if flags else {}
 
 
 class GitError(RuntimeError):
@@ -33,6 +44,7 @@ def _run_git(
         capture_output=True,
         text=True,
         timeout=timeout,
+        **_git_subprocess_isolation_kwargs(),
     )
     if check and result.returncode != 0:
         raise GitError(

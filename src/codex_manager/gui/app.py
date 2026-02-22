@@ -294,6 +294,16 @@ _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
     }
 )
 _SSE_REPLAY_BATCH_LIMIT = 500
+
+def _subprocess_isolation_kwargs() -> dict[str, object]:
+    """Return kwargs that prevent child console events from reaching the GUI server."""
+    if os.name != "nt":
+        return {}
+    new_pg = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    no_win = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    flags = new_pg | no_win
+    return {"creationflags": flags} if flags else {}
+
 _GUI_STARTUP_BIND_RETRIES = 20
 _GUI_STARTUP_BIND_RETRY_SECONDS = 0.25
 _GUI_RESTART_CHILD_WARMUP_SECONDS = 0.35
@@ -772,6 +782,7 @@ def _run_diagnostics_action(args: list[str], *, cwd: str) -> dict[str, object]:
             text=True,
             timeout=_DIAGNOSTIC_ACTION_TIMEOUT_SECONDS,
             check=False,
+            **_subprocess_isolation_kwargs(),
         )
         return {
             "ok": proc.returncode == 0,
@@ -3604,6 +3615,7 @@ def _github_test_ssh_key(private_key: str) -> dict[str, object]:
             text=True,
             timeout=_GITHUB_TEST_TIMEOUT_SECONDS,
             check=False,
+            **_subprocess_isolation_kwargs(),
         )
         combined = _truncate_command_output(
             "\n".join(part for part in [proc.stdout, proc.stderr] if part).strip()
@@ -6053,6 +6065,7 @@ def _run_git_sync_command(repo: Path, *args: str) -> subprocess.CompletedProcess
         text=True,
         timeout=_GIT_SYNC_TIMEOUT_SECONDS,
         check=False,
+        **_subprocess_isolation_kwargs(),
     )
 
 
@@ -6523,6 +6536,7 @@ def _git_signing_validation(repo: Path, settings: dict[str, object]) -> dict[str
                     text=True,
                     timeout=_GIT_SIGNING_CHECK_TIMEOUT_SECONDS,
                     check=False,
+                    **_subprocess_isolation_kwargs(),
                 )
                 has_secret = any(
                     line.startswith("sec:")
@@ -7660,6 +7674,7 @@ def _list_git_remote_branches(remote_url: str) -> tuple[list[str], str]:
         text=True,
         timeout=_GIT_REMOTE_QUERY_TIMEOUT_SECONDS,
         check=False,
+        **_subprocess_isolation_kwargs(),
     )
     if symref.returncode != 0:
         detail = str(symref.stderr or symref.stdout or "").strip()
@@ -7679,6 +7694,7 @@ def _list_git_remote_branches(remote_url: str) -> tuple[list[str], str]:
         text=True,
         timeout=_GIT_REMOTE_QUERY_TIMEOUT_SECONDS,
         check=False,
+        **_subprocess_isolation_kwargs(),
     )
     if heads.returncode != 0:
         detail = str(heads.stderr or heads.stdout or "").strip()
@@ -7837,6 +7853,7 @@ def api_project_clone():
             text=True,
             timeout=_GIT_CLONE_TIMEOUT_SECONDS,
             check=True,
+            **_subprocess_isolation_kwargs(),
         )
         if not (project_path / ".git").is_dir():
             return jsonify({"error": f"Clone failed: git metadata missing at {project_path}"}), 500
@@ -7853,6 +7870,7 @@ def api_project_clone():
                 text=True,
                 timeout=10,
                 check=False,
+                **_subprocess_isolation_kwargs(),
             )
             if branch_result.returncode == 0:
                 checkout_branch = str(branch_result.stdout or "").strip()
@@ -9018,6 +9036,7 @@ def api_create_project():
             text=True,
             check=True,
             timeout=15,
+            **_subprocess_isolation_kwargs(),
         )
 
         # Configure git identity (required for commits) from modal form
@@ -9029,6 +9048,7 @@ def api_create_project():
                 text=True,
                 check=True,
                 timeout=10,
+                **_subprocess_isolation_kwargs(),
             )
         if git_email:
             subprocess.run(
@@ -9038,6 +9058,7 @@ def api_create_project():
                 text=True,
                 check=True,
                 timeout=10,
+                **_subprocess_isolation_kwargs(),
             )
         # Ensure any missing identity is set so initial commit never fails
         from codex_manager.git_tools import ensure_git_identity
@@ -9113,6 +9134,7 @@ def api_create_project():
             text=True,
             check=True,
             timeout=15,
+            **_subprocess_isolation_kwargs(),
         )
         subprocess.run(
             ["git", "commit", "-m", f"Initial commit - {project_name}"],
@@ -9121,6 +9143,7 @@ def api_create_project():
             text=True,
             check=True,
             timeout=15,
+            **_subprocess_isolation_kwargs(),
         )
 
         # Optional remote
@@ -9132,6 +9155,7 @@ def api_create_project():
                 capture_output=True,
                 text=True,
                 timeout=15,
+                **_subprocess_isolation_kwargs(),
             )
             remote_added = res.returncode == 0
 
@@ -10902,9 +10926,32 @@ def _install_gui_runtime_hooks(*, port: int) -> None:
             previous_handler = signal.getsignal(signum)
 
             def _signal_handler(sig, frame, *, _name=signal_name, _previous=previous_handler):
+                # On Windows, child-process console events can leak SIGINT
+                # back to the parent even with CREATE_NEW_PROCESS_GROUP.
+                # Suppress the signal when a chain or pipeline run is active
+                # so the server stays alive.
+                work_active = False
+                try:
+                    work_active = bool(executor.is_running) or bool(
+                        _pipeline_executor is not None
+                        and getattr(_pipeline_executor, "is_running", False)
+                    )
+                except Exception:
+                    pass
+
                 _append_runtime_log(
-                    f"Signal received: {_name} ({sig}) expected_restart={bool(_gui_expected_restart_exit)}"
+                    f"Signal received: {_name} ({sig}) "
+                    f"expected_restart={bool(_gui_expected_restart_exit)} "
+                    f"work_active={work_active}"
                 )
+
+                if work_active and sig == getattr(signal, "SIGINT", None):
+                    _append_runtime_log(
+                        f"Suppressed {_name} -- chain/pipeline is running "
+                        "(likely leaked from a child process console event)"
+                    )
+                    return None
+
                 if callable(_previous):
                     return _previous(sig, frame)
                 if _previous == signal.SIG_IGN:
@@ -10994,7 +11041,13 @@ def _probe_bind_error(host: str, port: int) -> OSError | None:
 
 
 def _run_gui_server(host: str, port: int) -> None:
-    """Run Flask server with startup retries for transient bind races."""
+    """Run Flask server with startup retries for transient bind races.
+
+    The outer ``while True`` loop catches ``KeyboardInterrupt`` that leaks
+    through when a child-process console event delivers SIGINT to the GUI
+    server while a chain or pipeline run is active.  Instead of crashing,
+    the server restarts its ``serve_forever`` loop.
+    """
     retries = max(0, int(_GUI_STARTUP_BIND_RETRIES))
     for attempt in range(retries + 1):
         bind_probe_error = _probe_bind_error(host, port)
@@ -11012,8 +11065,31 @@ def _run_gui_server(host: str, port: int) -> None:
             time.sleep(_GUI_STARTUP_BIND_RETRY_SECONDS)
             continue
         try:
-            app.run(host=host, port=port, debug=False, threaded=True)
-            return
+            while True:
+                try:
+                    app.run(host=host, port=port, debug=False, threaded=True)
+                    return
+                except KeyboardInterrupt:
+                    work_active = False
+                    try:
+                        work_active = bool(executor.is_running) or bool(
+                            _pipeline_executor is not None
+                            and getattr(_pipeline_executor, "is_running", False)
+                        )
+                    except Exception:
+                        pass
+                    if work_active:
+                        _append_runtime_log(
+                            "KeyboardInterrupt caught in server loop while "
+                            "chain/pipeline is running -- restarting serve loop "
+                            "(child-process console event leak)"
+                        )
+                        logger.warning(
+                            "Suppressed leaked KeyboardInterrupt while "
+                            "chain/pipeline is active; server stays alive."
+                        )
+                        continue
+                    raise
         except SystemExit as exc:
             bind_race_error = _probe_bind_error(host, port)
             if (

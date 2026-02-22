@@ -66,25 +66,25 @@ Compatibility note: the package/CLI name is `warpfoundry`, while source modules 
 ## Screenshots
 
 ### Chain Builder + execution panel
-![Chain Builder + execution panel](screenshots/Screenshot%202026-02-17%20000344.png)
+![Live run and diagnostics](screenshots/Screenshot%202026-02-15%20211446.png)
 
 ### Autopilot recipe selection
-![Autopilot recipe selection](screenshots/Screenshot%202026-02-16%20235648.png)
+![Pipeline phases and Scientist mode](screenshots/Screenshot%202026-02-16%20235517.png)
 
 ### Pipeline controls (stop conditions, CUA, agent/brain)
 ![Pipeline controls](screenshots/Screenshot%202026-02-16%20235709.png)
 
 ### Pipeline phase configuration + Scientist mode
-![Pipeline phases and Scientist mode](screenshots/Screenshot%202026-02-16%20235517.png)
+![Autopilot recipe selection](screenshots/Screenshot%202026-02-16%20235648.png)
 
 ### Live run + diagnostics view
-![Live run and diagnostics](screenshots/Screenshot%202026-02-15%20211446.png)
+![Expert chain configuration](screenshots/Screenshot%202026-02-17%20000313.png)
 
 ### Step outputs + repository idea generator
-![Step outputs and idea generator](screenshots/Screenshot%202026-02-16%20235821.png)
+![Chain Builder + execution panel](screenshots/Screenshot%202026-02-17%20000344.png)
 
 ### Expert chain configuration view
-![Expert chain configuration](screenshots/Screenshot%202026-02-17%20000313.png)
+![Step outputs and idea generator](screenshots/Screenshot%202026-02-16%20235821.png)
 
 More screenshots: [`screenshots/`](screenshots)
 
