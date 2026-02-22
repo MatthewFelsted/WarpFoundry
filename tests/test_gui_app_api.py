@@ -2517,6 +2517,7 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
     assert newest["scope"] == "pipeline"
     assert newest["duration_seconds"] == 90.0
     assert newest["token_usage"] == 230
+    assert newest["estimated_cost_usd"] > 0.0
     assert newest["tests"]["passed"] == 1
     assert newest["tests"]["skipped"] == 1
     assert newest["commit_count"] == 1
@@ -2525,6 +2526,8 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
     assert oldest["scope"] == "chain"
     assert oldest["duration_seconds"] == 45.5
     assert oldest["token_usage"] == 123
+    assert oldest["estimated_cost_usd"] > 0.0
+    assert oldest["estimated_cost_usd"] < newest["estimated_cost_usd"]
     assert oldest["tests"]["passed"] == 1
     assert oldest["tests"]["failed"] == 1
     assert oldest["commit_count"] == 1
@@ -2532,6 +2535,7 @@ def test_pipeline_run_comparison_aggregates_recent_runs(client, monkeypatch, tmp
 
     assert data["best_by"]["fastest_run_id"] == oldest["run_id"]
     assert data["best_by"]["lowest_token_run_id"] == oldest["run_id"]
+    assert data["best_by"]["lowest_cost_run_id"] == oldest["run_id"]
 
     pipeline_only = client.get(
         "/api/pipeline/run-comparison",
@@ -2663,6 +2667,195 @@ def test_pipeline_run_comparison_skips_trivial_runs_for_best_badges(
     assert data["best_by"]["overall_run_id"] == meaningful["run_id"]
     assert data["best_by"]["fastest_run_id"] == meaningful["run_id"]
     assert data["best_by"]["strongest_tests_run_id"] == meaningful["run_id"]
+
+
+def test_pipeline_run_comparison_cost_analytics_flags_budget_outlier(
+    client, monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+    repo = _make_repo(tmp_path, git=True)
+    logs_dir = repo / ".codex_manager" / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    history_path = logs_dir / "HISTORY.jsonl"
+
+    events = [
+        {
+            "id": "hist_low_start",
+            "timestamp": "2026-02-17T10:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {"mode": "apply", "max_cycles": 1, "phase_order": ["implementation"]},
+        },
+        {
+            "id": "hist_low_phase",
+            "timestamp": "2026-02-17T10:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Implementation finished.",
+            "context": {
+                "agent_used": "codex",
+                "model": "gpt-5.2",
+                "test_outcome": "passed",
+                "input_tokens": 120,
+                "output_tokens": 60,
+                "total_tokens": 180,
+                "commit_sha": "low123",
+                "files_changed": 2,
+                "net_lines_changed": 20,
+            },
+        },
+        {
+            "id": "hist_low_finish",
+            "timestamp": "2026-02-17T10:01:10+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {"stop_reason": "max_cycles_reached", "elapsed_seconds": 70.0, "total_tokens": 180},
+        },
+        {
+            "id": "hist_med_start",
+            "timestamp": "2026-02-17T11:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {"mode": "apply", "max_cycles": 1, "phase_order": ["implementation"]},
+        },
+        {
+            "id": "hist_med_phase",
+            "timestamp": "2026-02-17T11:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Implementation finished.",
+            "context": {
+                "agent_used": "codex",
+                "model": "gpt-5.2",
+                "test_outcome": "passed",
+                "input_tokens": 240,
+                "output_tokens": 120,
+                "total_tokens": 360,
+                "commit_sha": "med123",
+                "files_changed": 2,
+                "net_lines_changed": 22,
+            },
+        },
+        {
+            "id": "hist_med_finish",
+            "timestamp": "2026-02-17T11:01:20+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {"stop_reason": "max_cycles_reached", "elapsed_seconds": 80.0, "total_tokens": 360},
+        },
+        {
+            "id": "hist_mid2_start",
+            "timestamp": "2026-02-17T12:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {"mode": "apply", "max_cycles": 1, "phase_order": ["implementation"]},
+        },
+        {
+            "id": "hist_mid2_phase",
+            "timestamp": "2026-02-17T12:00:30+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Implementation finished.",
+            "context": {
+                "agent_used": "codex",
+                "model": "gpt-5.2",
+                "test_outcome": "passed",
+                "input_tokens": 300,
+                "output_tokens": 150,
+                "total_tokens": 450,
+                "commit_sha": "mid2123",
+                "files_changed": 2,
+                "net_lines_changed": 24,
+            },
+        },
+        {
+            "id": "hist_mid2_finish",
+            "timestamp": "2026-02-17T12:01:20+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "info",
+            "summary": "Pipeline finished with stop_reason='max_cycles_reached'.",
+            "context": {"stop_reason": "max_cycles_reached", "elapsed_seconds": 80.0, "total_tokens": 450},
+        },
+        {
+            "id": "hist_high_start",
+            "timestamp": "2026-02-17T13:00:00+00:00",
+            "scope": "pipeline",
+            "event": "run_started",
+            "level": "info",
+            "summary": "Pipeline run started.",
+            "context": {"mode": "apply", "max_cycles": 1, "phase_order": ["implementation"]},
+        },
+        {
+            "id": "hist_high_phase",
+            "timestamp": "2026-02-17T13:00:40+00:00",
+            "scope": "pipeline",
+            "event": "phase_result",
+            "level": "info",
+            "summary": "Implementation finished.",
+            "context": {
+                "agent_used": "codex",
+                "model": "gpt-5.2",
+                "test_outcome": "passed",
+                "input_tokens": 6000,
+                "output_tokens": 3000,
+                "total_tokens": 9000,
+                "commit_sha": "high123",
+                "files_changed": 3,
+                "net_lines_changed": 120,
+            },
+        },
+        {
+            "id": "hist_high_finish",
+            "timestamp": "2026-02-17T13:02:20+00:00",
+            "scope": "pipeline",
+            "event": "run_finished",
+            "level": "warn",
+            "summary": "Pipeline finished with stop_reason='budget_exhausted'.",
+            "context": {"stop_reason": "budget_exhausted", "elapsed_seconds": 140.0, "total_tokens": 9000},
+        },
+    ]
+    history_path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get(
+        "/api/pipeline/run-comparison",
+        query_string={"repo_path": str(repo), "scope": "pipeline", "limit": "12"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["available"] is True
+    assert len(data["runs"]) == 4
+    assert data["best_by"]["lowest_cost_run_id"] == "hist_low_start"
+    assert data["best_by"]["best_cost_efficiency_run_id"] == "hist_low_start"
+    assert data["budget_outlier_count"] == 1
+    assert data["cost_outlier_threshold_usd"] > 0.0
+
+    high_run = next(run for run in data["runs"] if run["run_id"] == "hist_high_start")
+    assert high_run["budget_outlier"] is True
+    assert "budget_outlier" in high_run["badges"]
+    breakdown = high_run.get("model_cost_breakdown")
+    assert isinstance(breakdown, list) and breakdown
+    assert breakdown[0]["model"] == "gpt-5.2"
+    assert breakdown[0]["provider"] == "openai"
+    assert high_run["estimated_cost_usd"] > 0.0
 
 
 def test_pipeline_promote_last_dry_run_preview_requires_repo_hint(client, monkeypatch):

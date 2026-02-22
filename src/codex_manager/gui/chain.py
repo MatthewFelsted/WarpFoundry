@@ -2262,6 +2262,8 @@ class ChainExecutor:
                 "output_chars": step_result.output_chars,
                 "input_tokens": step_result.input_tokens,
                 "output_tokens": step_result.output_tokens,
+                "total_tokens": step_result.input_tokens + step_result.output_tokens,
+                "model": str(run_result.usage.model or "").strip(),
                 "commit_sha": step_result.commit_sha,
                 "terminate_repeats": step_result.terminate_repeats,
                 "error_message": self._truncate_text(

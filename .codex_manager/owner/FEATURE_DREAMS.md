@@ -12,7 +12,7 @@ Execution order: top to bottom. Keep this list feature-only and implementation-r
 
 ## P1 - Product Leverage
 
-- [ ] [M] Add per-run cost analytics in Run Comparison: estimate USD by provider/model from token usage, rank runs by cost/performance, and flag budget outliers.
+- [x] [M] Add per-run cost analytics in Run Comparison: estimate USD by provider/model from token usage, rank runs by cost/performance, and flag budget outliers. (Completed: run-comparison aggregation now computes per-run/model estimated USD cost from history token usage, emits lowest-cost + best-cost-efficiency badges/IDs, flags budget outliers, and surfaces cost columns/details in the GUI.)
 - [ ] [M] Add custom Autopilot recipe editor: create/save/edit/delete per-repo recipes and import/export recipe JSON for sharing.
 - [ ] [S] Add one-click artifact bundle export: zip selected outputs/logs/config/history for a run and expose download path in GUI plus API.
 - [ ] [M] Add scheduled pipeline runs per workspace repo (daily/weekly plus branch/mode/cycles) with next-run visibility and skip-on-dirty guardrails.

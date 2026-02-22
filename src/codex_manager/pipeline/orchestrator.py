@@ -650,6 +650,16 @@ class PipelineOrchestrator:
                 agent_final_message=agent_message,
                 terminate_repeats=True,
                 agent_used=f"deep_research:{self.config.deep_research_providers}",
+                model=(
+                    str(self.config.deep_research_openai_model or "gpt-5.2")
+                    if self.config.deep_research_providers == "openai"
+                    else str(self.config.deep_research_google_model or "gemini-3-pro-preview")
+                    if self.config.deep_research_providers == "google"
+                    else (
+                        f"openai:{self.config.deep_research_openai_model or 'gpt-5.2'};"
+                        f"google:{self.config.deep_research_google_model or 'gemini-3-pro-preview'}"
+                    )
+                ),
             )
 
         provider_errors = [
@@ -686,6 +696,16 @@ class PipelineOrchestrator:
             agent_final_message="",
             terminate_repeats=False,
             agent_used=f"deep_research:{self.config.deep_research_providers}",
+            model=(
+                str(self.config.deep_research_openai_model or "gpt-5.2")
+                if self.config.deep_research_providers == "openai"
+                else str(self.config.deep_research_google_model or "gemini-3-pro-preview")
+                if self.config.deep_research_providers == "google"
+                else (
+                    f"openai:{self.config.deep_research_openai_model or 'gpt-5.2'};"
+                    f"google:{self.config.deep_research_google_model or 'gemini-3-pro-preview'}"
+                )
+            ),
         )
 
     def _build_vector_memory_context(
@@ -3781,6 +3801,8 @@ class PipelineOrchestrator:
                                 "phase": phase.value,
                                 "iteration": iteration,
                                 "mode": config.mode,
+                                "agent_used": result.agent_used,
+                                "model": str(result.model or "").strip(),
                                 "agent_success": result.agent_success,
                                 "validation_success": result.validation_success,
                                 "tests_passed": result.tests_passed,
@@ -3790,6 +3812,9 @@ class PipelineOrchestrator:
                                 "net_lines_changed": result.net_lines_changed,
                                 "changed_files": result.changed_files,
                                 "duration_seconds": result.duration_seconds,
+                                "input_tokens": result.input_tokens,
+                                "output_tokens": result.output_tokens,
+                                "total_tokens": result.input_tokens + result.output_tokens,
                                 "commit_sha": result.commit_sha,
                                 "terminate_repeats": result.terminate_repeats,
                                 "error_message": _clip_text(
@@ -3956,6 +3981,8 @@ class PipelineOrchestrator:
                                             "phase": phase.value,
                                             "iteration": iteration,
                                             "mode": config.mode,
+                                            "agent_used": followup_result.agent_used,
+                                            "model": str(followup_result.model or "").strip(),
                                             "agent_success": followup_result.agent_success,
                                             "validation_success": followup_result.validation_success,
                                             "tests_passed": followup_result.tests_passed,
@@ -3965,6 +3992,12 @@ class PipelineOrchestrator:
                                             "net_lines_changed": followup_result.net_lines_changed,
                                             "changed_files": followup_result.changed_files,
                                             "duration_seconds": followup_result.duration_seconds,
+                                            "input_tokens": followup_result.input_tokens,
+                                            "output_tokens": followup_result.output_tokens,
+                                            "total_tokens": (
+                                                followup_result.input_tokens
+                                                + followup_result.output_tokens
+                                            ),
                                             "commit_sha": followup_result.commit_sha,
                                             "terminate_repeats": followup_result.terminate_repeats,
                                             "error_message": _clip_text(
@@ -4438,6 +4471,7 @@ class PipelineOrchestrator:
                 test_summary=str(exc),
                 error_message=str(exc),
                 agent_used=runner.name,
+                model="",
                 prompt_used=prompt[:500],
                 duration_seconds=round(time.monotonic() - phase_start, 1),
             )
@@ -4632,6 +4666,7 @@ class PipelineOrchestrator:
             agent_final_message=(agent_output or "")[:5000],
             terminate_repeats=terminate_repeats,
             agent_used=runner.name,
+            model=str(run_result.usage.model or "").strip(),
         )
         changed_preview = []
         for entry in eval_result.changed_files[:40]:

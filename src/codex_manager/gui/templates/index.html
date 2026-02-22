@@ -2444,13 +2444,14 @@ body.mode-medium .easy-only{display:none}
             <th>Configuration</th>
             <th>Duration</th>
             <th>Tokens</th>
+            <th>Est Cost (USD)</th>
             <th>Tests</th>
             <th>Stop Reason</th>
             <th>Commits</th>
           </tr>
         </thead>
         <tbody id="pipe-run-compare-body">
-          <tr><td colspan="8"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>
+          <tr><td colspan="9"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>
         </tbody>
       </table>
     </div>
@@ -10925,7 +10926,7 @@ function resetExecutionPanelsToDefaults() {
   document.getElementById('pipe-log-viewer').innerHTML = '<div class="log-empty state-card">Configure phases and click Start Pipeline...</div>';
   document.getElementById('pipe-results-body').innerHTML = '<tr><td colspan="8"><div class="state-card">No pipeline results yet. Start a pipeline run to populate this table.</div></td></tr>';
   document.getElementById('pipe-run-compare-summary').textContent = 'Compare recent finished runs to identify the most effective configuration.';
-  document.getElementById('pipe-run-compare-body').innerHTML = '<tr><td colspan="8"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
+  document.getElementById('pipe-run-compare-body').innerHTML = '<tr><td colspan="9"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
   document.getElementById('pipe-show-debug-logs').checked = false;
 
   setLogContentState(document.getElementById('log-file-content'), 'Select a log file above to view its contents.');
@@ -12328,7 +12329,10 @@ function _runCompareBadgeLabel(value) {
   if (key === 'best_overall') return 'Best Overall';
   if (key === 'fastest') return 'Fastest';
   if (key === 'lowest_tokens') return 'Lowest Tokens';
+  if (key === 'lowest_cost') return 'Lowest Cost';
+  if (key === 'best_cost_efficiency') return 'Best Cost Efficiency';
   if (key === 'strongest_tests') return 'Strongest Tests';
+  if (key === 'budget_outlier') return 'Budget Outlier';
   return key || 'signal';
 }
 
@@ -12367,7 +12371,7 @@ function renderPipelineRunComparison(payload) {
   const runs = Array.isArray(data.runs) ? data.runs : [];
   if (!runs.length) {
     const msg = data.message || 'No completed runs were found in history yet.';
-    body.innerHTML = '<tr><td colspan="8"><div class="state-card">' + esc(msg) + '</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="9"><div class="state-card">' + esc(msg) + '</div></td></tr>';
     summaryEl.textContent = msg;
     return;
   }
@@ -12387,6 +12391,8 @@ function renderPipelineRunComparison(payload) {
     const stopReason = String(run.stop_reason || 'unknown');
     const tokens = Number(run.token_usage || 0);
     const tokenText = Number.isFinite(tokens) && tokens > 0 ? tokens.toLocaleString() : '0';
+    const costUsd = Number(run.estimated_cost_usd || 0);
+    const costText = Number.isFinite(costUsd) && costUsd > 0 ? ('$' + costUsd.toFixed(4)) : 'n/a';
     const commitCount = Number(run.commit_count || 0);
     const runLabel = '<div class="run-compare-run-label">'
       + '<span>' + esc(scopeLabel + ' / ' + mode) + '</span>'
@@ -12398,6 +12404,7 @@ function renderPipelineRunComparison(payload) {
       + '<td>' + esc(String(run.configuration || 'n/a')) + '</td>'
       + '<td>' + esc(_formatRunCompareDuration(run.duration_seconds)) + '</td>'
       + '<td>' + esc(tokenText) + '</td>'
+      + '<td>' + esc(costText) + '</td>'
       + '<td><span class="badge ' + _runCompareTestsBadgeClass(run) + '">' + esc(testsSummary) + '</span></td>'
       + '<td>' + esc(stopReason) + '</td>'
       + '<td>' + esc(String(Number.isFinite(commitCount) ? commitCount : 0)) + '</td>'
@@ -12413,7 +12420,7 @@ async function refreshPipelineRunComparison(opts = {}) {
   ).trim();
   if (!repoPath) {
     if (body) {
-      body.innerHTML = '<tr><td colspan="8"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
+      body.innerHTML = '<tr><td colspan="9"><div class="state-card">Set Repository Path to load recent run comparisons.</div></td></tr>';
     }
     if (summaryEl) {
       summaryEl.textContent = 'Compare recent finished runs to identify the most effective configuration.';
@@ -12422,7 +12429,7 @@ async function refreshPipelineRunComparison(opts = {}) {
   }
 
   if (body && opts.silent !== true) {
-    body.innerHTML = '<tr><td colspan="8"><div class="state-card loading">Loading recent runs...</div></td></tr>';
+    body.innerHTML = '<tr><td colspan="9"><div class="state-card loading">Loading recent runs...</div></td></tr>';
   }
 
   try {

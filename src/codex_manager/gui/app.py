@@ -1097,6 +1097,123 @@ def _safe_bool(value: object, default: bool = False) -> bool:
     return default
 
 
+_RUN_COST_PROVIDER_DEFAULT_RATES: dict[str, tuple[float, float]] = {
+    # input_rate, output_rate (USD per 1k tokens)
+    "openai": (0.01, 0.03),
+    "anthropic": (0.015, 0.075),
+    "google": (0.004, 0.012),
+    "mixed": (0.01, 0.03),
+    "unknown": (0.01, 0.03),
+}
+_RUN_COST_OUTLIER_MULTIPLIER = 2.5
+_RUN_COST_EFFICIENCY_DENOMINATOR = 0.001
+
+
+def _run_cost_model_key(value: object) -> str:
+    """Return an env-safe model key used for per-model cost overrides."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+
+
+def _run_cost_provider(agent_used: object, model: object) -> str:
+    """Infer provider key from agent/model metadata."""
+    agent = str(agent_used or "").strip().lower()
+    model_name = str(model or "").strip().lower()
+
+    if agent.startswith("deep_research:"):
+        provider_hint = agent.split(":", 1)[1].strip()
+        if provider_hint in {"openai", "google", "anthropic"}:
+            return provider_hint
+        if provider_hint in {"both", "mixed"}:
+            return "mixed"
+
+    if "claude" in agent or "anthropic" in agent:
+        return "anthropic"
+    if "google" in agent or "gemini" in agent:
+        return "google"
+    if "codex" in agent or "openai" in agent:
+        return "openai"
+
+    if "claude" in model_name:
+        return "anthropic"
+    if "gemini" in model_name:
+        return "google"
+    if "gpt" in model_name or model_name.startswith("o"):
+        return "openai"
+    return "unknown"
+
+
+def _run_cost_rates(provider: str, model: object) -> tuple[float, float]:
+    """Resolve input/output USD-per-1k rates with optional env overrides."""
+    provider_key = str(provider or "unknown").strip().lower() or "unknown"
+    model_key = _run_cost_model_key(model)
+
+    default_in, default_out = _RUN_COST_PROVIDER_DEFAULT_RATES.get(
+        provider_key,
+        _RUN_COST_PROVIDER_DEFAULT_RATES["unknown"],
+    )
+
+    if model_key:
+        default_in = _safe_float(
+            os.getenv(f"CODEX_MANAGER_RUN_COST_{model_key.upper()}_USD_PER_1K_INPUT"),
+            default_in,
+        )
+        default_out = _safe_float(
+            os.getenv(f"CODEX_MANAGER_RUN_COST_{model_key.upper()}_USD_PER_1K_OUTPUT"),
+            default_out,
+        )
+
+    default_in = _safe_float(
+        os.getenv(f"CODEX_MANAGER_RUN_COST_{provider_key.upper()}_USD_PER_1K_INPUT"),
+        default_in,
+    )
+    default_out = _safe_float(
+        os.getenv(f"CODEX_MANAGER_RUN_COST_{provider_key.upper()}_USD_PER_1K_OUTPUT"),
+        default_out,
+    )
+    return max(0.0, default_in), max(0.0, default_out)
+
+
+def _estimate_run_cost_usd(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    provider: str,
+    model: object,
+) -> float:
+    """Estimate USD cost for one token-usage sample."""
+    in_tokens = max(0, int(input_tokens or 0))
+    out_tokens = max(0, int(output_tokens or 0))
+    if in_tokens <= 0 and out_tokens <= 0:
+        return 0.0
+    in_rate, out_rate = _run_cost_rates(provider, model)
+    return round(((in_tokens / 1000.0) * in_rate) + ((out_tokens / 1000.0) * out_rate), 6)
+
+
+def _median_float(values: list[float]) -> float:
+    """Return median for a numeric list, or 0 when empty."""
+    if not values:
+        return 0.0
+    sorted_values = sorted(float(item) for item in values)
+    size = len(sorted_values)
+    mid = size // 2
+    if size % 2 == 1:
+        return sorted_values[mid]
+    return (sorted_values[mid - 1] + sorted_values[mid]) / 2.0
+
+
+def _run_cost_outlier_threshold(values: list[float]) -> float:
+    """Return the budget-outlier threshold for run-cost estimates."""
+    if len(values) < 3:
+        return 0.0
+    baseline = _median_float(values)
+    if baseline <= 0:
+        return 0.0
+    return round(baseline * _RUN_COST_OUTLIER_MULTIPLIER, 6)
+
+
 def _run_configuration_label(scope: str, context: dict[str, object]) -> str:
     """Return a compact run-configuration summary label."""
     mode = str(context.get("mode") or "unknown").strip() or "unknown"
@@ -1207,6 +1324,8 @@ def _new_run_aggregate(
         },
         "result_events": 0,
         "_token_usage_from_results": 0,
+        "_estimated_cost_from_results": 0.0,
+        "_cost_by_model": {},
         "_commit_shas": set(),
         "_files_changed_total": 0,
         "_net_lines_changed_total": 0,
@@ -1227,14 +1346,56 @@ def _record_run_result_event(run: dict[str, object], context: dict[str, object])
     tests[outcome] = _safe_int(tests.get(outcome), 0) + 1
     run["result_events"] = _safe_int(run.get("result_events"), 0) + 1
 
-    token_usage = _safe_int(context.get("total_tokens"), 0)
+    input_tokens = max(0, _safe_int(context.get("input_tokens"), 0))
+    output_tokens = max(0, _safe_int(context.get("output_tokens"), 0))
+    token_usage = max(0, _safe_int(context.get("total_tokens"), 0))
     if token_usage <= 0:
-        token_usage = _safe_int(context.get("input_tokens"), 0) + _safe_int(
-            context.get("output_tokens"), 0
-        )
+        token_usage = input_tokens + output_tokens
+    if (input_tokens + output_tokens) <= 0 and token_usage > 0:
+        # Legacy events may only report ``total_tokens``; use a stable split
+        # for estimation/ranking.
+        input_tokens = int(token_usage * 0.6)
+        output_tokens = max(0, token_usage - input_tokens)
     run["_token_usage_from_results"] = _safe_int(run.get("_token_usage_from_results"), 0) + max(
         0, token_usage
     )
+
+    agent_used = str(context.get("agent_used") or "").strip()
+    model_name = str(context.get("model") or "").strip()
+    provider = _run_cost_provider(agent_used, model_name)
+    event_cost = _estimate_run_cost_usd(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        provider=provider,
+        model=model_name,
+    )
+    run["_estimated_cost_from_results"] = round(
+        _safe_float(run.get("_estimated_cost_from_results"), 0.0) + event_cost,
+        6,
+    )
+    model_breakdown = run.get("_cost_by_model")
+    if not isinstance(model_breakdown, dict):
+        model_breakdown = {}
+        run["_cost_by_model"] = model_breakdown
+    breakdown_key = f"{provider}:{model_name or 'unknown'}"
+    breakdown_entry = model_breakdown.get(breakdown_key)
+    if not isinstance(breakdown_entry, dict):
+        breakdown_entry = {
+            "provider": provider,
+            "model": model_name or "unknown",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": 0.0,
+        }
+    breakdown_entry["input_tokens"] = _safe_int(breakdown_entry.get("input_tokens"), 0) + input_tokens
+    breakdown_entry["output_tokens"] = _safe_int(breakdown_entry.get("output_tokens"), 0) + output_tokens
+    breakdown_entry["total_tokens"] = _safe_int(breakdown_entry.get("total_tokens"), 0) + token_usage
+    breakdown_entry["estimated_cost_usd"] = round(
+        _safe_float(breakdown_entry.get("estimated_cost_usd"), 0.0) + event_cost,
+        6,
+    )
+    model_breakdown[breakdown_key] = breakdown_entry
 
     commit_sha = str(context.get("commit_sha") or "").strip()
     commits = run.get("_commit_shas")
@@ -1278,6 +1439,10 @@ def _finalize_run_aggregate(
     token_usage = _safe_int(context.get("total_tokens"), 0)
     if token_usage <= 0:
         token_usage = _safe_int(run.get("_token_usage_from_results"), 0)
+    estimated_cost_usd = _safe_float(context.get("estimated_cost_usd"), 0.0)
+    if estimated_cost_usd <= 0:
+        estimated_cost_usd = _safe_float(run.get("_estimated_cost_from_results"), 0.0)
+    estimated_cost_usd = round(max(0.0, estimated_cost_usd), 6)
 
     stop_reason = str(context.get("stop_reason") or "").strip()
     if not stop_reason:
@@ -1293,6 +1458,32 @@ def _finalize_run_aggregate(
     tests = run.get("tests")
     tests_payload = tests if isinstance(tests, dict) else {}
     tests_summary = _run_tests_summary(tests_payload)
+    breakdown_raw = run.get("_cost_by_model")
+    model_cost_breakdown: list[dict[str, object]] = []
+    if isinstance(breakdown_raw, dict):
+        for item in breakdown_raw.values():
+            if not isinstance(item, dict):
+                continue
+            model_cost_breakdown.append(
+                {
+                    "provider": str(item.get("provider") or "unknown"),
+                    "model": str(item.get("model") or "unknown"),
+                    "input_tokens": max(0, _safe_int(item.get("input_tokens"), 0)),
+                    "output_tokens": max(0, _safe_int(item.get("output_tokens"), 0)),
+                    "total_tokens": max(0, _safe_int(item.get("total_tokens"), 0)),
+                    "estimated_cost_usd": round(
+                        max(0.0, _safe_float(item.get("estimated_cost_usd"), 0.0)),
+                        6,
+                    ),
+                }
+            )
+    model_cost_breakdown.sort(
+        key=lambda row: (
+            _safe_float(row.get("estimated_cost_usd"), 0.0),
+            _safe_int(row.get("total_tokens"), 0),
+        ),
+        reverse=True,
+    )
 
     run_id = str(run.get("run_id") or "").strip()
     if not run_id:
@@ -1310,6 +1501,8 @@ def _finalize_run_aggregate(
         "finished_at_epoch_ms": finished_epoch_ms,
         "duration_seconds": round(max(0.0, duration_seconds), 1),
         "token_usage": max(0, token_usage),
+        "estimated_cost_usd": estimated_cost_usd,
+        "model_cost_breakdown": model_cost_breakdown[:20],
         "tests": {
             "passed": _safe_int(tests_payload.get("passed"), 0),
             "failed": _safe_int(tests_payload.get("failed"), 0),
@@ -1337,6 +1530,15 @@ def _finalize_run_aggregate(
     start_context = run.get("_start_context")
     finalized["start_context"] = dict(start_context) if isinstance(start_context, dict) else {}
     finalized["overall_score"] = _run_overall_score(finalized)
+    if estimated_cost_usd > 0:
+        finalized["cost_efficiency_score"] = round(
+            _safe_float(finalized.get("overall_score"), 0.0)
+            / max(_RUN_COST_EFFICIENCY_DENOMINATOR, estimated_cost_usd),
+            3,
+        )
+    else:
+        finalized["cost_efficiency_score"] = 0.0
+    finalized["budget_outlier"] = False
     return finalized
 
 
@@ -1359,8 +1561,12 @@ def _empty_run_comparison_payload(
             "overall_run_id": "",
             "fastest_run_id": "",
             "lowest_token_run_id": "",
+            "lowest_cost_run_id": "",
+            "best_cost_efficiency_run_id": "",
             "strongest_tests_run_id": "",
         },
+        "cost_outlier_threshold_usd": 0.0,
+        "budget_outlier_count": 0,
         "message": message,
     }
 
@@ -1493,11 +1699,36 @@ def _pipeline_run_comparison(
         else None
     )
 
-    token_candidates = [run for run in meaningful_candidates if _safe_int(run.get("token_usage"), 0) > 0]
+    token_candidates = [
+        run for run in meaningful_candidates if _safe_int(run.get("token_usage"), 0) > 0
+    ]
     best_lowest_tokens = (
         min(token_candidates, key=lambda run: _safe_int(run.get("token_usage"), 0))
         if token_candidates
         else None
+    )
+    cost_candidates = [
+        run for run in meaningful_candidates if _safe_float(run.get("estimated_cost_usd"), 0.0) > 0
+    ]
+    best_lowest_cost = (
+        min(cost_candidates, key=lambda run: _safe_float(run.get("estimated_cost_usd"), 0.0))
+        if cost_candidates
+        else None
+    )
+    best_cost_efficiency = (
+        max(
+            cost_candidates,
+            key=lambda run: (
+                _safe_float(run.get("cost_efficiency_score"), -999999.0),
+                _safe_float(run.get("overall_score"), -999999.0),
+                -_safe_float(run.get("estimated_cost_usd"), 0.0),
+            ),
+        )
+        if cost_candidates
+        else None
+    )
+    cost_outlier_threshold = _run_cost_outlier_threshold(
+        [_safe_float(run.get("estimated_cost_usd"), 0.0) for run in cost_candidates]
     )
 
     test_candidates = [run for run in meaningful_candidates if _run_has_executed_tests(run)]
@@ -1522,10 +1753,27 @@ def _pipeline_run_comparison(
             badges.append("fastest")
         if best_lowest_tokens is not None and run.get("run_id") == best_lowest_tokens.get("run_id"):
             badges.append("lowest_tokens")
+        if best_lowest_cost is not None and run.get("run_id") == best_lowest_cost.get("run_id"):
+            badges.append("lowest_cost")
+        if (
+            best_cost_efficiency is not None
+            and run.get("run_id") == best_cost_efficiency.get("run_id")
+        ):
+            badges.append("best_cost_efficiency")
         if best_tests is not None and run.get("run_id") == best_tests.get("run_id"):
             badges.append("strongest_tests")
+        run_cost = _safe_float(run.get("estimated_cost_usd"), 0.0)
+        is_budget_outlier = bool(
+            cost_outlier_threshold > 0
+            and run_cost > cost_outlier_threshold
+            and len(cost_candidates) >= 3
+        )
+        run["budget_outlier"] = is_budget_outlier
+        if is_budget_outlier:
+            badges.append("budget_outlier")
         run["badges"] = badges
 
+    budget_outlier_count = sum(1 for run in runs if bool(run.get("budget_outlier")))
     return {
         "available": True,
         "repo_path": str(repo),
@@ -1539,8 +1787,16 @@ def _pipeline_run_comparison(
             "lowest_token_run_id": (
                 str(best_lowest_tokens.get("run_id") or "") if best_lowest_tokens else ""
             ),
+            "lowest_cost_run_id": (
+                str(best_lowest_cost.get("run_id") or "") if best_lowest_cost else ""
+            ),
+            "best_cost_efficiency_run_id": (
+                str(best_cost_efficiency.get("run_id") or "") if best_cost_efficiency else ""
+            ),
             "strongest_tests_run_id": str(best_tests.get("run_id") or "") if best_tests else "",
         },
+        "cost_outlier_threshold_usd": cost_outlier_threshold,
+        "budget_outlier_count": budget_outlier_count,
         "message": "",
     }
 
@@ -9539,6 +9795,10 @@ def _workspace_recent_runs_summary(repo: Path, *, limit: int) -> dict[str, objec
                     "finished_at_epoch_ms": _safe_int(raw_run.get("finished_at_epoch_ms"), 0),
                     "duration_seconds": _safe_float(raw_run.get("duration_seconds"), 0.0),
                     "token_usage": _safe_int(raw_run.get("token_usage"), 0),
+                    "estimated_cost_usd": round(
+                        max(0.0, _safe_float(raw_run.get("estimated_cost_usd"), 0.0)),
+                        6,
+                    ),
                     "tests_summary": str(raw_run.get("tests_summary") or "").strip(),
                     "stop_reason": str(raw_run.get("stop_reason") or "").strip(),
                     "configuration": str(raw_run.get("configuration") or "").strip(),

@@ -393,6 +393,7 @@ class PhaseResult(BaseModel):
     agent_final_message: str = ""
     terminate_repeats: bool = False
     agent_used: str = "codex"
+    model: str = ""
     science_trial_id: str = ""
     science_experiment_id: str = ""
     science_hypothesis_id: str = ""
