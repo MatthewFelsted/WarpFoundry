@@ -4676,6 +4676,50 @@ def test_git_sync_status_reports_tracking_and_dirty_state(client, tmp_path: Path
     assert dirty_data["untracked_changes"] >= 1
 
 
+def test_resolve_git_fetch_head_path_rejects_paths_outside_git_dir(monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    git_dir = (repo / ".git").resolve()
+    outside = (tmp_path / "outside-fetch-head").resolve()
+
+    def _fake_run_git_sync(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        if args == ("rev-parse", "--absolute-git-dir"):
+            return subprocess.CompletedProcess(
+                ["git", *args], 0, stdout=f"{git_dir}\n", stderr=""
+            )
+        if args == ("rev-parse", "--git-path", "FETCH_HEAD"):
+            return subprocess.CompletedProcess(
+                ["git", *args], 0, stdout=f"{outside}\n", stderr=""
+            )
+        return subprocess.CompletedProcess(["git", *args], 1, stdout="", stderr="unexpected")
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run_git_sync)
+
+    assert gui_app_module._resolve_git_fetch_head_path(repo) is None
+
+
+def test_resolve_git_fetch_head_path_accepts_paths_inside_git_dir(monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    git_dir = (repo / ".git").resolve()
+    fetch_head = (git_dir / "FETCH_HEAD").resolve()
+
+    def _fake_run_git_sync(repo_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        assert repo_path == repo
+        if args == ("rev-parse", "--absolute-git-dir"):
+            return subprocess.CompletedProcess(
+                ["git", *args], 0, stdout=f"{git_dir}\n", stderr=""
+            )
+        if args == ("rev-parse", "--git-path", "FETCH_HEAD"):
+            return subprocess.CompletedProcess(
+                ["git", *args], 0, stdout=f"{fetch_head}\n", stderr=""
+            )
+        return subprocess.CompletedProcess(["git", *args], 1, stdout="", stderr="unexpected")
+
+    monkeypatch.setattr(gui_app_module, "_run_git_sync_command", _fake_run_git_sync)
+
+    assert gui_app_module._resolve_git_fetch_head_path(repo) == fetch_head
+
+
 def test_git_sync_status_includes_github_repo_metadata(client, monkeypatch, tmp_path: Path):
     remote = _make_remote_repo(tmp_path)
     local = _clone_tracking_repo(tmp_path, remote, clone_name="local-sync-status-github-metadata")

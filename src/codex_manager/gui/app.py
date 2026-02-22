@@ -6770,6 +6770,7 @@ def _resolve_stash_ref(repo: Path) -> str:
 
 def _resolve_git_fetch_head_path(repo: Path) -> Path | None:
     """Resolve FETCH_HEAD for a repository, returning None when unavailable."""
+    git_dir = _resolve_git_dir_path(repo)
     result = _run_git_sync_command(repo, "rev-parse", "--git-path", "FETCH_HEAD")
     if result.returncode != 0:
         return None
@@ -6780,8 +6781,32 @@ def _resolve_git_fetch_head_path(repo: Path) -> Path | None:
 
     fetch_head = Path(raw_path)
     if fetch_head.is_absolute():
-        return fetch_head
-    return (repo / fetch_head).resolve()
+        resolved_fetch_head = fetch_head.resolve()
+    else:
+        resolved_fetch_head = (repo / fetch_head).resolve()
+
+    if git_dir is not None and not _is_within_directory(resolved_fetch_head, git_dir):
+        return None
+    return resolved_fetch_head
+
+
+def _resolve_git_dir_path(repo: Path) -> Path | None:
+    """Resolve repository git-dir path, returning None when unavailable."""
+    for args in (
+        ("rev-parse", "--absolute-git-dir"),
+        ("rev-parse", "--git-dir"),
+    ):
+        result = _run_git_sync_command(repo, *args)
+        if result.returncode != 0:
+            continue
+        raw_path = str(result.stdout or "").strip()
+        if not raw_path:
+            continue
+        candidate = Path(raw_path)
+        resolved = candidate.resolve() if candidate.is_absolute() else (repo / candidate).resolve()
+        if resolved.is_dir():
+            return resolved
+    return None
 
 
 def _git_last_fetch_metadata(repo: Path) -> tuple[int | None, str | None]:
