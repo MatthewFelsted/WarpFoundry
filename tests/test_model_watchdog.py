@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 from codex_manager.monitoring.model_watchdog import AVAILABLE_MODEL_PROVIDERS, ModelCatalogWatchdog
@@ -104,6 +105,38 @@ def test_watchdog_update_config_normalizes_values(tmp_path: Path):
     assert config["request_timeout_seconds"] == 60
     assert config["history_limit"] == 10
     assert config["auto_run_on_start"] is False
+
+
+def test_watchdog_stop_keeps_thread_reference_until_joined(tmp_path: Path) -> None:
+    watchdog = ModelCatalogWatchdog(
+        root_dir=tmp_path / "watchdog",
+        provider_fetchers={},
+        dependency_packages=(),
+    )
+
+    class _StickyThread(threading.Thread):
+        def __init__(self) -> None:
+            super().__init__(daemon=True)
+            self.alive = True
+            self.join_calls = 0
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def join(self, timeout: float | None = None) -> None:
+            self.join_calls += 1
+
+    sticky = _StickyThread()
+    watchdog._thread = sticky
+
+    watchdog.stop()
+
+    assert sticky.join_calls == 1
+    assert watchdog._thread is sticky
+
+    sticky.alive = False
+    watchdog.stop()
+    assert watchdog._thread is None
 
 
 def test_fetch_openai_models_uses_non_placeholder_fallback_key(

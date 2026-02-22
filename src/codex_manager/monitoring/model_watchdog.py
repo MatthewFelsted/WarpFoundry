@@ -526,10 +526,12 @@ class ModelCatalogWatchdog:
     def stop(self) -> None:
         with self._lock:
             thread = self._thread
-            self._thread = None
             self._stop_event.set()
         if thread and thread.is_alive():
             thread.join(timeout=1.0)
+        with self._lock:
+            if self._thread is thread and (thread is None or not thread.is_alive()):
+                self._thread = None
 
     def update_config(self, updates: Mapping[str, Any]) -> dict[str, Any]:
         with self._lock:
