@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
+import codex_manager.runner_common as runner_common_module
 from codex_manager.runner_common import (
     coerce_int,
     execute_streaming_json_command,
@@ -55,6 +57,18 @@ def test_resolve_binary_accepts_wrapped_quotes(tmp_path: Path) -> None:
 
     resolved = resolve_binary(f'"{tool}"')
     assert Path(resolved).resolve() == tool.resolve()
+
+
+def test_streaming_process_isolation_kwargs_matches_platform() -> None:
+    kwargs = runner_common_module._streaming_process_isolation_kwargs()
+    if os.name == "nt":
+        expected_flag = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        if expected_flag:
+            assert int(kwargs.get("creationflags") or 0) & expected_flag
+        else:
+            assert kwargs == {}
+    else:
+        assert kwargs.get("start_new_session") is True
 
 
 def test_execute_streaming_json_command_limits_captured_output(tmp_path: Path) -> None:

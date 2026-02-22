@@ -26,6 +26,19 @@ _DEFAULT_MAX_CAPTURED_STDOUT_LINES = 20_000
 _DEFAULT_MAX_CAPTURED_STDERR_LINES = 10_000
 
 
+def _streaming_process_isolation_kwargs() -> dict[str, object]:
+    """Return subprocess kwargs that isolate child signal/control handling.
+
+    On Windows, running each agent command in a new process group prevents
+    console Ctrl+C events from propagating back to the GUI server process.
+    On POSIX, using a new session provides equivalent isolation.
+    """
+    if os.name == "nt":
+        flags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        return {"creationflags": flags} if flags else {}
+    return {"start_new_session": True}
+
+
 def resolve_binary(name: str) -> str:
     """Resolve a binary name to a full executable path when possible."""
     expanded = os.path.expandvars(os.path.expanduser(str(name or "").strip()))
@@ -116,6 +129,7 @@ def execute_streaming_json_command(
         encoding="utf-8",
         errors="replace",
         env=env,
+        **_streaming_process_isolation_kwargs(),
     )
     if proc.stdout is None or proc.stderr is None:
         raise RuntimeError(f"{process_name} subprocess pipes are unexpectedly unavailable")

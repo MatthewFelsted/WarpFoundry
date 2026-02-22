@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -1388,6 +1389,44 @@ def test_system_restart_rejects_missing_checkpoint(client):
     assert "Checkpoint not found" in data["error"]
 
 
+def test_system_restart_rejects_when_chain_is_running(client, monkeypatch, tmp_path: Path):
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "executor", types.SimpleNamespace(is_running=True))
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    resp = client.post(
+        "/api/system/restart",
+        json={"pipeline_resume_checkpoint": str(checkpoint)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert "chain run is active" in data["error"]
+
+
+def test_system_restart_rejects_when_pipeline_is_running(client, monkeypatch, tmp_path: Path):
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "executor", types.SimpleNamespace(is_running=False))
+    monkeypatch.setattr(
+        gui_app_module,
+        "_pipeline_executor",
+        types.SimpleNamespace(is_running=True),
+    )
+
+    resp = client.post(
+        "/api/system/restart",
+        json={"pipeline_resume_checkpoint": str(checkpoint)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 409
+    assert data
+    assert "pipeline run is active" in data["error"]
+
+
 def test_system_restart_spawns_replacement_server_with_checkpoint(
     client, monkeypatch, tmp_path: Path
 ):
@@ -1396,9 +1435,15 @@ def test_system_restart_spawns_replacement_server_with_checkpoint(
     monkeypatch.setattr(gui_app_module, "_SERVER_PORT", 6111)
 
     observed: dict[str, object] = {}
+    monkeypatch.setattr(gui_app_module.time, "sleep", lambda _secs: None)
+
+    class _AliveProc:
+        def poll(self):
+            return None
 
     def _fake_launch(command):
         observed["command"] = command
+        return _AliveProc()
 
     def _fake_terminate(delay_seconds: float = 0.75):
         observed["terminated"] = delay_seconds
@@ -1426,6 +1471,84 @@ def test_system_restart_spawns_replacement_server_with_checkpoint(
     assert "terminated" in observed
 
 
+def test_system_restart_logs_request_metadata(client, monkeypatch, tmp_path: Path):
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_SERVER_PORT", 6111)
+    monkeypatch.setattr(gui_app_module.time, "sleep", lambda _secs: None)
+
+    observed_logs: list[str] = []
+
+    class _AliveProc:
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(
+        gui_app_module,
+        "_append_restart_log",
+        lambda message: observed_logs.append(str(message)),
+    )
+    monkeypatch.setattr(gui_app_module, "_launch_replacement_server", lambda _command: _AliveProc())
+    monkeypatch.setattr(gui_app_module, "_terminate_current_process", lambda delay_seconds=0.75: None)
+
+    resp = client.post(
+        "/api/system/restart",
+        json={
+            "pipeline_resume_checkpoint": str(checkpoint),
+            "restart_reason": "manual_resume",
+            "restart_source": "pipeline_resume_card",
+            "auto": False,
+        },
+        headers={"User-Agent": "pytest-restart-agent"},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    joined = "\n".join(observed_logs)
+    assert "Restart requested:" in joined
+    assert "reason=manual_resume" in joined
+    assert "source=pipeline_resume_card" in joined
+    assert "auto=False" in joined
+    assert "Restart handoff confirmed" in joined
+
+
+def test_system_restart_keeps_current_server_when_replacement_exits_early(
+    client, monkeypatch, tmp_path: Path
+):
+    checkpoint = tmp_path / "pipeline_resume.json"
+    checkpoint.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui_app_module, "_SERVER_PORT", 6111)
+    monkeypatch.setattr(gui_app_module.time, "sleep", lambda _secs: None)
+
+    observed: dict[str, object] = {}
+
+    class _DeadProc:
+        def poll(self):
+            return 1
+
+    def _fake_launch(command):
+        observed["command"] = command
+        return _DeadProc()
+
+    def _fake_terminate(delay_seconds: float = 0.75):
+        observed["terminated"] = delay_seconds
+
+    monkeypatch.setattr(gui_app_module, "_launch_replacement_server", _fake_launch)
+    monkeypatch.setattr(gui_app_module, "_terminate_current_process", _fake_terminate)
+
+    resp = client.post(
+        "/api/system/restart",
+        json={"pipeline_resume_checkpoint": str(checkpoint)},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 500
+    assert data
+    assert "exited before handoff" in data["error"]
+    assert "terminated" not in observed
+
+
 def test_restart_working_directory_prefers_project_root(monkeypatch, tmp_path: Path):
     monkeypatch.chdir(tmp_path)
     restart_cwd = gui_app_module._restart_working_directory()
@@ -1440,6 +1563,7 @@ def test_run_gui_retries_bind_race_before_serving(monkeypatch):
             return False
 
     monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+    monkeypatch.setattr(gui_app_module, "_install_gui_runtime_hooks", lambda *, port: None)
 
     observed = {"runs": 0, "sleeps": []}
 
@@ -1457,6 +1581,57 @@ def test_run_gui_retries_bind_race_before_serving(monkeypatch):
 
     assert observed["runs"] == 2
     assert observed["sleeps"] == [gui_app_module._GUI_STARTUP_BIND_RETRY_SECONDS]
+
+
+def test_run_gui_retries_bind_race_on_system_exit(monkeypatch):
+    class _WatchdogStub:
+        def start(self):
+            return False
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+    monkeypatch.setattr(gui_app_module, "_install_gui_runtime_hooks", lambda *, port: None)
+
+    observed = {"runs": 0, "sleeps": []}
+    bind_probe_states = [None, OSError(10048, "Only one usage of each socket address"), None]
+
+    def _fake_probe_bind_error(_host, _port):
+        return bind_probe_states.pop(0)
+
+    def _fake_app_run(*, host, port, debug, threaded):
+        observed["runs"] += 1
+        if observed["runs"] == 1:
+            raise SystemExit(1)
+        raise RuntimeError("stop-after-retry")
+
+    monkeypatch.setattr(gui_app_module, "_probe_bind_error", _fake_probe_bind_error)
+    monkeypatch.setattr(gui_app_module.app, "run", _fake_app_run)
+    monkeypatch.setattr(gui_app_module.time, "sleep", lambda secs: observed["sleeps"].append(secs))
+
+    with pytest.raises(RuntimeError, match="stop-after-retry"):
+        gui_app_module.run_gui(port=6112, open_browser_=False)
+
+    assert observed["runs"] == 2
+    assert observed["sleeps"] == [gui_app_module._GUI_STARTUP_BIND_RETRY_SECONDS]
+
+
+def test_run_gui_startup_banner_is_ascii_safe(monkeypatch):
+    class _WatchdogStub:
+        def start(self):
+            return False
+
+    monkeypatch.setattr(gui_app_module, "_get_model_watchdog", lambda: _WatchdogStub())
+    monkeypatch.setattr(gui_app_module, "_install_gui_runtime_hooks", lambda *, port: None)
+    monkeypatch.setattr(gui_app_module, "_run_gui_server", lambda *, host, port: None)
+
+    stream = io.BytesIO()
+    cp1252_stdout = io.TextIOWrapper(stream, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", cp1252_stdout)
+
+    gui_app_module.run_gui(port=6112, open_browser_=False)
+
+    cp1252_stdout.flush()
+    banner = stream.getvalue().decode("cp1252")
+    assert "GUI -> http://127.0.0.1:6112" in banner
 
 
 def test_pipeline_resume_state_reports_checkpoint_payload(client, tmp_path: Path):
@@ -4811,6 +4986,39 @@ def test_diagnostics_reports_ready_state(client, monkeypatch, tmp_path: Path):
     assert _check_by_key(data, "claude_code", "auth")["status"] == "pass"
     actions = data.get("next_actions", [])
     assert any(a.get("key") == "first_dry_run" for a in actions)
+
+
+def test_diagnostics_reuses_cached_report_within_ttl(client, monkeypatch):
+    observed = {"calls": 0}
+
+    def _fake_build(*, repo_path, codex_binary, claude_binary, requested_agents):
+        observed["calls"] += 1
+        return {
+            "repo_path": repo_path,
+            "resolved_repo_path": "",
+            "requested_agents": list(requested_agents),
+            "summary": {"pass": 1, "warn": 0, "fail": 0},
+            "checks": [],
+            "next_actions": [],
+            "ready": True,
+        }
+
+    gui_app_module._diagnostics_report_cache.clear()
+    monkeypatch.setattr(gui_app_module, "_build_diagnostics_report", _fake_build)
+    payload = {
+        "repo_path": "",
+        "codex_binary": "codex",
+        "claude_binary": "claude",
+        "agents": ["codex"],
+    }
+
+    first = client.post("/api/diagnostics", json=payload)
+    second = client.post("/api/diagnostics", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert observed["calls"] == 1
+    gui_app_module._diagnostics_report_cache.clear()
 
 
 def test_diagnostics_run_action_executes_runnable_command(client, monkeypatch):

@@ -9106,9 +9106,16 @@ async function requestServerRestart(checkpointPath, opts = {}) {
     return true;
   }
 
-  const resp = await postJson('/api/system/restart', {
+  const payload = {
     pipeline_resume_checkpoint: path,
-  });
+    auto: !!opts.auto,
+  };
+  const restartReason = String(opts.reason || '').trim();
+  const restartSource = String(opts.source || '').trim();
+  if (restartReason) payload.restart_reason = restartReason;
+  if (restartSource) payload.restart_source = restartSource;
+
+  const resp = await postJson('/api/system/restart', payload);
   if (resp.error) {
     toast('Server restart failed: ' + resp.error, 'error');
     return false;
@@ -9505,6 +9512,10 @@ function togglePipeLocalOnly() {
 let diagRefreshTimer = { chain: null, pipeline: null };
 let diagRequestSeq = { chain: 0, pipeline: 0 };
 let diagActionRunState = { chain: {}, pipeline: {} };
+let diagInFlight = { chain: false, pipeline: false };
+let diagLastSuccessAt = { chain: 0, pipeline: 0 };
+const DIAG_REFRESH_DEBOUNCE_MS = 500;
+const DIAG_SILENT_MIN_INTERVAL_MS = 15000;
 const DIAG_CATEGORY_LABEL = {
   repository: 'Repository',
   codex: 'Codex',
@@ -9637,8 +9648,6 @@ function renderDiagnostics(target, payload) {
           + '</div>';
       }).join('');
   }
-
-  scheduleDiagnosticsRefresh(target);
 }
 
 async function copyDiagnosticsCommand(btn) {
@@ -9702,7 +9711,7 @@ async function runDiagnosticsAction(btn) {
         'error'
       );
     }
-    await refreshDiagnostics(target, { silent: true });
+    await refreshDiagnostics(target, { silent: true, force: true });
   } catch (e) {
     toast((e && e.message) || 'Failed to run diagnostics action.', 'error');
   } finally {
@@ -9711,20 +9720,42 @@ async function runDiagnosticsAction(btn) {
   }
 }
 
-function scheduleDiagnosticsRefresh(target) {
+function scheduleDiagnosticsRefresh(target, opts = {}) {
+  const options = opts || {};
+  const delay = Number.isFinite(Number(options.delayMs))
+    ? Math.max(0, Number(options.delayMs))
+    : DIAG_REFRESH_DEBOUNCE_MS;
+  const silent = options.silent !== false;
+  const force = !!options.force;
   if (diagRefreshTimer[target]) clearTimeout(diagRefreshTimer[target]);
-  diagRefreshTimer[target] = setTimeout(() => refreshDiagnostics(target, { silent: true }), 500);
+  diagRefreshTimer[target] = setTimeout(
+    () => refreshDiagnostics(target, { silent, force }),
+    delay
+  );
 }
 
 async function refreshDiagnostics(target, opts) {
   const options = opts || {};
+  const silent = !!options.silent;
+  const force = !!options.force || !silent;
   const summaryEl = document.getElementById(target === 'pipeline' ? 'diag-summary-pipeline' : 'diag-summary-chain');
   const listEl = document.getElementById(target === 'pipeline' ? 'diag-list-pipeline' : 'diag-list-chain');
   if (!summaryEl || !listEl) return;
+  if (silent && !force) {
+    const ageMs = Date.now() - Number(diagLastSuccessAt[target] || 0);
+    if (ageMs >= 0 && ageMs < DIAG_SILENT_MIN_INTERVAL_MS) return;
+  }
+  if (diagInFlight[target]) {
+    if (force) {
+      scheduleDiagnosticsRefresh(target, { delayMs: 350, silent, force: true });
+    }
+    return;
+  }
 
+  diagInFlight[target] = true;
   const reqId = (diagRequestSeq[target] || 0) + 1;
   diagRequestSeq[target] = reqId;
-  if (!options.silent) {
+  if (!silent) {
     summaryEl.textContent = 'Running diagnostics...';
   }
 
@@ -9734,10 +9765,13 @@ async function refreshDiagnostics(target, opts) {
     if (data && data.error) throw new Error(data.error);
     if (diagRequestSeq[target] !== reqId) return;
     renderDiagnostics(target, data || {});
+    diagLastSuccessAt[target] = Date.now();
   } catch (e) {
     if (diagRequestSeq[target] !== reqId) return;
     summaryEl.textContent = 'Diagnostics request failed.';
     listEl.innerHTML = '<div class="diag-item diag-fail"><div class="diag-detail">Could not load diagnostics. ' + esc((e && e.message) || 'Check server logs.') + '</div></div>';
+  } finally {
+    diagInFlight[target] = false;
   }
 }
 
@@ -11840,7 +11874,11 @@ async function resumePipelineFromCheckpoint() {
     toast(String(state.error || 'Checkpoint is not resumable.'), 'error');
     return;
   }
-  await requestServerRestart(checkpointPath, { auto: false });
+  await requestServerRestart(checkpointPath, {
+    auto: false,
+    reason: 'manual_resume',
+    source: 'pipeline_resume_card',
+  });
 }
 
 async function clearPipelineResumeCheckpoint(opts = {}) {
@@ -12143,7 +12181,11 @@ async function maybeHandlePipelineSelfRestart(statusPayload) {
   if (!checkpointPath) return;
 
   if (pipeConfig.self_improvement_auto_restart) {
-    await requestServerRestart(checkpointPath, { auto: true });
+    await requestServerRestart(checkpointPath, {
+      auto: true,
+      reason: 'self_improvement_auto_restart',
+      source: 'pipeline_status',
+    });
     return;
   }
 

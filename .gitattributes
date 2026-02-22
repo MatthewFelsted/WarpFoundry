@@ -1,0 +1,26 @@
+# Normalize text files by default
+* text=auto
+
+# Source, config, and docs should stay LF in-repo
+*.py text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+
+# Binary files (never attempt text normalization)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.prof binary
+*.pdf binary

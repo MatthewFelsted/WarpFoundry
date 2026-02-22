@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import atexit
+import faulthandler
 import gzip
 import json
 import logging
 import os
 import re
 import shutil
+import signal
+import socket
 import string
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import traceback
 import webbrowser
 from collections import Counter
 from contextlib import suppress
@@ -291,11 +296,21 @@ _HTTP_COMPRESSIBLE_MIME_TYPES = frozenset(
 _SSE_REPLAY_BATCH_LIMIT = 500
 _GUI_STARTUP_BIND_RETRIES = 20
 _GUI_STARTUP_BIND_RETRY_SECONDS = 0.25
+_GUI_RESTART_CHILD_WARMUP_SECONDS = 0.35
+_GUI_RESTART_LOG_PATH = Path.home() / ".codex_manager" / "logs" / "GUI_RESTART.log"
+_GUI_RUNTIME_LOG_PATH = Path.home() / ".codex_manager" / "logs" / "GUI_RUNTIME.log"
+_DIAGNOSTICS_CACHE_TTL_SECONDS = 8.0
 
 _model_watchdog: ModelCatalogWatchdog | None = None
 _model_watchdog_lock = threading.Lock()
 _github_repo_metadata_cache: dict[str, tuple[float, dict[str, object] | None, str]] = {}
 _github_repo_metadata_cache_lock = threading.Lock()
+_diagnostics_report_cache: dict[str, tuple[float, dict[str, object]]] = {}
+_diagnostics_report_cache_lock = threading.Lock()
+_gui_runtime_hooks_installed = False
+_gui_expected_restart_exit = False
+_gui_faulthandler_enabled = False
+_gui_faulthandler_stream: object | None = None
 
 
 def _recipe_template_payload() -> dict[str, object]:
@@ -603,6 +618,23 @@ def _extract_diagnostics_request(data: dict[str, object]) -> tuple[str, str, str
     claude_binary = str(data.get("claude_binary") or "claude").strip() or "claude"
     requested_agents = _normalize_requested_agents(data.get("agents"))
     return repo_path, codex_binary, claude_binary, requested_agents
+
+
+def _diagnostics_cache_key(
+    *,
+    repo_path: str,
+    codex_binary: str,
+    claude_binary: str,
+    requested_agents: list[str],
+) -> str:
+    """Return a stable cache key for diagnostics requests."""
+    payload = {
+        "repo_path": str(repo_path or "").strip(),
+        "codex_binary": str(codex_binary or "").strip() or "codex",
+        "claude_binary": str(claude_binary or "").strip() or "claude",
+        "requested_agents": list(requested_agents or []),
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def _diagnostics_action_args(action_key: str, report) -> list[str] | None:
@@ -5347,13 +5379,47 @@ def api_diagnostics():
     """Return structured repository/auth diagnostics for the GUI."""
     data = request.get_json(silent=True) or {}
     repo_path, codex_binary, claude_binary, requested_agents = _extract_diagnostics_request(data)
-
-    report = _build_diagnostics_report(
+    cache_key = _diagnostics_cache_key(
         repo_path=repo_path,
         codex_binary=codex_binary,
         claude_binary=claude_binary,
         requested_agents=requested_agents,
     )
+    now = time.monotonic()
+
+    with _diagnostics_report_cache_lock:
+        cached = _diagnostics_report_cache.get(cache_key)
+        if cached is not None:
+            cached_at, cached_payload = cached
+            if (now - cached_at) <= _DIAGNOSTICS_CACHE_TTL_SECONDS:
+                return jsonify(cached_payload)
+
+        report = _build_diagnostics_report(
+            repo_path=repo_path,
+            codex_binary=codex_binary,
+            claude_binary=claude_binary,
+            requested_agents=requested_agents,
+        )
+        _diagnostics_report_cache[cache_key] = (time.monotonic(), report)
+
+        # Keep cache bounded and remove stale entries opportunistically.
+        if len(_diagnostics_report_cache) > 64:
+            cutoff = time.monotonic() - (_DIAGNOSTICS_CACHE_TTL_SECONDS * 3.0)
+            stale_keys = [
+                key
+                for key, (cached_at, _payload) in _diagnostics_report_cache.items()
+                if cached_at < cutoff
+            ]
+            for key in stale_keys[:48]:
+                _diagnostics_report_cache.pop(key, None)
+            if len(_diagnostics_report_cache) > 64:
+                oldest_keys = sorted(
+                    _diagnostics_report_cache.items(),
+                    key=lambda item: item[1][0],
+                )
+                for key, _ in oldest_keys[: max(0, len(_diagnostics_report_cache) - 64)]:
+                    _diagnostics_report_cache.pop(key, None)
+
     return jsonify(report)
 
 
@@ -10699,21 +10765,205 @@ def _restart_working_directory() -> Path:
     return Path.cwd()
 
 
-def _launch_replacement_server(command: list[str]) -> None:
+def _ensure_restart_log_path() -> Path:
+    """Return restart log path, creating parent directories as needed."""
+    _GUI_RESTART_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return _GUI_RESTART_LOG_PATH
+
+
+def _restart_log_field(value: object, *, limit: int = 160) -> str:
+    """Return a single-line, length-limited string for restart diagnostics."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
+
+
+def _append_restart_log(message: str) -> None:
+    """Append a timestamped line to the restart diagnostics log."""
+    try:
+        log_path = _ensure_restart_log_path()
+        with log_path.open("a", encoding="utf-8") as handle:
+            stamp = datetime.now(timezone.utc).isoformat()
+            handle.write(f"[{stamp}] {message}\n")
+    except Exception:
+        logger.debug("Could not write GUI restart diagnostic log", exc_info=True)
+
+
+def _ensure_runtime_log_path() -> Path:
+    """Return runtime log path, creating parent directories as needed."""
+    _GUI_RUNTIME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return _GUI_RUNTIME_LOG_PATH
+
+
+def _append_runtime_log(message: str) -> None:
+    """Append runtime lifecycle diagnostics to GUI runtime log."""
+    try:
+        log_path = _ensure_runtime_log_path()
+        with log_path.open("a", encoding="utf-8") as handle:
+            stamp = datetime.now(timezone.utc).isoformat()
+            handle.write(f"[{stamp}] {message}\n")
+    except Exception:
+        logger.debug("Could not write GUI runtime diagnostics log", exc_info=True)
+
+
+def _enable_gui_faulthandler() -> None:
+    """Route fatal interpreter tracebacks into the runtime diagnostics log."""
+    global _gui_faulthandler_enabled, _gui_faulthandler_stream
+    if _gui_faulthandler_enabled:
+        return
+    if faulthandler.is_enabled():
+        _append_runtime_log("faulthandler already enabled by runtime; reusing existing sink.")
+        return
+    try:
+        stream = _ensure_runtime_log_path().open("a", encoding="utf-8")
+        faulthandler.enable(file=stream, all_threads=True)
+        _gui_faulthandler_stream = stream
+        _gui_faulthandler_enabled = True
+        _append_runtime_log("faulthandler enabled for fatal crash tracebacks.")
+    except Exception:
+        _gui_faulthandler_enabled = False
+        _gui_faulthandler_stream = None
+        logger.debug("Could not enable faulthandler runtime diagnostics", exc_info=True)
+
+
+def _disable_gui_faulthandler() -> None:
+    """Tear down GUI-managed faulthandler resources during shutdown."""
+    global _gui_faulthandler_enabled, _gui_faulthandler_stream
+    if _gui_faulthandler_enabled:
+        with suppress(Exception):
+            if faulthandler.is_enabled():
+                faulthandler.disable()
+    stream = _gui_faulthandler_stream
+    _gui_faulthandler_enabled = False
+    _gui_faulthandler_stream = None
+    if stream is None:
+        return
+    with suppress(Exception):
+        stream.flush()
+    with suppress(Exception):
+        stream.close()
+
+
+def _install_gui_runtime_hooks(*, port: int) -> None:
+    """Install one-time runtime lifecycle logging hooks."""
+    global _gui_runtime_hooks_installed
+    if _gui_runtime_hooks_installed:
+        return
+    _gui_runtime_hooks_installed = True
+    pid = os.getpid()
+    _append_runtime_log(
+        f"GUI startup: pid={pid} port={int(port)} executable={sys.executable} cwd={Path.cwd()}"
+    )
+    _enable_gui_faulthandler()
+
+    def _on_exit() -> None:
+        _append_runtime_log(
+            f"GUI process exit: pid={pid} expected_restart={bool(_gui_expected_restart_exit)}"
+        )
+        _disable_gui_faulthandler()
+
+    atexit.register(_on_exit)
+
+    previous_excepthook = sys.excepthook
+
+    def _main_excepthook(exc_type, exc_value, exc_traceback) -> None:
+        summary = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)).strip()
+        _append_runtime_log(
+            "Unhandled main-thread exception: "
+            + (_restart_log_field(summary, limit=8000) if summary else "<empty>")
+        )
+        previous_excepthook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = _main_excepthook
+
+    previous_thread_hook = getattr(threading, "excepthook", None)
+    if previous_thread_hook is not None:
+
+        def _thread_excepthook(args) -> None:
+            summary = "".join(
+                traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)
+            ).strip()
+            thread_name = getattr(getattr(args, "thread", None), "name", "") or "unknown-thread"
+            _append_runtime_log(
+                "Unhandled thread exception: "
+                f"thread={thread_name} "
+                + (_restart_log_field(summary, limit=8000) if summary else "<empty>")
+            )
+            previous_thread_hook(args)
+
+        threading.excepthook = _thread_excepthook
+
+    for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        signum = getattr(signal, signal_name, None)
+        if signum is None:
+            continue
+        with suppress(Exception):
+            previous_handler = signal.getsignal(signum)
+
+            def _signal_handler(sig, frame, *, _name=signal_name, _previous=previous_handler):
+                _append_runtime_log(
+                    f"Signal received: {_name} ({sig}) expected_restart={bool(_gui_expected_restart_exit)}"
+                )
+                if callable(_previous):
+                    return _previous(sig, frame)
+                if _previous == signal.SIG_IGN:
+                    return None
+                if sig == getattr(signal, "SIGINT", None):
+                    return signal.default_int_handler(sig, frame)
+                raise SystemExit(0)
+
+            signal.signal(signum, _signal_handler)
+
+
+def _launch_replacement_server(command: list[str]) -> subprocess.Popen:
     kwargs: dict[str, object] = {
         "cwd": str(_restart_working_directory()),
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
     }
+    _append_restart_log(
+        "Launching replacement GUI process: "
+        f"cwd={kwargs['cwd']} command={' '.join(command)}"
+    )
+    log_handle = None
+    try:
+        log_handle = _ensure_restart_log_path().open("ab")
+    except Exception:
+        logger.debug("Could not open GUI restart log for child process output", exc_info=True)
+    if log_handle is not None:
+        kwargs["stdout"] = log_handle
+        kwargs["stderr"] = subprocess.STDOUT
+    else:
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
     if os.name == "nt":
         kwargs["creationflags"] = _restart_creation_flags()
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(command, **kwargs)
+    try:
+        proc = subprocess.Popen(command, **kwargs)
+    finally:
+        if log_handle is not None:
+            log_handle.close()
+    return proc
 
 
 def _terminate_current_process(delay_seconds: float = 0.75) -> None:
+    global _gui_expected_restart_exit
+    _gui_expected_restart_exit = True
+    logger.warning(
+        "Restart handoff accepted; terminating current GUI process in %.2fs",
+        delay_seconds,
+    )
+    _append_restart_log(
+        "Restart handoff accepted; terminating current GUI process "
+        f"in {delay_seconds:.2f}s"
+    )
+    _append_runtime_log(
+        "Restart handoff accepted; terminating current GUI process "
+        f"in {delay_seconds:.2f}s"
+    )
+
     def _exit_now() -> None:
         os._exit(0)
 
@@ -10733,13 +10983,56 @@ def _is_address_in_use_error(exc: OSError) -> bool:
     )
 
 
+def _probe_bind_error(host: str, port: int) -> OSError | None:
+    """Return bind error for host/port, or ``None`` when bind appears available."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind((host, int(port)))
+    except OSError as exc:
+        return exc
+    return None
+
+
 def _run_gui_server(host: str, port: int) -> None:
     """Run Flask server with startup retries for transient bind races."""
     retries = max(0, int(_GUI_STARTUP_BIND_RETRIES))
     for attempt in range(retries + 1):
+        bind_probe_error = _probe_bind_error(host, port)
+        if bind_probe_error is not None:
+            if (not _is_address_in_use_error(bind_probe_error)) or attempt >= retries:
+                raise bind_probe_error
+            logger.warning(
+                "GUI startup waiting for port release on %s:%s (attempt %s/%s): %s",
+                host,
+                port,
+                attempt + 1,
+                retries + 1,
+                bind_probe_error,
+            )
+            time.sleep(_GUI_STARTUP_BIND_RETRY_SECONDS)
+            continue
         try:
             app.run(host=host, port=port, debug=False, threaded=True)
             return
+        except SystemExit as exc:
+            bind_race_error = _probe_bind_error(host, port)
+            if (
+                bind_race_error is not None
+                and _is_address_in_use_error(bind_race_error)
+                and attempt < retries
+            ):
+                logger.warning(
+                    "GUI startup bind race on %s:%s via SystemExit=%s (attempt %s/%s): %s",
+                    host,
+                    port,
+                    getattr(exc, "code", exc),
+                    attempt + 1,
+                    retries + 1,
+                    bind_race_error,
+                )
+                time.sleep(_GUI_STARTUP_BIND_RETRY_SECONDS)
+                continue
+            raise
         except OSError as exc:
             if (not _is_address_in_use_error(exc)) or attempt >= retries:
                 raise
@@ -10757,7 +11050,65 @@ def _run_gui_server(host: str, port: int) -> None:
 @app.route("/api/system/restart", methods=["POST"])
 def api_system_restart():
     """Spawn a replacement GUI server process, then terminate this one."""
+    global _pipeline_executor
+
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        data = {}
+    restart_reason = _restart_log_field(data.get("restart_reason") or data.get("reason") or "")
+    restart_source = _restart_log_field(data.get("restart_source") or data.get("source") or "")
+    restart_auto = bool(data.get("auto"))
+    restart_remote = _restart_log_field(
+        request.headers.get("X-Forwarded-For") or request.remote_addr or "unknown",
+        limit=100,
+    )
+    restart_user_agent = _restart_log_field(
+        request.headers.get("User-Agent") or "",
+        limit=180,
+    )
+    _append_restart_log(
+        "Restart requested: "
+        f"remote={restart_remote} "
+        f"source={restart_source or '<unspecified>'} "
+        f"reason={restart_reason or '<unspecified>'} "
+        f"auto={restart_auto} "
+        f"ua={restart_user_agent or '<unknown>'}"
+    )
+    logger.warning(
+        "Restart request received (source=%s reason=%s auto=%s remote=%s)",
+        restart_source or "<unspecified>",
+        restart_reason or "<unspecified>",
+        restart_auto,
+        restart_remote,
+    )
+
+    if executor.is_running:
+        _append_restart_log("Restart request rejected: chain run is active")
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Cannot restart server while a chain run is active. "
+                        "Stop the chain first."
+                    )
+                }
+            ),
+            409,
+        )
+    if bool(_pipeline_executor is not None and _pipeline_executor.is_running):
+        _append_restart_log("Restart request rejected: pipeline run is active")
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "Cannot restart server while a pipeline run is active. "
+                        "Stop the pipeline first."
+                    )
+                }
+            ),
+            409,
+        )
+
     checkpoint_raw = str(
         data.get("pipeline_resume_checkpoint") or data.get("checkpoint_path") or ""
     ).strip()
@@ -10765,6 +11116,10 @@ def api_system_restart():
     if checkpoint_raw:
         p = Path(checkpoint_raw)
         if not p.is_file():
+            _append_restart_log(
+                "Restart request rejected: checkpoint not found "
+                f"({ _restart_log_field(checkpoint_raw, limit=240) })"
+            )
             return jsonify({"error": f"Checkpoint not found: {checkpoint_raw}"}), 400
         checkpoint_path = str(p.resolve())
 
@@ -10773,10 +11128,22 @@ def api_system_restart():
         pipeline_resume_checkpoint=checkpoint_path,
     )
     try:
-        _launch_replacement_server(command)
+        child = _launch_replacement_server(command)
     except Exception as exc:
+        _append_restart_log(f"Replacement launch failed: {exc}")
         return jsonify({"error": f"Could not restart server: {exc}"}), 500
 
+    time.sleep(_GUI_RESTART_CHILD_WARMUP_SECONDS)
+    child_exit = child.poll()
+    if child_exit is not None:
+        message = (
+            "Replacement process exited before handoff "
+            f"(exit={child_exit}). See {_ensure_restart_log_path()} for details."
+        )
+        _append_restart_log(message)
+        return jsonify({"error": message}), 500
+
+    _append_restart_log("Restart handoff confirmed: replacement process is alive after warmup")
     _terminate_current_process()
     return jsonify(
         {
@@ -10851,15 +11218,17 @@ def run_gui(
     pipeline_resume_checkpoint: str = "",
 ) -> None:
     """Start the Flask development server."""
-    global _SERVER_PORT, _SERVER_OPEN_BROWSER
+    global _SERVER_PORT, _SERVER_OPEN_BROWSER, _gui_expected_restart_exit
     _SERVER_PORT = int(port)
     _SERVER_OPEN_BROWSER = bool(open_browser_)
+    _gui_expected_restart_exit = False
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
         datefmt="%H:%M:%S",
     )
+    _install_gui_runtime_hooks(port=_SERVER_PORT)
 
     try:
         watchdog = _get_model_watchdog()
@@ -10884,7 +11253,7 @@ def run_gui(
 
     if open_browser_:
         Timer(1.5, _open_browser, args=[port]).start()
-    print(f"\n  {_project_display_name()} GUI \u2192 http://127.0.0.1:{port}\n")
+    print(f"\n  {_project_display_name()} GUI -> http://127.0.0.1:{port}\n")
     _run_gui_server(host="127.0.0.1", port=port)
 
 
