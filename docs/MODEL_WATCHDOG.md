@@ -16,8 +16,9 @@ The model watchdog is a background scheduler that snapshots provider model catal
 
 ## Default Schedule
 
-- Default interval: every `24` hours.
-- Best-practice default chosen for balance:
+- Default startup state: `disabled` (opt-in).
+- When enabled, default interval: every `24` hours.
+- Best-practice default cadence chosen for balance:
   - frequent enough to catch provider model lifecycle changes quickly,
   - infrequent enough to avoid unnecessary API traffic/cost.
 
@@ -57,6 +58,7 @@ After first launch, `config.json` becomes the source of truth.
 
 ## GUI Alerts
 
+- The header includes an `Enable Model Watchdog` checkbox (unchecked by default on first run).
 - The header now surfaces watchdog alerts in a dedicated banner when model removals
   or dependency drifts are detected.
 - Banner actions:

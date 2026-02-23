@@ -1452,6 +1452,15 @@ body.mode-medium .easy-only{display:none}
 <div id="backend-status-banner" class="state-card error" style="display:none;margin:8px 18px 0 18px">
   Backend connection lost. Waiting to reconnect.
 </div>
+<div id="watchdog-control-banner" class="state-card" style="margin:8px 18px 0 18px">
+  <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+    <label for="watchdog-enabled-toggle" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input id="watchdog-enabled-toggle" type="checkbox" onchange="toggleWatchdogEnabled()">
+      Enable Model Watchdog
+    </label>
+    <span id="watchdog-enabled-status" style="font-size:12px;color:var(--text2)">Loading watchdog status...</span>
+  </div>
+</div>
 <div id="watchdog-alert-banner" class="state-card warning" style="display:none;margin:8px 18px 0 18px">
   <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
     <strong>Model Watchdog Alerts</strong>
@@ -3463,6 +3472,9 @@ let watchdogAlertsTimer = null;
 let watchdogAlertsMutedUntil = 0;
 let watchdogAlertDigest = '';
 let watchdogMigrationSuggestions = [];
+let watchdogEnabled = false;
+let watchdogStatusLoaded = false;
+let watchdogToggleBusy = false;
 let apiKeysState = null;
 let githubAuthState = null;
 let githubAuthTroubleshooting = null;
@@ -5090,7 +5102,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderActivityHeartbeats();
   if (activityHeartbeatTimer) clearInterval(activityHeartbeatTimer);
   activityHeartbeatTimer = setInterval(renderActivityHeartbeats, 1000);
+  renderWatchdogToggleState();
   startBackendHealthPolling();
+  loadWatchdogStatus({ silent: true });
   startWatchdogAlertPolling();
   switchTab('chain');
   _syncGitSyncButtonState();
@@ -9734,10 +9748,12 @@ function setBackendOnlineState(isOnline, detail = '') {
       }
     }
   }
+  renderWatchdogToggleState();
   if (!backendOnline) {
     const watchdogBanner = document.getElementById('watchdog-alert-banner');
     if (watchdogBanner) watchdogBanner.style.display = 'none';
   } else if (!wasOnline) {
+    loadWatchdogStatus({ silent: true });
     pollWatchdogAlerts({ silent: true });
   }
 
@@ -9755,8 +9771,9 @@ async function pollBackendHealth() {
     if (!resp.ok) {
       throw new Error('Health check failed (' + resp.status + ' ' + resp.statusText + ')');
     }
-    await resp.json();
+    const payload = await resp.json();
     setBackendOnlineState(true);
+    applyWatchdogHealth(payload);
   } catch (err) {
     const message = (err && err.message) ? err.message : 'network error';
     setBackendOnlineState(false, message);
@@ -9801,6 +9818,126 @@ function _watchdogMigrationsFromAlerts(alerts) {
   return rows;
 }
 
+function renderWatchdogToggleState(opts = {}) {
+  const checkbox = document.getElementById('watchdog-enabled-toggle');
+  const status = document.getElementById('watchdog-enabled-status');
+  if (!checkbox || !status) return;
+
+  const pending = !!opts.pending;
+  checkbox.checked = !!watchdogEnabled;
+  checkbox.disabled = !backendOnline || pending;
+  if (!backendOnline) {
+    status.textContent = 'Watchdog status unavailable while backend reconnects.';
+    return;
+  }
+  if (pending) {
+    status.textContent = watchdogEnabled ? 'Enabling watchdog...' : 'Disabling watchdog...';
+    return;
+  }
+  if (!watchdogStatusLoaded) {
+    status.textContent = 'Loading watchdog status...';
+    return;
+  }
+  status.textContent = watchdogEnabled
+    ? 'Watchdog enabled: background checks run on schedule.'
+    : 'Watchdog disabled: no background checks until enabled.';
+}
+
+function applyWatchdogHealth(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  if (watchdogToggleBusy) return;
+  if (typeof payload.model_watchdog_enabled !== 'boolean') return;
+  watchdogEnabled = !!payload.model_watchdog_enabled;
+  watchdogStatusLoaded = true;
+  renderWatchdogToggleState();
+}
+
+async function loadWatchdogStatus(opts = {}) {
+  if (!backendOnline || watchdogToggleBusy) {
+    renderWatchdogToggleState();
+    return;
+  }
+  try {
+    const resp = await fetch('/api/system/model-watchdog/status', { cache: 'no-store' });
+    if (!resp.ok) {
+      throw new Error('Watchdog status failed (' + resp.status + ' ' + resp.statusText + ')');
+    }
+    const payload = await resp.json();
+    watchdogEnabled = !!(
+      payload
+      && payload.config
+      && payload.config.enabled
+    );
+    watchdogStatusLoaded = true;
+    renderWatchdogToggleState();
+  } catch (err) {
+    if (!opts.silent) {
+      console.warn('Could not load watchdog status', err);
+    }
+    renderWatchdogToggleState();
+  }
+}
+
+async function toggleWatchdogEnabled() {
+  const checkbox = document.getElementById('watchdog-enabled-toggle');
+  if (!checkbox) return;
+
+  if (watchdogToggleBusy) {
+    checkbox.checked = watchdogEnabled;
+    return;
+  }
+  if (!backendOnline) {
+    checkbox.checked = watchdogEnabled;
+    toast('Backend unavailable. Reconnect before changing watchdog setting.', 'warn');
+    return;
+  }
+
+  const previousEnabled = watchdogEnabled;
+  const requestedEnabled = !!checkbox.checked;
+  if (watchdogStatusLoaded && requestedEnabled === previousEnabled) {
+    renderWatchdogToggleState();
+    return;
+  }
+
+  watchdogEnabled = requestedEnabled;
+  watchdogToggleBusy = true;
+  renderWatchdogToggleState({ pending: true });
+  try {
+    const resp = await postJson('/api/system/model-watchdog/config', { enabled: requestedEnabled });
+    if (resp.error) {
+      throw new Error(String(resp.error));
+    }
+    watchdogEnabled = !!(
+      resp
+      && resp.watchdog
+      && resp.watchdog.config
+      && resp.watchdog.config.enabled
+    );
+    watchdogStatusLoaded = true;
+    checkbox.checked = watchdogEnabled;
+    renderWatchdogToggleState();
+    if (!watchdogEnabled) {
+      renderWatchdogAlerts({
+        has_alerts: false,
+        alerts: [],
+        status: { config: { enabled: false } },
+      });
+    } else {
+      pollWatchdogAlerts({ silent: true });
+    }
+    toast(watchdogEnabled ? 'Model watchdog enabled.' : 'Model watchdog disabled.', 'info');
+  } catch (err) {
+    watchdogEnabled = previousEnabled;
+    checkbox.checked = watchdogEnabled;
+    const message = (err && err.message) ? err.message : String(err);
+    toast('Could not update watchdog setting: ' + message, 'error');
+  } finally {
+    watchdogToggleBusy = false;
+    watchdogStatusLoaded = true;
+    renderWatchdogToggleState();
+  }
+}
+
 function renderWatchdogAlerts(payload, opts = {}) {
   const banner = document.getElementById('watchdog-alert-banner');
   const content = document.getElementById('watchdog-alert-content');
@@ -9809,13 +9946,24 @@ function renderWatchdogAlerts(payload, opts = {}) {
 
   const hasAlerts = !!(payload && payload.has_alerts);
   const alerts = Array.isArray(payload && payload.alerts) ? payload.alerts : [];
+  const payloadEnabled = (
+    payload
+    && payload.status
+    && payload.status.config
+    && typeof payload.status.config.enabled === 'boolean'
+  ) ? !!payload.status.config.enabled : null;
+  const watchdogIsEnabled = (
+    payloadEnabled !== null
+      ? payloadEnabled
+      : (watchdogStatusLoaded ? watchdogEnabled : true)
+  );
   const muted = Date.now() < watchdogAlertsMutedUntil;
-  if (!backendOnline || muted || !hasAlerts || !alerts.length) {
+  if (!backendOnline || !watchdogIsEnabled || muted || !hasAlerts || !alerts.length) {
     banner.style.display = 'none';
     content.textContent = '';
     watchdogMigrationSuggestions = [];
     if (applyBtn) applyBtn.style.display = 'none';
-    if (!hasAlerts && !muted) {
+    if (!watchdogIsEnabled || (!hasAlerts && !muted)) {
       watchdogAlertDigest = '';
     }
     return;
@@ -9971,6 +10119,10 @@ async function runWatchdogNowFromBanner() {
     const resp = await postJson('/api/system/model-watchdog/run', { force: true });
     if (resp.error) {
       toast(resp.error, 'error');
+      return;
+    }
+    if (String(resp.status || '').toLowerCase() === 'disabled') {
+      toast('Watchdog is disabled. Enable it first using the checkbox.', 'warn');
       return;
     }
     toast('Watchdog run complete. Refreshing alerts...', 'info');

@@ -5638,7 +5638,7 @@ def _get_model_watchdog() -> ModelCatalogWatchdog:
         if _model_watchdog is None:
             _model_watchdog = ModelCatalogWatchdog(
                 root_dir=_MODEL_WATCHDOG_ROOT,
-                default_enabled=_env_bool("CODEX_MANAGER_MODEL_WATCHDOG_ENABLED", True),
+                default_enabled=_env_bool("CODEX_MANAGER_MODEL_WATCHDOG_ENABLED", False),
                 default_interval_hours=_env_int(
                     "CODEX_MANAGER_MODEL_WATCHDOG_INTERVAL_HOURS",
                     24,
