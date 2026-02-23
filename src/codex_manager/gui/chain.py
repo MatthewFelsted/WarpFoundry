@@ -12,6 +12,7 @@ import re
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +107,11 @@ class ChainExecutor:
       dicts consumed by the SSE endpoint.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        on_run_finalized: Callable[[ChainState], None] | None = None,
+    ) -> None:
         self.config: ChainConfig | None = None
         self.state = ChainState()
         self._stop_event = threading.Event()
@@ -127,6 +132,7 @@ class ChainExecutor:
         self._debug_log_failure_reported = False
         self._error_log_failure_reported = False
         self._next_log_event_id = 0
+        self._on_run_finalized = on_run_finalized
 
     # ------------------------------------------------------------------
     # Public controls
@@ -185,6 +191,13 @@ class ChainExecutor:
         self._thread.start()
         self._log("info", f"Chain started: {config.name} ({config.mode} mode)")
         self._log_execution_mode_warnings(config)
+
+    def set_on_run_finalized(
+        self,
+        callback: Callable[[ChainState], None] | None,
+    ) -> None:
+        """Install or clear the callback invoked after run finalization."""
+        self._on_run_finalized = callback
 
     def _configure_debug_logging(self, repo: Path, config: ChainConfig) -> None:
         """Resolve debug logging controls from config/environment."""
@@ -481,6 +494,11 @@ class ChainExecutor:
             level=history_level,
             context=history_context,
         )
+        if self._on_run_finalized is not None:
+            try:
+                self._on_run_finalized(self.state)
+            except Exception as exc:
+                logger.warning("Chain run-finalized callback failed: %s", exc)
 
     def _consume_stop_after_step_request(self, *, context: str = "step") -> bool:
         """Consume a pending stop-after-step request and set terminal state."""

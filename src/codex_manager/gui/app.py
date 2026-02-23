@@ -347,6 +347,8 @@ _run_comparison_cache: dict[tuple[str, int, int, str, int], dict[str, object]] =
 _run_comparison_cache_lock = threading.Lock()
 _git_sync_branch_choices_cache: dict[str, tuple[float, dict[str, object]]] = {}
 _git_sync_branch_choices_cache_lock = threading.Lock()
+_repo_mutating_run_locks: dict[str, dict[str, str]] = {}
+_repo_mutating_run_locks_lock = threading.Lock()
 _gui_runtime_hooks_installed = False
 _gui_expected_restart_exit = False
 _gui_faulthandler_enabled = False
@@ -362,6 +364,181 @@ class _JsonlRowsCacheEntry:
     rows: list[dict[str, object]]
     trailing_line: str
     head_digest: str
+
+
+def _resolve_repo_run_key(repo_path: str | Path | None) -> str:
+    """Return normalized absolute repository key string for run-locking."""
+    if repo_path is None:
+        return ""
+    try:
+        return str(Path(repo_path).expanduser().resolve())
+    except Exception:
+        return ""
+
+
+def _active_chain_repo_key() -> str:
+    """Return active chain repo key when the chain executor is running."""
+    if not bool(getattr(executor, "is_running", False)):
+        return ""
+    cfg = getattr(executor, "config", None)
+    raw = str(getattr(cfg, "repo_path", "") or "").strip()
+    if not raw:
+        return ""
+    return _resolve_repo_run_key(raw)
+
+
+def _active_pipeline_repo_key() -> str:
+    """Return active pipeline repo key when the pipeline executor is running."""
+    global _pipeline_executor
+    run = _pipeline_executor
+    if run is None or not bool(getattr(run, "is_running", False)):
+        return ""
+    raw = str(getattr(run, "repo_path", "") or "").strip()
+    if not raw:
+        cfg = getattr(run, "config", None)
+        raw = str(getattr(cfg, "repo_path", "") or "").strip()
+    if not raw:
+        return ""
+    return _resolve_repo_run_key(raw)
+
+
+def _repo_lock_owner_label(owner: str) -> str:
+    clean = str(owner or "").strip().lower()
+    if clean == "pipeline":
+        return "pipeline"
+    return "chain"
+
+
+def _repo_lock_owner_is_active(owner: str, repo_key: str) -> bool:
+    """Return true when lock owner is still running for the same repo key."""
+    label = _repo_lock_owner_label(owner)
+    if label == "pipeline":
+        run = _pipeline_executor
+        if run is None or not bool(getattr(run, "is_running", False)):
+            return False
+        active_repo = _active_pipeline_repo_key()
+    else:
+        if not bool(getattr(executor, "is_running", False)):
+            return False
+        active_repo = _active_chain_repo_key()
+    if not active_repo:
+        return True
+    return active_repo == repo_key
+
+
+def _repo_lock_entry_is_stale(entry: dict[str, str]) -> bool:
+    """Return true when a stored repo lock no longer maps to a live run."""
+    repo_key = str(entry.get("repo_path", "") or "").strip()
+    owner = str(entry.get("owner", "") or "").strip().lower()
+    if not repo_key or owner not in {"chain", "pipeline"}:
+        return True
+    return not _repo_lock_owner_is_active(owner, repo_key)
+
+
+def _repo_lock_owner_metadata(entry: dict[str, str]) -> dict[str, str]:
+    """Return public lock-owner metadata for API conflict payloads."""
+    owner = _repo_lock_owner_label(str(entry.get("owner", "") or ""))
+    return {
+        "owner": owner,
+        "repo_path": str(entry.get("repo_path", "") or ""),
+        "acquired_at": str(entry.get("acquired_at", "") or ""),
+    }
+
+
+def _repo_lock_busy_payload(entry: dict[str, str]) -> dict[str, object]:
+    """Build a consistent 409 payload when a repo lock is already held."""
+    owner_meta = _repo_lock_owner_metadata(entry)
+    owner = str(owner_meta.get("owner", "") or "chain")
+    return {
+        "error": f"Repository is busy with an active {owner} run.",
+        "lock_owner": owner_meta,
+    }
+
+
+def _active_repo_owner_entry(repo_key: str) -> dict[str, str] | None:
+    """Derive lock metadata from currently running executors for *repo_key*."""
+    if not repo_key:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    if _active_chain_repo_key() == repo_key:
+        return {
+            "token": "runtime-chain",
+            "owner": "chain",
+            "repo_path": repo_key,
+            "acquired_at": now,
+        }
+    if _active_pipeline_repo_key() == repo_key:
+        return {
+            "token": "runtime-pipeline",
+            "owner": "pipeline",
+            "repo_path": repo_key,
+            "acquired_at": now,
+        }
+    return None
+
+
+def _acquire_mutating_repo_run_lock(
+    repo_path: Path,
+    *,
+    owner: str,
+) -> tuple[str | None, dict[str, object] | None]:
+    """Try to acquire the shared mutating run lock for *repo_path*."""
+    repo_key = _resolve_repo_run_key(repo_path)
+    if not repo_key:
+        return None, {"error": "Could not resolve repository path for run lock."}
+
+    owner_label = _repo_lock_owner_label(owner)
+    with _repo_mutating_run_locks_lock:
+        existing = _repo_mutating_run_locks.get(repo_key)
+        if existing is not None and _repo_lock_entry_is_stale(existing):
+            _repo_mutating_run_locks.pop(repo_key, None)
+            existing = None
+        if existing is None:
+            active_entry = _active_repo_owner_entry(repo_key)
+            if active_entry is not None:
+                _repo_mutating_run_locks[repo_key] = active_entry
+                existing = active_entry
+        if existing is not None:
+            return None, _repo_lock_busy_payload(existing)
+
+        token = f"{owner_label}-{time.time_ns()}"
+        _repo_mutating_run_locks[repo_key] = {
+            "token": token,
+            "owner": owner_label,
+            "repo_path": repo_key,
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return token, None
+
+
+def _release_mutating_repo_run_lock(
+    repo_path: str | Path,
+    *,
+    token: str | None = None,
+) -> None:
+    """Release a previously-acquired mutating run lock."""
+    repo_key = _resolve_repo_run_key(repo_path)
+    if not repo_key:
+        return
+    with _repo_mutating_run_locks_lock:
+        existing = _repo_mutating_run_locks.get(repo_key)
+        if existing is None:
+            return
+        if token is not None and str(existing.get("token", "")) != str(token):
+            return
+        _repo_mutating_run_locks.pop(repo_key, None)
+
+
+def _set_run_finalized_callback(target: object, callback: object | None) -> None:
+    """Install a run-finalized callback on chain/pipeline executor-like objects."""
+    setter = getattr(target, "set_on_run_finalized", None)
+    if callable(setter):
+        setter(callback)
+        return
+    try:
+        target._on_run_finalized = callback  # type: ignore[attr-defined]
+    except Exception:
+        return
 
 
 def _path_stat_signature(path: Path) -> tuple[int, int] | None:
@@ -6342,16 +6519,14 @@ def api_custom_recipes_export():
 
 @app.route("/api/chain/start", methods=["POST"])
 def api_start():
-    if executor.is_running:
-        return jsonify({"error": "Chain is already running"}), 409
-
     data = request.get_json(silent=True) or {}
     try:
         config = ChainConfig(**data)
     except Exception as exc:
         return jsonify({"error": f"Invalid config: {exc}"}), 400
 
-    if not Path(config.repo_path).is_dir():
+    repo = Path(config.repo_path).expanduser().resolve()
+    if not repo.is_dir():
         return jsonify({"error": f"Repo path not found: {config.repo_path}"}), 400
 
     issues = _chain_preflight_issues(config)
@@ -6363,7 +6538,7 @@ def api_start():
     if config.git_preflight_enabled:
         try:
             git_preflight = _git_preflight_before_run(
-                Path(config.repo_path).resolve(),
+                repo,
                 auto_stash=bool(config.git_preflight_auto_stash),
                 auto_pull=bool(config.git_preflight_auto_pull),
             )
@@ -6379,7 +6554,29 @@ def api_start():
             msg = "Git pre-flight checks failed:\n" + "\n".join(f"- {i}" for i in git_issues)
             return jsonify({"error": msg, "issues": git_issues, "git_preflight": git_preflight}), 400
 
-    executor.start(config)
+    lock_token, lock_busy_payload = _acquire_mutating_repo_run_lock(repo, owner="chain")
+    if lock_token is None:
+        return jsonify(lock_busy_payload), 409
+
+    if executor.is_running:
+        _release_mutating_repo_run_lock(repo, token=lock_token)
+        return jsonify({"error": "Chain is already running"}), 409
+
+    _set_run_finalized_callback(
+        executor,
+        lambda _state, repo_key=str(repo), token=lock_token: _release_mutating_repo_run_lock(
+            repo_key, token=token
+        ),
+    )
+    try:
+        executor.start(config)
+    except Exception as exc:
+        _release_mutating_repo_run_lock(repo, token=lock_token)
+        return jsonify({"error": f"Failed to start chain: {exc}"}), 500
+
+    if not bool(getattr(executor, "is_running", False)):
+        _release_mutating_repo_run_lock(repo, token=lock_token)
+
     payload: dict[str, object] = {"status": "started"}
     if git_preflight is not None:
         payload["git_preflight"] = git_preflight
@@ -11405,10 +11602,8 @@ def _start_pipeline_from_gui_config(gui_config: PipelineGUIConfig) -> tuple[dict
     """Validate and start pipeline execution from GUI config payload."""
     global _pipeline_executor
 
-    if _pipeline_executor is not None and _pipeline_executor.is_running:
-        return {"error": "Pipeline is already running"}, 409
-
-    if not Path(gui_config.repo_path).is_dir():
+    repo = Path(gui_config.repo_path).expanduser().resolve()
+    if not repo.is_dir():
         return {"error": f"Repo path not found: {gui_config.repo_path}"}, 400
 
     issues = _pipeline_preflight_issues(gui_config)
@@ -11420,7 +11615,7 @@ def _start_pipeline_from_gui_config(gui_config: PipelineGUIConfig) -> tuple[dict
     if gui_config.git_preflight_enabled:
         try:
             git_preflight = _git_preflight_before_run(
-                Path(gui_config.repo_path).resolve(),
+                repo,
                 auto_stash=bool(gui_config.git_preflight_auto_stash),
                 auto_pull=bool(gui_config.git_preflight_auto_pull),
             )
@@ -11460,6 +11655,14 @@ def _start_pipeline_from_gui_config(gui_config: PipelineGUIConfig) -> tuple[dict
     if invalid_phases:
         msg = ", ".join(sorted(set(invalid_phases)))
         return {"error": f"Invalid pipeline phase(s): {msg}"}, 400
+
+    lock_token, lock_busy_payload = _acquire_mutating_repo_run_lock(repo, owner="pipeline")
+    if lock_token is None:
+        return lock_busy_payload, 409
+
+    if _pipeline_executor is not None and _pipeline_executor.is_running:
+        _release_mutating_repo_run_lock(repo, token=lock_token)
+        return {"error": "Pipeline is already running"}, 409
 
     config = PipelineConfig(
         mode=gui_config.mode,
@@ -11531,11 +11734,32 @@ def _start_pipeline_from_gui_config(gui_config: PipelineGUIConfig) -> tuple[dict
 
     from codex_manager.pipeline.orchestrator import PipelineOrchestrator
 
-    _pipeline_executor = PipelineOrchestrator(
-        repo_path=gui_config.repo_path,
-        config=config,
-    )
-    _pipeline_executor.start()
+    def finalized_callback(_state: object, repo_key: str = str(repo), token: str = lock_token) -> None:
+        _release_mutating_repo_run_lock(repo_key, token=token)
+
+    try:
+        try:
+            _pipeline_executor = PipelineOrchestrator(
+                repo_path=repo,
+                config=config,
+                on_run_finalized=finalized_callback,
+            )
+        except TypeError as exc:
+            if "on_run_finalized" not in str(exc):
+                raise
+            _pipeline_executor = PipelineOrchestrator(
+                repo_path=repo,
+                config=config,
+            )
+            _set_run_finalized_callback(_pipeline_executor, finalized_callback)
+        _pipeline_executor.start()
+    except Exception as exc:
+        _release_mutating_repo_run_lock(repo, token=lock_token)
+        return {"error": f"Failed to start pipeline: {exc}"}, 500
+
+    if not bool(getattr(_pipeline_executor, "is_running", False)):
+        _release_mutating_repo_run_lock(repo, token=lock_token)
+
     payload: dict[str, object] = {"status": "started"}
     if git_preflight is not None:
         payload["git_preflight"] = git_preflight

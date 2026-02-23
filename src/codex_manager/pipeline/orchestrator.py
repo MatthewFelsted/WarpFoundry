@@ -157,6 +157,7 @@ class PipelineOrchestrator:
         config: PipelineConfig | None = None,
         catalog: PromptCatalog | None = None,
         log_callback: Callable[[str, str], None] | None = None,
+        on_run_finalized: Callable[[PipelineState], None] | None = None,
         *,
         resume_cycle: int = 1,
         resume_phase_index: int = 0,
@@ -185,6 +186,7 @@ class PipelineOrchestrator:
         self._next_log_event_id = 0
         self._log_queue_drops = 0
         self._log_callback = log_callback
+        self._on_run_finalized = on_run_finalized
         self._science_experiment_by_hypothesis: dict[str, str] = {}
         self._science_trials_payloads: list[dict[str, Any]] = []
         self._science_latest_analysis_text: str = ""
@@ -284,6 +286,13 @@ class PipelineOrchestrator:
     def get_state(self) -> dict:
         """Return the current state as a dict."""
         return self.state.model_dump()
+
+    def set_on_run_finalized(
+        self,
+        callback: Callable[[PipelineState], None] | None,
+    ) -> None:
+        """Install or clear the callback invoked after run finalization."""
+        self._on_run_finalized = callback
 
     # ------------------------------------------------------------------
     # Logging
@@ -953,6 +962,11 @@ class PipelineOrchestrator:
             context=history_context,
         )
         self._send_run_completion_webhooks()
+        if self._on_run_finalized is not None:
+            try:
+                self._on_run_finalized(self.state)
+            except Exception as exc:
+                logger.warning("Pipeline run-finalized callback failed: %s", exc)
 
     @staticmethod
     def _completion_webhook_kind(url: str) -> str:

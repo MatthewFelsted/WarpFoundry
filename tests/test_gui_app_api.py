@@ -26,8 +26,12 @@ pytestmark = pytest.mark.integration
 @pytest.fixture()
 def client():
     gui_app_module.app.config.update(TESTING=True)
+    with gui_app_module._repo_mutating_run_locks_lock:
+        gui_app_module._repo_mutating_run_locks.clear()
     with gui_app_module.app.test_client() as test_client:
         yield test_client
+    with gui_app_module._repo_mutating_run_locks_lock:
+        gui_app_module._repo_mutating_run_locks.clear()
 
 
 def _make_repo(tmp_path: Path, *, git: bool) -> Path:
@@ -389,6 +393,141 @@ def test_pipeline_start_preflight_blocks_dirty_worktree_when_git_preflight_disab
     assert resp.status_code == 400
     assert data
     assert any("worktree is dirty" in issue.lower() for issue in data.get("issues", []))
+
+
+def test_repo_lock_blocks_pipeline_start_when_chain_running(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    class _ChainExec:
+        def __init__(self):
+            self.is_running = False
+            self.config = None
+            self._on_run_finalized = None
+
+        def set_on_run_finalized(self, callback):
+            self._on_run_finalized = callback
+
+        def start(self, config):
+            self.config = config
+            self.is_running = True
+
+    monkeypatch.setattr(gui_app_module, "executor", _ChainExec())
+
+    first = client.post("/api/chain/start", json=_chain_payload(repo))
+    first_data = first.get_json()
+    assert first.status_code == 200
+    assert first_data
+    assert first_data["status"] == "started"
+
+    second = client.post("/api/pipeline/start", json=_pipeline_payload(repo))
+    second_data = second.get_json()
+    assert second.status_code == 409
+    assert second_data
+    assert "busy" in second_data["error"].lower()
+    assert second_data["lock_owner"]["owner"] == "chain"
+    assert second_data["lock_owner"]["repo_path"] == str(repo.resolve())
+    assert second_data["lock_owner"]["acquired_at"]
+
+
+def test_repo_lock_blocks_chain_start_when_pipeline_running(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+
+    class _ChainExec:
+        is_running = False
+        config = None
+
+        @staticmethod
+        def set_on_run_finalized(_callback):
+            return
+
+    monkeypatch.setattr(gui_app_module, "executor", _ChainExec())
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    class _StubPipelineOrchestrator:
+        def __init__(self, repo_path, config, on_run_finalized=None, **_kwargs):
+            self.repo_path = Path(repo_path)
+            self.config = config
+            self._on_run_finalized = on_run_finalized
+            self.is_running = False
+
+        def start(self):
+            self.is_running = True
+
+    monkeypatch.setattr(
+        "codex_manager.pipeline.orchestrator.PipelineOrchestrator",
+        _StubPipelineOrchestrator,
+    )
+
+    first = client.post("/api/pipeline/start", json=_pipeline_payload(repo))
+    first_data = first.get_json()
+    assert first.status_code == 200
+    assert first_data
+    assert first_data["status"] == "started"
+
+    second = client.post("/api/chain/start", json=_chain_payload(repo))
+    second_data = second.get_json()
+    assert second.status_code == 409
+    assert second_data
+    assert "busy" in second_data["error"].lower()
+    assert second_data["lock_owner"]["owner"] == "pipeline"
+    assert second_data["lock_owner"]["repo_path"] == str(repo.resolve())
+    assert second_data["lock_owner"]["acquired_at"]
+
+
+def test_repo_lock_releases_on_chain_finalization(client, monkeypatch, tmp_path: Path):
+    repo = _make_repo(tmp_path, git=True)
+    monkeypatch.setattr(gui_app_module, "_agent_preflight_issues", lambda *_a, **_k: [])
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    class _FinalizingChainExec:
+        def __init__(self):
+            self.is_running = False
+            self.config = None
+            self._on_run_finalized = None
+
+        def set_on_run_finalized(self, callback):
+            self._on_run_finalized = callback
+
+        def start(self, config):
+            self.config = config
+            self.is_running = True
+            self.is_running = False
+            if callable(self._on_run_finalized):
+                self._on_run_finalized(types.SimpleNamespace(stop_reason="completed"))
+
+    monkeypatch.setattr(gui_app_module, "executor", _FinalizingChainExec())
+
+    class _StubPipelineOrchestrator:
+        def __init__(self, repo_path, config, on_run_finalized=None, **_kwargs):
+            self.repo_path = Path(repo_path)
+            self.config = config
+            self._on_run_finalized = on_run_finalized
+            self.is_running = False
+
+        def start(self):
+            self.is_running = False
+
+    monkeypatch.setattr(
+        "codex_manager.pipeline.orchestrator.PipelineOrchestrator",
+        _StubPipelineOrchestrator,
+    )
+
+    first = client.post("/api/chain/start", json=_chain_payload(repo))
+    first_data = first.get_json()
+    assert first.status_code == 200
+    assert first_data
+    assert first_data["status"] == "started"
+    with gui_app_module._repo_mutating_run_locks_lock:
+        assert str(repo.resolve()) not in gui_app_module._repo_mutating_run_locks
+
+    second = client.post("/api/pipeline/start", json=_pipeline_payload(repo))
+    second_data = second.get_json()
+    assert second.status_code == 200
+    assert second_data
+    assert second_data["status"] == "started"
 
 
 def test_chain_start_requires_danger_confirmation_when_bypass_enabled(client, tmp_path: Path):
