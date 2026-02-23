@@ -1,82 +1,48 @@
 # codex_manager Owner Execution Backlog
 
-Last updated: 2026-02-15
-Source baseline: `.codex_manager/logs/WISHLIST.md` (WISH-001 to WISH-025)
+Last updated: 2026-02-23
+Source baseline: `.codex_manager/logs/WISHLIST.md` (WISH-001 to WISH-050)
 
 This file tracks executable work only. Keep items concrete, repo-specific, and in strict ship order.
 
 ## Active Queue (execute top to bottom)
 
-### P0 - Immediate correctness and safety
+### P0 - Immediate correctness, security, and run control
 
-- [ ] [PR-01][WISH-007,WISH-002][S] Prompt and debug log hardening in chain and pipeline
-  - Why now: `src/codex_manager/gui/chain.py` still logs `Prompt: ...` and many `[DEBUG]` lines by default.
-  - Scope: `src/codex_manager/gui/chain.py`, `src/codex_manager/pipeline/orchestrator.py`, `src/codex_manager/prompt_logging.py`.
-  - Done when: default logs are metadata-only for prompts and verbose debug lines require explicit opt-in.
-  - Validate: add focused tests in `tests/test_gui_chain_terminate_repeats.py` and `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-13][WISH-037][S] Add a repo-level mutating run lock shared by `/api/chain/start` and `/api/pipeline/start`; return `409` with lock owner metadata when busy. Done when chain and pipeline cannot run concurrently for the same resolved repo path and stale locks are cleared on finalization. Validate with new concurrent-start API tests in `tests/test_gui_app_api.py`.
+- [ ] [PR-14][WISH-026][M] Wire `stop()` to hard-cancel active agent subprocesses (`terminate` then `kill` fallback). Done when stop requests complete quickly even during hung CLI calls and final state records cancellation explicitly. Validate with long-running subprocess cancellation tests in `tests/test_runner_common.py`, `tests/test_gui_chain_terminate_repeats.py`, and `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-15][WISH-036][S] Add wall-clock timeout controls (separate from inactivity timeout) for chain and pipeline runs. Done when noisy but overlong executions are forcibly ended with timeout type metadata (`inactivity` vs `wall_clock`). Validate with timeout regression tests in `tests/test_runner_common.py` and orchestration assertions in `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-16][WISH-035][M] Enforce capability-contract policies at runtime (`allow_path_creation`, `dependency_install_policy`) instead of prompt-only guidance. Done when violations are detected from repo delta + `command_executions` and failed step/phase results include clear policy reason text. Validate with policy matrix tests in `tests/test_gui_chain_terminate_repeats.py` and `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-17][WISH-047][S] Remove raw prompt text from git commit messages (`generate_commit_message`) and redact sensitive free-text fragments. Done when commit messages are metadata-based and tests prove prompt/secret strings do not leak into git history. Validate with unit tests in `tests/test_git_tools.py` plus existing commit-path tests.
+- [ ] [PR-25][WISH-030][M] Protect mutating GUI APIs with same-session CSRF token + localhost origin checks. Done when cross-origin/browser-forged mutation requests fail with `403` and same-session GUI actions continue to work. Validate with API security tests in `tests/test_gui_app_api.py`.
 
-- [ ] [PR-02][WISH-011][M] Implement true `on_failure=retry` semantics in pipeline phases
-  - Why now: `PhaseConfig.max_retries` exists but pipeline flow still only uses skip/abort behavior.
-  - Scope: `src/codex_manager/pipeline/orchestrator.py`, `src/codex_manager/pipeline/phases.py`.
-  - Done when: retry attempts are bounded, attempt count is logged, and final phase status reflects retry exhaustion correctly.
-  - Validate: extend `tests/test_pipeline_orchestrator.py` with retry success/failure/abort cases.
+### P1 - High-value reliability and UX correctness
 
-- [ ] [PR-03][WISH-020][S] Bound pipeline log queue to stop unbounded memory growth
-  - Why now: `PipelineOrchestrator.log_queue` is currently unbounded while chain queue is bounded.
-  - Scope: `src/codex_manager/pipeline/orchestrator.py`, `src/codex_manager/gui/app.py`.
-  - Done when: queue has max size, oldest entries drop on overflow, and overflow warnings are emitted.
-  - Validate: add overflow behavior tests in `tests/test_pipeline_orchestrator.py` and stream tests in `tests/test_gui_app_api.py`.
+- [ ] [PR-06][WISH-003][M] Persist and resume pipeline state after crashes/restarts (beyond self-improvement checkpoint handoff). Done when cycle/phase cursor and essential run metadata are atomically saved each iteration and resumed without duplicate phase side effects. Validate with crash/resume simulations in `tests/test_pipeline_orchestrator.py` and CLI resume tests in `tests/test_main_entrypoint.py`.
+- [ ] [PR-18][WISH-029][S] Add configurable repo-delta validation (`requires_repo_delta`) to chain steps and pipeline phases. Done when artifact-only work can succeed where explicitly allowed and mutating phases still default to strict delta checks. Validate with chain/pipeline policy tests in `tests/test_gui_chain_terminate_repeats.py` and `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-08][WISH-004][M] Extend selective test execution with change-sensitive gating (in addition to current phase policy). Done when non-code-only deltas skip expensive tests with explicit skip reasons and no regression in failure detection. Validate with evaluator/orchestrator tests in `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-19][WISH-043][S] Fail `visual_test` steps/phases on configurable major/critical CUA findings. Done when success status incorporates observation severity threshold instead of transport success alone. Validate with severity-mix tests in `tests/test_cua_session.py`, `tests/test_gui_chain_terminate_repeats.py`, and `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-20][WISH-045][S] Store CUA artifacts under repo-local `.codex_manager/logs/cua/<run_id>/` with a `session.json` manifest and stable relative links in logs. Done when chain/pipeline default to repo-local CUA outputs and manifests are produced for each run. Validate with path + manifest tests in `tests/test_cua_session.py` and `tests/test_pipeline_orchestrator.py`.
+- [ ] [PR-21][WISH-034][S] Require exact standalone `[TERMINATE_STEP]` signal lines (no fuzzy substring matching). Done when quoted/explanatory mentions never trigger termination and accepted signals are explicitly audit-logged. Validate with parser tests in `tests/test_agent_signals.py` and integration checks in chain/pipeline suites.
 
-- [ ] [PR-04][WISH-006][M] Make ledger and tracker writes atomic and race-safe
-  - Why now: `ledger.py` and `pipeline/tracker.py` still append/write directly without atomic replace strategy.
-  - Scope: `src/codex_manager/ledger.py`, `src/codex_manager/pipeline/tracker.py`, shared file-write helper module.
-  - Done when: write paths use temp-file + replace (or equivalent lock strategy) and no partial writes under concurrent access.
-  - Validate: add stress tests in `tests/test_ledger.py` and `tests/test_pipeline_tracker.py`.
+### P2 - Architecture, maintainability, and DX
 
-- [ ] [PR-05][WISH-016][S] Unify runtime errors into `.codex_manager/logs/ERRORS.md`
-  - Why now: chain writes `.codex_manager/ERRORS.md` while pipeline uses `logs/ERRORS.md`.
-  - Scope: `src/codex_manager/gui/chain.py`, `src/codex_manager/pipeline/tracker.py`, relevant read endpoints in `src/codex_manager/gui/app.py`.
-  - Done when: both chain and pipeline append to a single canonical errors log with backward-compatible read behavior.
-  - Validate: add cross-surface logging assertions in `tests/test_gui_chain_terminate_repeats.py` and `tests/test_gui_app_api.py`.
-
-### P1 - Next wave after P0 closes
-
-- [ ] [PR-06][WISH-003][L] Crash-safe pipeline state persistence and resume
-  - Scope: persist cycle/phase cursor each iteration and resume non-self-improvement runs.
-  - Key files: `src/codex_manager/pipeline/orchestrator.py`, `src/codex_manager/pipeline/phases.py`, `src/codex_manager/gui/app.py`.
-  - Done when: pipeline can restart from saved cursor after process interruption with no duplicate phase writes.
-
-- [ ] [PR-07][WISH-015][S] Strict numeric bounds validation for chain/pipeline config models
-  - Scope: add `Field(ge/gt/...)` bounds on retries, loops, cycles, budgets, and timeout fields.
-  - Key files: `src/codex_manager/gui/models.py`, `src/codex_manager/pipeline/phases.py`.
-  - Done when: invalid numeric configs fail fast with clear validation errors.
-
-- [ ] [PR-08][WISH-004][M] Phase-aware selective test execution
-  - Scope: introduce evaluation policy (skip/smoke/full) by phase and change signal.
-  - Key files: `src/codex_manager/pipeline/orchestrator.py`, `src/codex_manager/eval_tools.py`.
-  - Done when: non-code phases do not pay full test cost and skip reasons are explicit in logs/results.
-
-- [ ] [PR-09][WISH-013][L] Repo-safe parallel chain execution using isolated worktrees
-  - Scope: remove shared-working-tree mutation in parallel mode and reconcile outputs deterministically.
-  - Key files: `src/codex_manager/gui/chain.py`, `src/codex_manager/git_tools.py`.
-  - Done when: parallel steps cannot race each other in one repo checkout and conflict policy is explicit.
-
-### P2 - Strategic architecture and hygiene
-
-- [ ] [PR-10][WISH-001,WISH-009][L] Gemini SDK migration and connector modularization
-  - Scope: move off deprecated `google.generativeai`, then split provider logic behind a common adapter interface.
-  - Key files: `src/codex_manager/brain/connector.py`, `src/codex_manager/brain/*`, `tests/test_brain_connector_env.py`.
-
-- [ ] [PR-11][WISH-010][M] Unified retention policy for `.codex_manager` artifacts
-  - Scope: central retention controls for logs, outputs, screenshots, and archives (not only chain output history).
-  - Key files: `src/codex_manager/gui/chain.py`, `src/codex_manager/history_log.py`, `src/codex_manager/brain/logbook.py`, `src/codex_manager/pipeline/tracker.py`.
-
-- [ ] [PR-12][WISH-024,WISH-023,WISH-025][M] Docstring contract cleanup + audit automation
-  - Scope: fix stale connector docs, close missing public docstrings, and add regression audit command.
-  - Key files: `src/codex_manager/brain/connector.py`, `src/codex_manager/gui/app.py`, `src/codex_manager/gui/chain.py`, `src/codex_manager/ledger.py`.
+- [ ] [PR-07][WISH-015][S] Add strict `Field(...)` bounds for chain/pipeline numeric config fields and remove silent coercion surprises. Done when invalid ranges fail fast with consistent API/CLI error messaging. Validate with boundary tests in `tests/test_permission_config_validation.py` and `tests/test_gui_app_api.py`.
+- [ ] [PR-09][WISH-013][M] Resolve `parallel_execution` semantics: implement isolated-worktree execution or explicitly disable/hide the option until true safe parallelism exists. Done when behavior is no longer misleading and shared-working-tree races are impossible by design. Validate with chain behavior tests in `tests/test_gui_chain_terminate_repeats.py` and UI/API config tests in `tests/test_gui_app_api.py`.
+- [ ] [PR-10][WISH-001][M] Migrate Gemini support from deprecated `google.generativeai` to `google.genai`. Done when runtime/tests stop depending on deprecated SDK while preserving model listing, generation, and usage accounting behavior. Validate with provider/env tests in `tests/test_brain_connector_env.py`.
+- [ ] [PR-24][WISH-009][M] Split `brain/connector.py` into provider adapters behind a shared interface after Gemini migration. Done when OpenAI/Anthropic/Gemini dispatch logic is modularized with adapter contract tests and unchanged external behavior. Validate with adapter and dispatch tests in `tests/test_brain_connector_env.py` (and new provider contract tests).
+- [ ] [PR-12][WISH-024,WISH-023,WISH-025][M] Finish docstring contract cleanup and automate docstring-audit regression checks. Done when stale/missing public docstrings hit an explicit baseline and automated checks prevent regressions. Validate with audit tests under `tests/` and docs updates in `README.md`/`docs/TROUBLESHOOTING.md`.
+- [ ] [PR-22][WISH-033][M] Extract one route family (chain/pipeline control) from `gui/app.py` into blueprints/services without changing API contracts. Done when extracted endpoints pass parity tests and `src/codex_manager/gui/app.py` shrinks measurably. Validate with `python -m pytest -q tests/test_gui_app_api.py`.
+- [ ] [PR-23][WISH-032][S] Remove remaining mojibake artifacts in maintained source/template comments and add a regression scanner test. Done when known broken-byte signatures no longer appear in maintained source paths and the scanner prevents reintroduction. Validate with a new encoding-hygiene test module plus targeted `rg` checks.
 
 ## Completed / Keep Closed (reopen only on regression)
 
+- [x] [PR-01][WISH-007,WISH-002] Prompt logging is metadata-only by default with explicit debug opt-in.
+- [x] [PR-02][WISH-011] Pipeline now honors bounded `on_failure=retry` semantics end-to-end.
+- [x] [PR-03][WISH-020] Pipeline log queue is bounded with drop-oldest + overflow warnings.
+- [x] [PR-04][WISH-006] Ledger/tracker writes use atomic/race-safe file operations.
+- [x] [PR-05][WISH-016] Runtime errors are unified under `.codex_manager/logs/ERRORS.md`.
+- [x] [PR-11][WISH-010] Runtime artifact retention controls were centralized and enforced.
 - [x] [WISH-014] `/api/configs/load` path traversal hardening and config-name sanitization.
 - [x] [WISH-019] Robust `test_cmd` parsing for quoting and Windows paths via `parse_test_command`.
 - [x] [WISH-012] Dry-run rollback now covers commit-phase paths.

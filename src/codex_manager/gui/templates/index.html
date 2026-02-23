@@ -1641,10 +1641,10 @@ body.mode-medium .easy-only{display:none}
     </div>
     <div class="form-row medium-hide">
       <label>Token Budget <span id="max-tokens-note" style="color:var(--text2)"></span></label>
-      <input type="number" id="max-tokens" value="2000000" min="0" step="100000">
+      <input type="number" id="max-tokens" value="2000000" min="0" step="100000" onchange="onChainTokenBudgetInputChange()">
     </div>
     <div class="form-row medium-hide">
-      <label><input type="checkbox" id="strict-token-budget"> Enforce token budget immediately</label>
+      <label><input type="checkbox" id="strict-token-budget" onchange="onChainTokenBudgetInputChange()"> Enforce token budget immediately</label>
       <div class="field-help">Off (default): budget checked after each full loop. On: stop right after a step exceeds budget.</div>
     </div>
     <div class="form-row medium-hide" id="convergence-row">
@@ -2163,10 +2163,10 @@ body.mode-medium .easy-only{display:none}
     </div>
     <div class="form-row">
       <label>Token Budget <span id="pipe-tokens-note" style="color:var(--text2)"></span></label>
-      <input type="number" id="pipe-max-tokens" value="5000000" min="0" step="100000">
+      <input type="number" id="pipe-max-tokens" value="5000000" min="0" step="100000" onchange="onPipeTokenBudgetInputChange()">
     </div>
     <div class="form-row">
-      <label><input type="checkbox" id="pipe-strict-token-budget"> Enforce token budget immediately</label>
+      <label><input type="checkbox" id="pipe-strict-token-budget" onchange="onPipeTokenBudgetInputChange()"> Enforce token budget immediately</label>
       <div class="field-help">Off (default): budget checked after each full cycle. On: stop right after a phase exceeds budget.</div>
     </div>
     <div class="form-row" id="pipe-convergence-row">
@@ -11113,6 +11113,124 @@ function updateStep(field, value) {
     renderStepDetails();
   }
   if (field === 'agent') scheduleDiagnosticsRefresh('chain');
+}
+
+function _readChainTokenBudgetFromUi() {
+  const input = document.getElementById('max-tokens');
+  const parsed = Number.parseInt(input && input.value ? input.value : '', 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return Math.max(0, Number(config.max_total_tokens) || 2000000);
+}
+
+function _readPipelineTokenBudgetFromUi() {
+  const input = document.getElementById('pipe-max-tokens');
+  const parsed = Number.parseInt(input && input.value ? input.value : '', 10);
+  if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  return Math.max(0, Number(pipeConfig.max_total_tokens) || 5000000);
+}
+
+async function applyChainRuntimeTokenBudget(opts = {}) {
+  if (!chainRunning && !chainPaused) return;
+  const maxTotalTokens = _readChainTokenBudgetFromUi();
+  const strictTokenBudget = !!document.getElementById('strict-token-budget').checked;
+  const resp = await postJson('/api/chain/runtime-config', {
+    max_total_tokens: maxTotalTokens,
+    strict_token_budget: strictTokenBudget,
+  });
+  if (resp.error) {
+    if (!opts.silent) {
+      toast('Could not apply chain runtime token budget: ' + resp.error, 'error');
+    }
+    return;
+  }
+
+  const appliedBudget = Math.max(
+    0,
+    Number(
+      resp
+      && resp.config
+      && resp.config.max_total_tokens
+    ) || maxTotalTokens,
+  );
+  const appliedStrict = !!(
+    resp
+    && resp.config
+    && resp.config.strict_token_budget
+  );
+
+  config.max_total_tokens = appliedBudget;
+  config.strict_token_budget = appliedStrict;
+  document.getElementById('max-tokens').value = String(appliedBudget);
+  document.getElementById('strict-token-budget').checked = appliedStrict;
+
+  if (!opts.silent) {
+    let message = 'Applied chain token budget: ' + appliedBudget.toLocaleString() + ' tokens';
+    message += appliedStrict ? ' (strict mode).' : ' (non-strict mode).';
+    if (resp && resp.state && resp.state.budget_reached && appliedBudget > 0) {
+      message += ' Budget is already reached; run may stop at the next budget check.';
+    }
+    toast(message, 'info');
+  }
+}
+
+async function applyPipelineRuntimeTokenBudget(opts = {}) {
+  if (!pipeRunning && !pipePaused) return;
+  const maxTotalTokens = _readPipelineTokenBudgetFromUi();
+  const strictTokenBudget = !!document.getElementById('pipe-strict-token-budget').checked;
+  const resp = await postJson('/api/pipeline/runtime-config', {
+    max_total_tokens: maxTotalTokens,
+    strict_token_budget: strictTokenBudget,
+  });
+  if (resp.error) {
+    if (!opts.silent) {
+      toast('Could not apply pipeline runtime token budget: ' + resp.error, 'error');
+    }
+    return;
+  }
+
+  const appliedBudget = Math.max(
+    0,
+    Number(
+      resp
+      && resp.config
+      && resp.config.max_total_tokens
+    ) || maxTotalTokens,
+  );
+  const appliedStrict = !!(
+    resp
+    && resp.config
+    && resp.config.strict_token_budget
+  );
+
+  pipeConfig.max_total_tokens = appliedBudget;
+  pipeConfig.strict_token_budget = appliedStrict;
+  document.getElementById('pipe-max-tokens').value = String(appliedBudget);
+  document.getElementById('pipe-strict-token-budget').checked = appliedStrict;
+
+  if (!opts.silent) {
+    let message = 'Applied pipeline token budget: ' + appliedBudget.toLocaleString() + ' tokens';
+    message += appliedStrict ? ' (strict mode).' : ' (non-strict mode).';
+    if (resp && resp.state && resp.state.budget_reached && appliedBudget > 0) {
+      message += ' Budget is already reached; run may stop at the next budget check.';
+    }
+    toast(message, 'info');
+  }
+}
+
+async function onChainTokenBudgetInputChange() {
+  config.max_total_tokens = _readChainTokenBudgetFromUi();
+  config.strict_token_budget = !!document.getElementById('strict-token-budget').checked;
+  if (chainRunning || chainPaused) {
+    await applyChainRuntimeTokenBudget();
+  }
+}
+
+async function onPipeTokenBudgetInputChange() {
+  pipeConfig.max_total_tokens = _readPipelineTokenBudgetFromUi();
+  pipeConfig.strict_token_budget = !!document.getElementById('pipe-strict-token-budget').checked;
+  if (pipeRunning || pipePaused) {
+    await applyPipelineRuntimeTokenBudget();
+  }
 }
 
 /* -- Execution Control ------------------------------------------ */

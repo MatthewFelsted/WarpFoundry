@@ -4838,6 +4838,104 @@ def test_chain_stop_after_step_api_rejects_when_not_running(client, monkeypatch)
     assert "No chain running" in data["error"]
 
 
+def test_chain_runtime_config_updates_running_chain(client, monkeypatch):
+    observed_logs: list[tuple[str, str]] = []
+    cfg = types.SimpleNamespace(max_total_tokens=1_000, strict_token_budget=False)
+    runtime_state = types.SimpleNamespace(total_tokens=250)
+
+    class _Exec:
+        is_running = True
+        config = cfg
+        state = runtime_state
+
+        def _log(self, level: str, message: str):
+            observed_logs.append((level, message))
+
+    monkeypatch.setattr(gui_app_module, "executor", _Exec())
+
+    resp = client.post(
+        "/api/chain/runtime-config",
+        json={"max_total_tokens": 5_000, "strict_token_budget": True},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "updated"
+    assert data["config"]["max_total_tokens"] == 5000
+    assert data["config"]["strict_token_budget"] is True
+    assert data["state"]["total_tokens"] == 250
+    assert data["state"]["budget_reached"] is False
+    assert cfg.max_total_tokens == 5000
+    assert cfg.strict_token_budget is True
+    assert any("Runtime token budget updated" in msg for _level, msg in observed_logs)
+
+
+def test_chain_runtime_config_rejects_when_not_running(client, monkeypatch):
+    class _Exec:
+        is_running = False
+        config = types.SimpleNamespace(max_total_tokens=1_000, strict_token_budget=False)
+        state = types.SimpleNamespace(total_tokens=0)
+
+    monkeypatch.setattr(gui_app_module, "executor", _Exec())
+    resp = client.post(
+        "/api/chain/runtime-config",
+        json={"max_total_tokens": 5_000},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "No chain running" in data["error"]
+
+
+def test_pipeline_runtime_config_updates_running_pipeline(client, monkeypatch):
+    observed_logs: list[tuple[str, str]] = []
+    cfg = types.SimpleNamespace(max_total_tokens=3_000, strict_token_budget=False)
+    runtime_state = types.SimpleNamespace(total_tokens=900)
+
+    class _PipelineExec:
+        is_running = True
+        config = cfg
+        state = runtime_state
+
+        def _log(self, level: str, message: str):
+            observed_logs.append((level, message))
+
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", _PipelineExec())
+
+    resp = client.post(
+        "/api/pipeline/runtime-config",
+        json={"max_total_tokens": 7_000, "strict_token_budget": True},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data
+    assert data["status"] == "updated"
+    assert data["config"]["max_total_tokens"] == 7000
+    assert data["config"]["strict_token_budget"] is True
+    assert data["state"]["total_tokens"] == 900
+    assert data["state"]["budget_reached"] is False
+    assert cfg.max_total_tokens == 7000
+    assert cfg.strict_token_budget is True
+    assert any("Runtime token budget updated" in msg for _level, msg in observed_logs)
+
+
+def test_pipeline_runtime_config_rejects_when_not_running(client, monkeypatch):
+    monkeypatch.setattr(gui_app_module, "_pipeline_executor", None)
+
+    resp = client.post(
+        "/api/pipeline/runtime-config",
+        json={"max_total_tokens": 7_000},
+    )
+    data = resp.get_json()
+
+    assert resp.status_code == 400
+    assert data
+    assert "No pipeline running" in data["error"]
+
+
 def test_pipeline_status_includes_actionable_stop_guidance(client, monkeypatch):
     class _PipelineState:
         @staticmethod

@@ -6416,6 +6416,74 @@ def api_stop_after_step():
     )
 
 
+@app.route("/api/chain/runtime-config", methods=["POST"])
+def api_chain_runtime_config():
+    """Update selected chain runtime settings without restarting the run."""
+    if not executor.is_running:
+        return jsonify({"error": "No chain running"}), 400
+
+    cfg = getattr(executor, "config", None)
+    if cfg is None:
+        return jsonify({"error": "Chain runtime config is unavailable."}), 500
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required."}), 400
+
+    updates: dict[str, object] = {}
+    if "max_total_tokens" in data:
+        raw_budget = data.get("max_total_tokens")
+        if isinstance(raw_budget, bool):
+            return jsonify({"error": "max_total_tokens must be an integer >= 0."}), 400
+        parsed_budget = _safe_int(raw_budget, -1)
+        if parsed_budget < 0:
+            return jsonify({"error": "max_total_tokens must be an integer >= 0."}), 400
+        updates["max_total_tokens"] = parsed_budget
+    if "strict_token_budget" in data:
+        updates["strict_token_budget"] = _safe_bool(
+            data.get("strict_token_budget"),
+            bool(getattr(cfg, "strict_token_budget", False)),
+        )
+    if not updates:
+        return jsonify({"error": "No runtime settings provided."}), 400
+
+    if "max_total_tokens" in updates:
+        cfg.max_total_tokens = int(updates["max_total_tokens"])
+    if "strict_token_budget" in updates:
+        cfg.strict_token_budget = bool(updates["strict_token_budget"])
+
+    total_tokens = _safe_int(_runtime_state_value(getattr(executor, "state", None), "total_tokens", 0), 0)
+    max_total_tokens = max(0, _safe_int(getattr(cfg, "max_total_tokens", 0), 0))
+    strict_token_budget = bool(getattr(cfg, "strict_token_budget", False))
+    budget_reached = bool(max_total_tokens > 0 and total_tokens >= max_total_tokens)
+
+    log_fn = getattr(executor, "_log", None)
+    if callable(log_fn):
+        with suppress(Exception):
+            log_fn(
+                "info",
+                (
+                    "Runtime token budget updated: "
+                    f"{max_total_tokens:,} tokens (strict={'on' if strict_token_budget else 'off'})."
+                ),
+            )
+
+    return jsonify(
+        {
+            "status": "updated",
+            "config": {
+                "max_total_tokens": max_total_tokens,
+                "strict_token_budget": strict_token_budget,
+            },
+            "state": {
+                "total_tokens": total_tokens,
+                "budget_reached": budget_reached,
+            },
+            "running": bool(executor.is_running),
+        }
+    )
+
+
 @app.route("/api/chain/status")
 def api_status():
     since_results = _parse_since_results_arg(request.args.get("since_results"))
@@ -11565,6 +11633,78 @@ def api_pipeline_pause():
         return jsonify({"status": "resumed"})
     _pipeline_executor.pause()
     return jsonify({"status": "paused"})
+
+
+@app.route("/api/pipeline/runtime-config", methods=["POST"])
+def api_pipeline_runtime_config():
+    """Update selected pipeline runtime settings without restarting the run."""
+    global _pipeline_executor
+    if _pipeline_executor is None or not _pipeline_executor.is_running:
+        return jsonify({"error": "No pipeline running"}), 400
+
+    cfg = getattr(_pipeline_executor, "config", None)
+    if cfg is None:
+        return jsonify({"error": "Pipeline runtime config is unavailable."}), 500
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required."}), 400
+
+    updates: dict[str, object] = {}
+    if "max_total_tokens" in data:
+        raw_budget = data.get("max_total_tokens")
+        if isinstance(raw_budget, bool):
+            return jsonify({"error": "max_total_tokens must be an integer >= 0."}), 400
+        parsed_budget = _safe_int(raw_budget, -1)
+        if parsed_budget < 0:
+            return jsonify({"error": "max_total_tokens must be an integer >= 0."}), 400
+        updates["max_total_tokens"] = parsed_budget
+    if "strict_token_budget" in data:
+        updates["strict_token_budget"] = _safe_bool(
+            data.get("strict_token_budget"),
+            bool(getattr(cfg, "strict_token_budget", False)),
+        )
+    if not updates:
+        return jsonify({"error": "No runtime settings provided."}), 400
+
+    if "max_total_tokens" in updates:
+        cfg.max_total_tokens = int(updates["max_total_tokens"])
+    if "strict_token_budget" in updates:
+        cfg.strict_token_budget = bool(updates["strict_token_budget"])
+
+    total_tokens = _safe_int(
+        _runtime_state_value(getattr(_pipeline_executor, "state", None), "total_tokens", 0),
+        0,
+    )
+    max_total_tokens = max(0, _safe_int(getattr(cfg, "max_total_tokens", 0), 0))
+    strict_token_budget = bool(getattr(cfg, "strict_token_budget", False))
+    budget_reached = bool(max_total_tokens > 0 and total_tokens >= max_total_tokens)
+
+    log_fn = getattr(_pipeline_executor, "_log", None)
+    if callable(log_fn):
+        with suppress(Exception):
+            log_fn(
+                "info",
+                (
+                    "Runtime token budget updated: "
+                    f"{max_total_tokens:,} tokens (strict={'on' if strict_token_budget else 'off'})."
+                ),
+            )
+
+    return jsonify(
+        {
+            "status": "updated",
+            "config": {
+                "max_total_tokens": max_total_tokens,
+                "strict_token_budget": strict_token_budget,
+            },
+            "state": {
+                "total_tokens": total_tokens,
+                "budget_reached": budget_reached,
+            },
+            "running": bool(_pipeline_executor.is_running),
+        }
+    )
 
 
 @app.route("/api/pipeline/status")
