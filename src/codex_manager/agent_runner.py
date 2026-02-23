@@ -47,6 +47,10 @@ class AgentRunner(abc.ABC):
             Additional CLI flags forwarded verbatim.
         """
 
+    def stop(self) -> None:
+        """Request best-effort cancellation of an active run."""
+        return
+
 
 # ── Registry ──────────────────────────────────────────────────────
 

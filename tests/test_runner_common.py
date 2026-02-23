@@ -7,6 +7,8 @@ import os
 import stat
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import codex_manager.runner_common as runner_common_module
@@ -136,6 +138,49 @@ def test_execute_streaming_json_command_writes_stdin_text(tmp_path: Path) -> Non
     assert result.timed_out is False
     assert len(result.events) == 1
     assert result.events[0].text == "hello from stdin"
+
+
+def test_execute_streaming_json_command_cancels_active_process(tmp_path: Path) -> None:
+    script = (
+        "import json\n"
+        "import time\n"
+        "print(json.dumps({'status': 'started'}), flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    cmd = [sys.executable, "-c", script]
+    cancel_event = threading.Event()
+
+    def _parse_line(line: str) -> CodexEvent:
+        payload = json.loads(line)
+        return CodexEvent(
+            kind=EventKind.AGENT_MESSAGE,
+            raw=payload,
+            text=str(payload.get("status", "")),
+        )
+
+    def _cancel_soon() -> None:
+        time.sleep(0.25)
+        cancel_event.set()
+
+    cancel_thread = threading.Thread(target=_cancel_soon, daemon=True)
+    cancel_thread.start()
+    started = time.monotonic()
+    result = execute_streaming_json_command(
+        cmd=cmd,
+        cwd=tmp_path,
+        env=dict(os.environ),
+        timeout_seconds=0,
+        parse_stdout_line=_parse_line,
+        process_name="test-runner",
+        cancel_event=cancel_event,
+    )
+    elapsed = time.monotonic() - started
+    cancel_thread.join(timeout=1.0)
+
+    assert result.cancelled is True
+    assert result.timed_out is False
+    assert result.exit_code != 0
+    assert elapsed < 5.0
 
 
 def test_execute_with_prompt_transport_fallback_retries_with_stdin(tmp_path: Path) -> None:

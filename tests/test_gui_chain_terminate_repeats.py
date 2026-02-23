@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -13,7 +16,15 @@ from codex_manager.git_tools import diff_numstat
 from codex_manager.gui.chain import ChainExecutor
 from codex_manager.gui.models import ChainConfig, TaskStep
 from codex_manager.pipeline.tracker import LogTracker
-from codex_manager.schemas import EvalResult, RunResult, TestOutcome, UsageInfo
+from codex_manager.runner_common import execute_streaming_json_command
+from codex_manager.schemas import (
+    CodexEvent,
+    EvalResult,
+    EventKind,
+    RunResult,
+    TestOutcome,
+    UsageInfo,
+)
 
 
 def _init_git_repo(repo: Path) -> None:
@@ -299,6 +310,64 @@ class _CountingRunner:
             final_message=f"counted run {self.__class__.calls}",
             usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
         )
+
+
+class _BlockingStreamingRunner:
+    name = "StubCodex"
+    started: ClassVar[threading.Event] = threading.Event()
+    stop_calls: ClassVar[int] = 0
+
+    def __init__(self, *args, **kwargs):
+        self._cancel_event = threading.Event()
+        self.__class__.started.clear()
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        self.__class__.started.set()
+        cmd = [
+            sys.executable,
+            "-c",
+            (
+                "import json\n"
+                "import time\n"
+                "print(json.dumps({'status': 'running'}), flush=True)\n"
+                "time.sleep(60)\n"
+            ),
+        ]
+
+        def _parse_line(line: str) -> CodexEvent:
+            payload = json.loads(line)
+            return CodexEvent(
+                kind=EventKind.AGENT_MESSAGE,
+                raw=payload,
+                text=str(payload.get("status", "")),
+            )
+
+        execution = execute_streaming_json_command(
+            cmd=cmd,
+            cwd=Path(repo_path),
+            env=dict(chain_module.os.environ),
+            timeout_seconds=0,
+            parse_stdout_line=_parse_line,
+            process_name="BlockingChainRunner",
+            cancel_event=self._cancel_event,
+        )
+        if execution.cancelled:
+            return RunResult(
+                success=False,
+                exit_code=-1,
+                events=execution.events,
+                errors=["Execution cancelled by stop request"],
+            )
+        return RunResult(
+            success=execution.exit_code == 0,
+            exit_code=execution.exit_code,
+            events=execution.events,
+            errors=execution.stderr_lines,
+        )
+
+    def stop(self) -> None:
+        self.__class__.stop_calls += 1
+        self._cancel_event.set()
 
 
 def test_chain_skips_remaining_repeats_after_terminate_tag(monkeypatch, tmp_path: Path):
@@ -597,6 +666,53 @@ def test_chain_stop_after_step_halts_before_next_step(monkeypatch, tmp_path: Pat
     assert executor.state.total_steps_completed == 1
     assert executor.state.stop_reason == "user_stopped_after_step"
     assert executor.state.stop_after_current_step is False
+
+
+def test_chain_stop_cancels_hung_runner_subprocess(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _BlockingStreamingRunner.stop_calls = 0
+    _BlockingStreamingRunner.started = threading.Event()
+    monkeypatch.setattr(chain_module, "CodexRunner", _BlockingStreamingRunner)
+    monkeypatch.setattr(chain_module, "RepoEvaluator", _NoopEvaluator)
+    monkeypatch.setattr(chain_module, "ensure_git_identity", lambda _repo: None)
+
+    config = ChainConfig(
+        name="Stop cancellation",
+        repo_path=str(repo),
+        mode="dry-run",
+        max_loops=1,
+        test_cmd="",
+        steps=[
+            TaskStep(
+                name="Implementation",
+                job_type="implementation",
+                prompt_mode="custom",
+                custom_prompt="Run a long task.",
+                loop_count=1,
+                enabled=True,
+                agent="codex",
+            )
+        ],
+    )
+
+    executor = ChainExecutor()
+    start = time.monotonic()
+    executor.start(config)
+    assert _BlockingStreamingRunner.started.wait(timeout=3.0)
+
+    executor.stop()
+    assert executor._thread is not None
+    executor._thread.join(timeout=8.0)
+    elapsed = time.monotonic() - start
+
+    assert executor._thread.is_alive() is False
+    assert elapsed < 8.0
+    assert executor.state.stop_reason == "user_stopped"
+    assert _BlockingStreamingRunner.stop_calls >= 1
+    assert executor.state.results
+    assert "cancelled by stop request" in executor.state.results[0].error_message.lower()
 
 
 def test_chain_branch_creation_failure_finalizes_state(monkeypatch, tmp_path: Path):

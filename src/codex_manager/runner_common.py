@@ -20,6 +20,8 @@ from typing import Any
 from codex_manager.schemas import CodexEvent, RunResult
 
 logger = logging.getLogger(__name__)
+if os.name != "nt":  # pragma: no cover - platform-specific import
+    import signal
 
 _DEFAULT_MAX_CAPTURED_EVENTS = 20_000
 _DEFAULT_MAX_CAPTURED_STDOUT_LINES = 20_000
@@ -120,6 +122,7 @@ class StreamExecutionResult:
     stderr_lines: list[str]
     exit_code: int
     timed_out: bool
+    cancelled: bool = False
 
     @property
     def stderr_text(self) -> str:
@@ -197,6 +200,7 @@ def execute_streaming_json_command(
     parse_stdout_line: Callable[[str], CodexEvent | None],
     process_name: str,
     stdin_text: str | None = None,
+    cancel_event: threading.Event | None = None,
     max_events: int | None = None,
     max_stdout_lines: int | None = None,
     max_stderr_lines: int | None = None,
@@ -301,9 +305,19 @@ def execute_streaming_json_command(
     last_activity = time.monotonic()
     closed_streams: set[str] = set()
     timed_out = False
+    cancelled = False
 
     try:
         while len(closed_streams) < 2:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                _terminate_process_with_fallback(
+                    proc,
+                    process_name=process_name,
+                    reason="stop request",
+                )
+                break
+
             if (
                 inactivity_timeout is not None
                 and (time.monotonic() - last_activity) >= inactivity_timeout
@@ -342,7 +356,11 @@ def execute_streaming_json_command(
                 _append_stderr_line(line)
 
         if timed_out:
-            proc.kill()
+            _terminate_process_with_fallback(
+                proc,
+                process_name=process_name,
+                reason="inactivity timeout",
+            )
 
         _wait_for_process(proc)
 
@@ -388,6 +406,7 @@ def execute_streaming_json_command(
             stderr_lines=list(stderr_lines),
             exit_code=proc.returncode if proc.returncode is not None else -1,
             timed_out=timed_out,
+            cancelled=cancelled,
         )
     finally:
         if stdin_thread is not None:
@@ -410,6 +429,63 @@ def _wait_for_process(proc: subprocess.Popen[str]) -> None:
     except subprocess.TimeoutExpired:  # pragma: no cover - defensive
         proc.kill()
         proc.wait(timeout=5.0)
+
+
+def _terminate_process_with_fallback(
+    proc: subprocess.Popen[str],
+    *,
+    process_name: str,
+    reason: str,
+    terminate_timeout_seconds: float = 1.5,
+) -> None:
+    """Request graceful terminate first, then force-kill if still alive."""
+    if proc.poll() is not None:
+        return
+
+    _terminate_process(proc)
+    timeout = max(0.1, float(terminate_timeout_seconds))
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "%s did not exit after terminate during %s; forcing kill.",
+            process_name,
+            reason,
+        )
+
+    _kill_process(proc)
+    try:
+        proc.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:  # pragma: no cover - extreme edge case
+        logger.warning("%s ignored kill during %s.", process_name, reason)
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    """Best-effort graceful termination for a child process (and its group)."""
+    if os.name != "nt":
+        _signal_process_group(proc, signal.SIGTERM)
+    with suppress(Exception):
+        proc.terminate()
+
+
+def _kill_process(proc: subprocess.Popen[str]) -> None:
+    """Best-effort force kill for a child process (and its group)."""
+    if os.name != "nt":
+        _signal_process_group(proc, signal.SIGKILL)
+    with suppress(Exception):
+        proc.kill()
+
+
+def _signal_process_group(proc: subprocess.Popen[str], sig: int) -> None:
+    """Best-effort signal delivery to the subprocess process-group on POSIX."""
+    if os.name == "nt":  # pragma: no cover - Windows-only runtime branch
+        return
+    pid = int(getattr(proc, "pid", 0) or 0)
+    if pid <= 0:
+        return
+    with suppress(Exception):
+        os.killpg(os.getpgid(pid), sig)
 
 
 def _normalize_capture_limit(value: int | None, default: int) -> int:

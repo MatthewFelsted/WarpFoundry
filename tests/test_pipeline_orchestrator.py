@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 from typing import ClassVar
@@ -16,7 +18,15 @@ from codex_manager.brain.manager import BrainDecision
 from codex_manager.git_tools import diff_numstat
 from codex_manager.pipeline.orchestrator import PipelineOrchestrator
 from codex_manager.pipeline.phases import PhaseConfig, PhaseResult, PipelineConfig, PipelinePhase
-from codex_manager.schemas import EvalResult, RunResult, TestOutcome, UsageInfo
+from codex_manager.runner_common import execute_streaming_json_command
+from codex_manager.schemas import (
+    CodexEvent,
+    EvalResult,
+    EventKind,
+    RunResult,
+    TestOutcome,
+    UsageInfo,
+)
 
 
 def _init_git_repo(repo: Path) -> None:
@@ -142,6 +152,64 @@ class _NoopRunner:
             exit_code=0,
             usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
         )
+
+
+class _BlockingStreamingRunner:
+    name = "StubCodex"
+    started: ClassVar[threading.Event] = threading.Event()
+    stop_calls: ClassVar[int] = 0
+
+    def __init__(self, *args, **kwargs):
+        self._cancel_event = threading.Event()
+        self.__class__.started.clear()
+
+    def run(self, repo_path, prompt, *, full_auto=False, extra_args=None):
+        self.__class__.started.set()
+        cmd = [
+            sys.executable,
+            "-c",
+            (
+                "import json\n"
+                "import time\n"
+                "print(json.dumps({'status': 'running'}), flush=True)\n"
+                "time.sleep(60)\n"
+            ),
+        ]
+
+        def _parse_line(line: str) -> CodexEvent:
+            payload = json.loads(line)
+            return CodexEvent(
+                kind=EventKind.AGENT_MESSAGE,
+                raw=payload,
+                text=str(payload.get("status", "")),
+            )
+
+        execution = execute_streaming_json_command(
+            cmd=cmd,
+            cwd=Path(repo_path),
+            env=dict(orchestrator_module.os.environ),
+            timeout_seconds=0,
+            parse_stdout_line=_parse_line,
+            process_name="BlockingPipelineRunner",
+            cancel_event=self._cancel_event,
+        )
+        if execution.cancelled:
+            return RunResult(
+                success=False,
+                exit_code=-1,
+                events=execution.events,
+                errors=["Execution cancelled by stop request"],
+            )
+        return RunResult(
+            success=execution.exit_code == 0,
+            exit_code=execution.exit_code,
+            events=execution.events,
+            errors=execution.stderr_lines,
+        )
+
+    def stop(self) -> None:
+        self.__class__.stop_calls += 1
+        self._cancel_event.set()
 
 
 class _OwnerDocRunner:
@@ -1337,6 +1405,50 @@ def test_phase_terminate_tag_skips_remaining_iterations(monkeypatch, tmp_path: P
     assert len(state.results) == 1
     assert state.results[0].terminate_repeats is True
     assert _TerminateIterationRunner.calls == 1
+
+
+def test_pipeline_stop_cancels_hung_runner_subprocess(monkeypatch, tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+
+    _BlockingStreamingRunner.stop_calls = 0
+    _BlockingStreamingRunner.started = threading.Event()
+    monkeypatch.setattr(orchestrator_module, "CodexRunner", _BlockingStreamingRunner)
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_preflight_issues",
+        lambda self, config, repo_path: [],
+    )
+
+    cfg = PipelineConfig(
+        mode="dry-run",
+        max_cycles=1,
+        test_cmd="",
+        phases=[
+            PhaseConfig(
+                phase=PipelinePhase.IDEATION,
+                iterations=1,
+                custom_prompt="Run a long task.",
+            )
+        ],
+    )
+
+    orch = PipelineOrchestrator(repo_path=repo, config=cfg)
+    started = time.monotonic()
+    orch.start()
+    assert _BlockingStreamingRunner.started.wait(timeout=3.0)
+
+    orch.stop()
+    assert orch._thread is not None
+    orch._thread.join(timeout=8.0)
+    elapsed = time.monotonic() - started
+
+    assert orch._thread.is_alive() is False
+    assert elapsed < 8.0
+    assert orch.state.stop_reason == "user_stopped"
+    assert _BlockingStreamingRunner.stop_calls >= 1
+    assert orch.state.results
+    assert "cancelled by stop request" in orch.state.results[0].error_message.lower()
 
 
 def test_auto_commit_per_phase_commits_after_each_eligible_phase(monkeypatch, tmp_path: Path):

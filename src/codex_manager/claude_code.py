@@ -6,18 +6,19 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from codex_manager.agent_runner import AgentRunner, register_agent
+from codex_manager.prompt_logging import prompt_metadata
 from codex_manager.runner_common import (
     coerce_int,
     execute_streaming_json_command,
     execute_with_prompt_transport_fallback,
     resolve_binary,
 )
-from codex_manager.prompt_logging import prompt_metadata
 from codex_manager.schemas import (
     CodexEvent,
     EventKind,
@@ -78,6 +79,7 @@ class ClaudeCodeRunner(AgentRunner):
         self.env_overrides = env_overrides or {}
         self.max_turns = max(0, coerce_int(max_turns))
         self.model = (model or "").strip()
+        self._cancel_event = threading.Event()
 
     # ------------------------------------------------------------------
     # Public API
@@ -99,6 +101,7 @@ class ClaudeCodeRunner(AgentRunner):
                 exit_code=-1,
                 errors=[f"repo_path does not exist: {repo_path}"],
             )
+        self._cancel_event.clear()
 
         use_stdin_prompt = self._should_pipe_prompt_via_stdin(
             prompt,
@@ -149,8 +152,19 @@ class ClaudeCodeRunner(AgentRunner):
                 errors=["Failed to execute claude: missing result"],
                 duration_seconds=time.monotonic() - start,
             )
+        if self._cancel_event.is_set():
+            return RunResult(
+                success=False,
+                exit_code=-1,
+                errors=["Execution cancelled by stop request"],
+                duration_seconds=time.monotonic() - start,
+            )
         result.duration_seconds = time.monotonic() - start
         return result
+
+    def stop(self) -> None:
+        """Request cancellation of the active Claude subprocess, if any."""
+        self._cancel_event.set()
 
     # ------------------------------------------------------------------
     # Command building
@@ -248,8 +262,18 @@ class ClaudeCodeRunner(AgentRunner):
             parse_stdout_line=self._parse_line,
             process_name="Claude Code",
             stdin_text=stdin_text,
+            cancel_event=self._cancel_event,
         )
         stderr_text = execution.stderr_text
+
+        if execution.cancelled:
+            return RunResult(
+                success=False,
+                exit_code=-1,
+                events=execution.events,
+                errors=["Execution cancelled by stop request"]
+                + ([stderr_text] if stderr_text else []),
+            )
 
         if execution.timed_out:
             timeout_msg = (

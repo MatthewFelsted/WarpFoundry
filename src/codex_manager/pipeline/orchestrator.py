@@ -104,7 +104,7 @@ from codex_manager.prompt_logging import (
 )
 from codex_manager.prompts.catalog import PromptCatalog, get_catalog
 from codex_manager.research import DeepResearchSettings, run_native_deep_research
-from codex_manager.schemas import EvalResult
+from codex_manager.schemas import EvalResult, TestOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -4141,6 +4141,9 @@ class PipelineOrchestrator:
                         retry_attempt = 0
                         iteration += 1
 
+                    if self._stop_event.is_set() and not self.state.stop_reason:
+                        self.state.stop_reason = "user_stopped"
+                        cycle_aborted = True
                     if cycle_aborted:
                         break
 
@@ -4574,8 +4577,32 @@ class PipelineOrchestrator:
                 f"  Agent emitted {TERMINATE_STEP_TAG}; remaining iterations can be skipped.",
             )
 
+        cancelled_by_stop_request = self._stop_event.is_set() and any(
+            "cancelled by stop request" in str(err or "").lower() for err in run_result.errors
+        )
+
         # Evaluate
-        eval_result = evaluator.evaluate(repo)
+        if cancelled_by_stop_request:
+            self._log(
+                "warn",
+                "  Phase cancelled by stop request; skipping post-phase tests.",
+            )
+            eval_result = EvalResult(
+                test_outcome=TestOutcome.SKIPPED,
+                test_summary="cancelled by stop request",
+                test_exit_code=0,
+                files_changed=0,
+                net_lines_changed=0,
+            )
+            if not is_clean(repo):
+                cancelled_entries = diff_numstat_entries(repo)
+                files_changed, ins, dels = summarize_numstat_entries(cancelled_entries)
+                eval_result.files_changed = files_changed
+                eval_result.net_lines_changed = ins - dels
+                eval_result.changed_files = cancelled_entries
+                eval_result.diff_stat = diff_stat(repo)
+        else:
+            eval_result = evaluator.evaluate(repo)
         artifact_entries, artifact_insertions, artifact_deletions = summarize_artifact_delta(
             repo,
             artifact_snapshot,
@@ -4602,7 +4629,9 @@ class PipelineOrchestrator:
             f"Files: {eval_result.files_changed} | "
             f"Net d: {eval_result.net_lines_changed:+d}",
         )
-        repo_dirty = bool((eval_result.status_porcelain or "").strip())
+        repo_dirty = (not is_clean(repo)) if cancelled_by_stop_request else bool(
+            (eval_result.status_porcelain or "").strip()
+        )
         end_head_sha = ""
         head_advanced = False
         if start_head_sha:
@@ -4835,8 +4864,37 @@ class PipelineOrchestrator:
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
-        while not done.wait(timeout=20.0):
-            elapsed = int(time.monotonic() - started)
+        keepalive_interval_seconds = 20.0
+        poll_interval_seconds = 0.25
+        next_keepalive = started + keepalive_interval_seconds
+        cancel_requested = False
+
+        while not done.wait(timeout=poll_interval_seconds):
+            if self._stop_event.is_set() and not cancel_requested:
+                cancel_requested = True
+                stop_fn = getattr(runner, "stop", None)
+                if callable(stop_fn):
+                    try:
+                        stop_fn()
+                        self._log(
+                            "warn",
+                            f"Stop requested while {activity_label} is running; terminating active {runner.name} subprocess.",
+                        )
+                    except Exception as exc:  # pragma: no cover - defensive
+                        self._log(
+                            "warn",
+                            f"Stop requested, but {runner.name} cancellation failed: {exc}",
+                        )
+                else:
+                    self._log(
+                        "warn",
+                        f"Stop requested while {activity_label} is running, but {runner.name} does not support stop().",
+                    )
+
+            now = time.monotonic()
+            if now < next_keepalive:
+                continue
+            elapsed = int(now - started)
             if timeout_seconds > 0:
                 remaining = max(0, timeout_seconds - elapsed)
                 self._log(
@@ -4848,6 +4906,7 @@ class PipelineOrchestrator:
                     "info",
                     f"{activity_label} still running ({elapsed}s elapsed, inactivity timeout disabled)",
                 )
+            next_keepalive = now + keepalive_interval_seconds
 
         t.join()
         err = holder.get("error")
