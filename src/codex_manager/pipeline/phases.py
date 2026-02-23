@@ -1,4 +1,4 @@
-"""Pipeline phase definitions and configuration.
+﻿"""Pipeline phase definitions and configuration.
 
 Each phase in the autonomous pipeline has:
 - A prompt (loaded from the prompt catalog)
@@ -46,7 +46,7 @@ class PipelinePhase(str, Enum):
     APPLY_UPGRADES_AND_RESTART = "apply_upgrades_and_restart"
     PROGRESS_REVIEW = "progress_review"
 
-    # Visual testing phase (CUA — computer-using agent)
+    # Visual testing phase (CUA â€” computer-using agent)
     VISUAL_TEST = "visual_test"
 
     # Scientist phases (optional, advanced)
@@ -211,7 +211,7 @@ class PipelineConfig(BaseModel):
     image_generation_enabled: bool = False
     image_provider: ImageProvider = "openai"
     image_model: str = "gpt-image-1"
-    vector_memory_enabled: bool = False
+    vector_memory_enabled: bool = True
     vector_memory_backend: VectorMemoryBackend = "chroma"
     vector_memory_collection: str = ""
     vector_memory_top_k: int = 8
@@ -222,10 +222,10 @@ class PipelineConfig(BaseModel):
     deep_research_native_enabled: bool = False
     deep_research_retry_attempts: int = 2
     deep_research_daily_quota: int = 8
-    deep_research_max_provider_tokens: int = 12000
+    deep_research_max_provider_tokens: int = 65536
     deep_research_budget_usd: float = 5.0
     deep_research_openai_model: str = "gpt-5.2"
-    deep_research_google_model: str = "gemini-3-pro-preview"
+    deep_research_google_model: str = "gemini-3.1-pro-preview"
     self_improvement_enabled: bool = False
     self_improvement_auto_restart: bool = False
     # Inactivity timeout in seconds. 0 disables timeout.
@@ -257,7 +257,7 @@ class PipelineConfig(BaseModel):
     brain_enabled: bool = False
     brain_model: str = "gpt-5.2"
 
-    # Local-only mode — force all AI calls through Ollama
+    # Local-only mode â€” force all AI calls through Ollama
     local_only: bool = False
 
     # Stop conditions (consistent with ChainConfig)
@@ -298,16 +298,16 @@ class PipelineConfig(BaseModel):
         )
         self.deep_research_daily_quota = min(100, max(1, int(self.deep_research_daily_quota or 8)))
         self.deep_research_max_provider_tokens = min(
-            64000,
-            max(512, int(self.deep_research_max_provider_tokens or 12000)),
+            65536,
+            max(512, int(self.deep_research_max_provider_tokens or 65536)),
         )
         self.deep_research_budget_usd = max(0.0, float(self.deep_research_budget_usd or 5.0))
         self.deep_research_openai_model = (
             str(self.deep_research_openai_model or "gpt-5.2").strip() or "gpt-5.2"
         )
         self.deep_research_google_model = (
-            str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
-            or "gemini-3-pro-preview"
+            str(self.deep_research_google_model or "gemini-3.1-pro-preview").strip()
+            or "gemini-3.1-pro-preview"
         )
         self.artifact_retention_max_age_days = max(
             1, int(self.artifact_retention_max_age_days or 30)
@@ -476,3 +476,4 @@ class PipelineState(BaseModel):
         offset = min(max(0, since_results), total_results)
         payload["results_delta"] = [r.model_dump() for r in self.results[offset:]]
         return payload
+

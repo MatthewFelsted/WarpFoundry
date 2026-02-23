@@ -1,4 +1,4 @@
-"""Data models for task chains, pipeline, and chain execution state."""
+﻿"""Data models for task chains, pipeline, and chain execution state."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class ChainConfig(BaseModel):
     image_generation_enabled: bool = False
     image_provider: ImageProvider = "openai"
     image_model: str = "gpt-image-1"
-    vector_memory_enabled: bool = False
+    vector_memory_enabled: bool = True
     vector_memory_backend: VectorMemoryBackend = "chroma"
     vector_memory_collection: str = ""
     vector_memory_top_k: int = 8
@@ -95,7 +95,7 @@ class ChainConfig(BaseModel):
     brain_enabled: bool = False
     brain_model: str = "gpt-5.2"
 
-    # Local-only mode — force all AI calls through Ollama
+    # Local-only mode â€” force all AI calls through Ollama
     local_only: bool = False
 
     # CUA (Computer-Using Agent) visual testing
@@ -184,7 +184,7 @@ class ChainState(BaseModel):
     last_log_message: str = ""
 
 
-# ── Pipeline GUI config ──────────────────────────────────────────
+# â”€â”€ Pipeline GUI config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 class PipelinePhaseGUI(BaseModel):
@@ -239,7 +239,7 @@ class PipelineGUIConfig(BaseModel):
     image_generation_enabled: bool = False
     image_provider: ImageProvider = "openai"
     image_model: str = "gpt-image-1"
-    vector_memory_enabled: bool = False
+    vector_memory_enabled: bool = True
     vector_memory_backend: VectorMemoryBackend = "chroma"
     vector_memory_collection: str = ""
     vector_memory_top_k: int = 8
@@ -250,10 +250,10 @@ class PipelineGUIConfig(BaseModel):
     deep_research_native_enabled: bool = False
     deep_research_retry_attempts: int = 2
     deep_research_daily_quota: int = 8
-    deep_research_max_provider_tokens: int = 12000
+    deep_research_max_provider_tokens: int = 65536
     deep_research_budget_usd: float = 5.0
     deep_research_openai_model: str = "gpt-5.2"
-    deep_research_google_model: str = "gemini-3-pro-preview"
+    deep_research_google_model: str = "gemini-3.1-pro-preview"
     self_improvement_enabled: bool = False
     self_improvement_auto_restart: bool = False
     # Optional git readiness checks before starting a run.
@@ -280,7 +280,7 @@ class PipelineGUIConfig(BaseModel):
     pr_auto_push: bool = True
     pr_sync_description: bool = True
 
-    # Local-only mode — force all AI calls through Ollama
+    # Local-only mode â€” force all AI calls through Ollama
     local_only: bool = False
 
     # CUA (Computer-Using Agent) visual testing
@@ -310,16 +310,16 @@ class PipelineGUIConfig(BaseModel):
         )
         self.deep_research_daily_quota = min(100, max(1, int(self.deep_research_daily_quota or 8)))
         self.deep_research_max_provider_tokens = min(
-            64000,
-            max(512, int(self.deep_research_max_provider_tokens or 12000)),
+            65536,
+            max(512, int(self.deep_research_max_provider_tokens or 65536)),
         )
         self.deep_research_budget_usd = max(0.0, float(self.deep_research_budget_usd or 5.0))
         self.deep_research_openai_model = (
             str(self.deep_research_openai_model or "gpt-5.2").strip() or "gpt-5.2"
         )
         self.deep_research_google_model = (
-            str(self.deep_research_google_model or "gemini-3-pro-preview").strip()
-            or "gemini-3-pro-preview"
+            str(self.deep_research_google_model or "gemini-3.1-pro-preview").strip()
+            or "gemini-3.1-pro-preview"
         )
         self.artifact_retention_max_age_days = max(
             1, int(self.artifact_retention_max_age_days or 30)
@@ -350,3 +350,4 @@ class PipelineGUIConfig(BaseModel):
         if self.pr_aware_enabled and self.mode != "apply":
             raise ValueError("pr_aware_enabled requires mode='apply'")
         return self
+

@@ -1,4 +1,4 @@
-"""Unit tests for deep-research governance helpers."""
+﻿"""Unit tests for deep-research governance helpers."""
 
 from __future__ import annotations
 
@@ -195,10 +195,76 @@ def test_call_google_native_uses_non_placeholder_fallback_key(monkeypatch) -> No
     result = deep_research_module._call_google_native(
         topic="Auth fallback",
         guidance="check fallback key selection",
-        model="gemini-3-pro-preview",
+        model="gemini-3.1-pro-preview",
         max_output_tokens=300,
         timeout_seconds=15,
     )
 
     assert "key=gemini-real-secret" in captured["url"]
     assert result["summary"] == "Google summary"
+
+
+def test_call_google_native_sends_thinking_defaults(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_http_json(url, *, method, headers=None, payload=None, timeout_seconds=0):
+        captured["payload"] = payload
+        return {
+            "candidates": [{"content": {"parts": [{"text": "Google summary"}]}}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 9},
+        }
+
+    monkeypatch.setattr(deep_research_module, "_http_json", _fake_http_json)
+    monkeypatch.setenv("GOOGLE_API_KEY", "gemini-real-secret")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    deep_research_module._call_google_native(
+        topic="Thinking config",
+        guidance="verify thinking defaults",
+        model="gemini-3.1-pro-preview",
+        max_output_tokens=65536,
+        timeout_seconds=15,
+    )
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    generation = payload.get("generationConfig")
+    assert isinstance(generation, dict)
+    assert generation["maxOutputTokens"] == 65536
+    thinking = generation.get("thinkingConfig")
+    assert isinstance(thinking, dict)
+    assert thinking["thinkingBudget"] == 32000
+    assert thinking["includeThoughts"] is True
+
+
+def test_call_google_native_retries_without_thinking_config_on_rejection(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_http_json(url, *, method, headers=None, payload=None, timeout_seconds=0):
+        calls.append({"payload": payload})
+        if len(calls) == 1:
+            raise RuntimeError("HTTP 400 ... Unknown name 'thinkingConfig'")
+        return {
+            "candidates": [{"content": {"parts": [{"text": "Google summary"}]}}],
+            "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 9},
+        }
+
+    monkeypatch.setattr(deep_research_module, "_http_json", _fake_http_json)
+    monkeypatch.setenv("GOOGLE_API_KEY", "gemini-real-secret")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    result = deep_research_module._call_google_native(
+        topic="Thinking fallback",
+        guidance="verify compatibility fallback",
+        model="gemini-3.1-pro-preview",
+        max_output_tokens=2048,
+        timeout_seconds=15,
+    )
+
+    assert result["summary"] == "Google summary"
+    assert len(calls) == 2
+    first_generation = calls[0]["payload"]["generationConfig"]
+    second_generation = calls[1]["payload"]["generationConfig"]
+    assert "thinkingConfig" in first_generation
+    assert "thinkingConfig" not in second_generation
+

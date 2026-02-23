@@ -376,7 +376,7 @@ def is_online(host: str = "api.openai.com", port: int = 443, timeout: float = 3.
 
 ALL_MODELS: list[str] = [
     "gpt-5.2",
-    "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview",
     "grok-4-1-fast-reasoning",
     "claude-opus-4-6",
 ]
@@ -894,4 +894,5 @@ def prompt_all(
     order = {m: i for i, m in enumerate(models)}
     results.sort(key=lambda r: order.get(r["model"], 999))
     return results
+
 

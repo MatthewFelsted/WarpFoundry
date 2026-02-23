@@ -6,7 +6,11 @@ import json
 import threading
 from pathlib import Path
 
-from codex_manager.monitoring.model_watchdog import AVAILABLE_MODEL_PROVIDERS, ModelCatalogWatchdog
+from codex_manager.monitoring.model_watchdog import (
+    AVAILABLE_MODEL_PROVIDERS,
+    DEFAULT_HTTP_USER_AGENT,
+    ModelCatalogWatchdog,
+)
 
 
 def _default_fetchers(state: dict[str, list[str]]):
@@ -185,6 +189,47 @@ def test_fetch_xai_models_supports_grok_api_key_alias(monkeypatch, tmp_path: Pat
 
     assert models == ["grok-test-model"]
     assert captured["auth"] == "Bearer xai-real-secret"
+
+
+def test_http_json_sets_default_user_agent_and_accept(monkeypatch, tmp_path: Path) -> None:
+    watchdog = ModelCatalogWatchdog(
+        root_dir=tmp_path / "watchdog",
+        provider_fetchers={},
+        dependency_packages=(),
+    )
+    captured: dict[str, str] = {}
+
+    class _FakeHeaders:
+        @staticmethod
+        def get_content_charset() -> str:
+            return "utf-8"
+
+    class _FakeResponse:
+        headers = _FakeHeaders()
+
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"data":[]}'
+
+    def _fake_urlopen(request, timeout):
+        header_map = {str(k).lower(): str(v) for k, v in request.header_items()}
+        captured["user-agent"] = header_map.get("user-agent", "")
+        captured["accept"] = header_map.get("accept", "")
+        return _FakeResponse()
+
+    monkeypatch.setattr("codex_manager.monitoring.model_watchdog.urlopen", _fake_urlopen)
+
+    payload = watchdog._http_json("https://example.com/v1/models", headers={}, timeout_s=5)
+
+    assert payload == {"data": []}
+    assert captured["user-agent"] == DEFAULT_HTTP_USER_AGENT
+    assert captured["accept"] == "application/json"
 
 
 def test_watchdog_fetch_failure_does_not_report_false_model_removals(tmp_path: Path) -> None:

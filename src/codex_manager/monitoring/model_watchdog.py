@@ -28,6 +28,7 @@ MIN_INTERVAL_HOURS = 1
 MAX_INTERVAL_HOURS = 24 * 30
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
 DEFAULT_HISTORY_LIMIT = 100
+DEFAULT_HTTP_USER_AGENT = "WarpFoundryModelWatchdog/1.0"
 DEFAULT_DEPENDENCY_PACKAGES: tuple[str, ...] = (
     "warpfoundry",
     "codex-manager",
@@ -892,7 +893,11 @@ class ModelCatalogWatchdog:
         self.history_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
     def _http_json(self, url: str, *, headers: dict[str, str], timeout_s: int) -> dict[str, Any]:
-        request = Request(url, headers=headers, method="GET")
+        request_headers = dict(headers)
+        # Some provider edges (notably xAI/Cloudflare) reject urllib defaults without a UA.
+        request_headers.setdefault("User-Agent", DEFAULT_HTTP_USER_AGENT)
+        request_headers.setdefault("Accept", "application/json")
+        request = Request(url, headers=request_headers, method="GET")
         try:
             with urlopen(request, timeout=float(timeout_s)) as response:
                 raw = response.read()

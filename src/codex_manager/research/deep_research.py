@@ -1,4 +1,4 @@
-"""Native provider deep-research execution with retries, quotas, and budgets."""
+﻿"""Native provider deep-research execution with retries, quotas, and budgets."""
 
 from __future__ import annotations
 
@@ -25,7 +25,11 @@ logger = logging.getLogger(__name__)
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.IGNORECASE)
 _DEFAULT_TIMEOUT_SECONDS = 45
 _DEFAULT_OPENAI_MODEL = "gpt-5.2"
-_DEFAULT_GOOGLE_MODEL = "gemini-3-pro-preview"
+_DEFAULT_GOOGLE_MODEL = "gemini-3.1-pro-preview"
+_DEFAULT_MAX_PROVIDER_TOKENS = 65_536
+_DEFAULT_GOOGLE_THINKING_BUDGET = 32_000
+_DEFAULT_GOOGLE_INCLUDE_THOUGHTS = True
+_DEFAULT_PROJECT_CONTEXT_MAX_CHARS = 20_000
 _DEFAULT_BLOCKED_SOURCE_DOMAINS = frozenset(
     {
         "example.com",
@@ -50,7 +54,7 @@ class DeepResearchSettings:
     providers: str = "both"  # openai | google | both
     retry_attempts: int = 2
     daily_quota: int = 8
-    max_provider_tokens: int = 12_000
+    max_provider_tokens: int = _DEFAULT_MAX_PROVIDER_TOKENS
     daily_budget_usd: float = 5.0
     timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
     openai_model: str = _DEFAULT_OPENAI_MODEL
@@ -504,16 +508,40 @@ def _call_google_native(
         "generationConfig": {
             "temperature": 0.2,
             "maxOutputTokens": max_output_tokens,
+            "thinkingConfig": {
+                "thinkingBudget": _DEFAULT_GOOGLE_THINKING_BUDGET,
+                "includeThoughts": _DEFAULT_GOOGLE_INCLUDE_THOUGHTS,
+            },
         },
         "tools": [{"google_search": {}}],
     }
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    out = _http_json(
-        url,
-        method="POST",
-        payload=payload,
-        timeout_seconds=timeout_seconds,
-    )
+    try:
+        out = _http_json(
+            url,
+            method="POST",
+            payload=payload,
+            timeout_seconds=timeout_seconds,
+        )
+    except RuntimeError as exc:
+        # Compatibility fallback for models/runtimes that reject thinkingConfig.
+        detail = str(exc).lower()
+        if "thinking" not in detail and "includethoughts" not in detail:
+            raise
+        fallback_payload = {
+            "contents": payload["contents"],
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": max_output_tokens,
+            },
+            "tools": payload["tools"],
+        }
+        out = _http_json(
+            url,
+            method="POST",
+            payload=fallback_payload,
+            timeout_seconds=timeout_seconds,
+        )
     usage = out.get("usageMetadata") if isinstance(out.get("usageMetadata"), dict) else {}
     summary = _extract_google_text(out)
     if not summary:
@@ -610,11 +638,15 @@ def run_native_deep_research(
 
         provider_list = _normalize_provider_list(settings.providers)
         retry_attempts = _clamp_int(settings.retry_attempts, minimum=1, maximum=6)
-        max_tokens = _clamp_int(settings.max_provider_tokens, minimum=512, maximum=64_000)
+        max_tokens = _clamp_int(
+            settings.max_provider_tokens,
+            minimum=512,
+            maximum=_DEFAULT_MAX_PROVIDER_TOKENS,
+        )
         timeout_seconds = _clamp_int(settings.timeout_seconds, minimum=10, maximum=120)
         guidance = str(project_context or "").strip()
-        if len(guidance) > 5000:
-            guidance = guidance[:5000].rstrip() + "..."
+        if len(guidance) > _DEFAULT_PROJECT_CONTEXT_MAX_CHARS:
+            guidance = guidance[:_DEFAULT_PROJECT_CONTEXT_MAX_CHARS].rstrip() + "..."
 
         results: list[DeepResearchProviderResult] = []
         for provider in provider_list:
@@ -744,13 +776,16 @@ def run_native_deep_research(
 def _openai_native_prompt_text(*, topic: str, guidance: str) -> str:
     return (
         "You are running deep technical research for a software project.\n"
-        "Focus on verifiable, implementation-relevant findings and include source links.\n\n"
+        "Focus on verifiable, implementation-relevant findings and include source links.\n"
+        "Important: you only have access to the Topic + Project context below plus web results "
+        "you fetch now. Do not assume hidden repository context.\n\n"
         f"Topic: {topic}\n\n"
         "Project context:\n"
         f"{guidance}\n\n"
         "Output format:\n"
-        "- Executive summary\n"
-        "- Concrete implementation recommendations\n"
+        "- Executive summary (implementation-focused)\n"
+        "- Concrete implementation recommendations (specific APIs, versions, commands)\n"
+        "- Assumptions and unknowns that require local validation\n"
         "- Risks/caveats\n"
         "- Sources list with URLs"
     )
@@ -760,12 +795,16 @@ def _google_native_prompt_text(*, topic: str, guidance: str) -> str:
     return (
         "Run deep technical research for this software project. "
         "Focus on implementation-grade findings with citations.\n\n"
+        "Important: you only have access to the Topic + Project context below plus web results "
+        "you fetch now. Do not assume hidden repository context.\n\n"
         f"Topic: {topic}\n\n"
         "Project context:\n"
         f"{guidance}\n\n"
         "Return:\n"
-        "1) Executive summary\n"
-        "2) Concrete implementation recommendations\n"
-        "3) Caveats and risk notes\n"
-        "4) Sources with URLs"
+        "1) Executive summary (implementation-focused)\n"
+        "2) Concrete implementation recommendations (specific APIs, versions, commands)\n"
+        "3) Assumptions and unknowns requiring local validation\n"
+        "4) Caveats and risk notes\n"
+        "5) Sources with URLs"
     )
+

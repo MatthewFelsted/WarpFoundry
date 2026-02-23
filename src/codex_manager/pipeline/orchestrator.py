@@ -1,4 +1,4 @@
-"""Pipeline orchestrator - drives the autonomous improvement pipeline.
+﻿"""Pipeline orchestrator - drives the autonomous improvement pipeline.
 
 The orchestrator runs multiple *cycles*, where each cycle executes all
 enabled phases in order:
@@ -662,11 +662,11 @@ class PipelineOrchestrator:
                 model=(
                     str(self.config.deep_research_openai_model or "gpt-5.2")
                     if self.config.deep_research_providers == "openai"
-                    else str(self.config.deep_research_google_model or "gemini-3-pro-preview")
+                    else str(self.config.deep_research_google_model or "gemini-3.1-pro-preview")
                     if self.config.deep_research_providers == "google"
                     else (
                         f"openai:{self.config.deep_research_openai_model or 'gpt-5.2'};"
-                        f"google:{self.config.deep_research_google_model or 'gemini-3-pro-preview'}"
+                        f"google:{self.config.deep_research_google_model or 'gemini-3.1-pro-preview'}"
                     )
                 ),
             )
@@ -708,11 +708,11 @@ class PipelineOrchestrator:
             model=(
                 str(self.config.deep_research_openai_model or "gpt-5.2")
                 if self.config.deep_research_providers == "openai"
-                else str(self.config.deep_research_google_model or "gemini-3-pro-preview")
+                else str(self.config.deep_research_google_model or "gemini-3.1-pro-preview")
                 if self.config.deep_research_providers == "google"
                 else (
                     f"openai:{self.config.deep_research_openai_model or 'gpt-5.2'};"
-                    f"google:{self.config.deep_research_google_model or 'gemini-3-pro-preview'}"
+                    f"google:{self.config.deep_research_google_model or 'gemini-3.1-pro-preview'}"
                 )
             ),
         )
@@ -5141,3 +5141,4 @@ class PipelineOrchestrator:
 
         score = activity_ratio * 0.45 + magnitude_ratio * 0.35 + success_delta * 0.20
         return min(score, 200.0)
+
